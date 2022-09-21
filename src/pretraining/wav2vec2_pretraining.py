@@ -16,7 +16,7 @@ def parse_args():
         "--dataset",
         type=str,
         default=None,
-        help="Preprocessed dataset folder location",
+        help="Preprocessed dataset directory",
     )
     parser.add_argument(
         "--logging_steps",
@@ -41,12 +41,6 @@ def parse_args():
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
         required=True,
-    )
-    parser.add_argument(
-        "--config_name",
-        type=str,
-        default=None,
-        help="Pretrained config name or path if not the same as model_name",
     )
     parser.add_argument(
         "--per_device_train_batch_size",
