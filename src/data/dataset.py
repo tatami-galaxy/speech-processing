@@ -21,6 +21,9 @@ def parse_args():
         default="~/.cache/huggingface/datasets",
         help="Cache directory",
     )
+    
+    args = parser.parse_args()
+    return args
 
 def main():
 
@@ -28,3 +31,8 @@ def main():
 
     if args.huggingface:
         dataset = load_dataset(args.dataset, cache_dir=args.cache_dir)
+        print(dataset)
+
+
+if __name__ == "__main__":
+    main()
