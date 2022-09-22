@@ -1,4 +1,5 @@
 import argparse
+from datasets import load_dataset
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess dataset")
@@ -23,6 +24,7 @@ def parse_args():
 
 def main():
 
+    args = parse_args()
 
     if args.huggingface:
         dataset = load_dataset(args.dataset, cache_dir=args.cache_dir)
