@@ -111,6 +111,8 @@ def main():
 
 
   vectorized_datasets = vectorized_datasets.remove_columns("input_length")
+
+  # save to disk
   vectorized_datasets.save_to_disk(args.processed_data_dir)
      
 
