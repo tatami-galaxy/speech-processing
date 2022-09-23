@@ -68,6 +68,15 @@ def main():
   # datasets takes care of automatically loading and resampling the audio,
   # so that we just need to set the correct target sampling rate and normalize the input
   # via feature_extractor 
+
+  # wav2vec2 models that have set config.feat_extract_norm == "group", such as wav2vec2-base, have not been trained using attention_mask
+  # for such models, input_values should simply be padded with 0 and no attention_mask should be passed.
+  # for wav2vec2 models that have set config.feat_extract_norm == "layer", such as wav2vec2-lv60, attention_mask should be passed for batched inference.
+
+  # huggingface pretraining script only supports "newer" stable layer norm architecture
+  # apply_spec_augment has to be True, mask_feature_prob has to be 0.0
+
+
   feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
     padding_value=0.0, do_normalize=True, return_attention_mask=False)
 
