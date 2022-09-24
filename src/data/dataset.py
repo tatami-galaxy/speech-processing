@@ -70,11 +70,26 @@ def main():
   # via feature_extractor 
 
   # wav2vec2 models that have set config.feat_extract_norm == "group", such as wav2vec2-base, have not been trained using attention_mask
-  # for such models, input_values should simply be padded with 0 and no attention_mask should be passed.
-  # for wav2vec2 models that have set config.feat_extract_norm == "layer", such as wav2vec2-lv60, attention_mask should be passed for batched inference.
+  # for such models, input_values should simply be padded with 0 and no attention_mask should be passed
+  # for wav2vec2 models that have set config.feat_extract_norm == "layer",
+  # such as wav2vec2-lv60, attention_mask should be passed for batched inference
+
+  # feat_extract_norm (str, optional, defaults to "group") — The norm to be applied to 1D convolutional layers in feature encoder
+  # one of "group" for group normalization of only the first 1D convolutional layer or
+  # "layer" for layer normalization of all 1D convolutional layers.
 
   # huggingface pretraining script only supports "newer" stable layer norm architecture
   # apply_spec_augment has to be True, mask_feature_prob has to be 0.0
+
+  # apply_spec_augment (bool, optional, defaults to True) — Whether to apply SpecAugment data augmentation to the outputs of the feature encoder
+  # for reference see SpecAugment: A Simple Data Augmentation Method for Automatic Speech Recognition
+
+  # mask_feature_prob (float, optional, defaults to 0.0) — Percentage (between 0 and 1) of all feature vectors along the feature axis which will be masked
+  # the masking procecure generates ”mask_feature_problen(feature_axis)/mask_time_length” independent masks over the axis
+  # if reasoning from the propability of each feature vector to be chosen as the start of the vector span to be masked,
+  # mask_feature_prob should be `prob_vector_startmask_feature_length
+  # note that overlap may decrease the actual percentage of masked vectors
+  # this is only relevant if apply_spec_augment is True`
 
 
   feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
