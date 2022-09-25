@@ -16,7 +16,7 @@ def parse_args():
         "--dataset",
         type=str,
         default=None,
-        help="Preprocessed dataset directory",
+        help="Vectorized dataset directory",
     )
     parser.add_argument(
         "--logging_steps",
@@ -29,12 +29,6 @@ def parse_args():
         type=int,
         default=500,
         help="Number of steps between each logging",
-    )
-    parser.add_argument(
-        "--audio_column_name",
-        type=str,
-        default="audio",
-        help="Column in the dataset that contains speech file path. Defaults to 'audio'",
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -105,18 +99,6 @@ def parse_args():
     )
     parser.add_argument(
         "--gumbel_temperature_decay", type=float, default=0.999995, help="Decay of gumbel temperature during training."
-    )
-    parser.add_argument(
-        "--max_duration_in_seconds",
-        type=float,
-        default=5.0,
-        help="Filter out audio files that are longer than `max_duration_in_seconds` seconds",
-    )
-    parser.add_argument(
-        "--min_duration_in_seconds",
-        type=float,
-        default=3.0,
-        help="Filter out audio files that are shorter than `min_duration_in_seconds` seconds",
     )
     parser.add_argument(
         "--pad_to_multiple_of",
