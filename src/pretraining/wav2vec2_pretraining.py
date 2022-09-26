@@ -12,6 +12,8 @@ from transformers import AdamW, SchedulerType, get_scheduler
 from transformers import SchedulerType, set_seed, is_wandb_available
 from datasets import load_from_disk
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Union
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Pretrain a Wav2Vec2 model")
@@ -37,8 +39,8 @@ def parse_args():
     parser.add_argument(
         "--model_name_or_path",
         type=str,
+        default="./",
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
     )
     parser.add_argument(
         "--per_device_train_batch_size",
@@ -247,7 +249,7 @@ def main():
         set_seed(args.seed)
 
     # load vectorized dataset
-    vectorized_datasets = load_from_disk(args.dataset)
+    #vectorized_datasets = load_from_disk(args.dataset)
 
     # config
 
