@@ -93,7 +93,7 @@ def main():
 
 
   feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
-    padding_value=0.0, do_normalize=True, return_attention_mask=False)
+    padding_value=0.0, do_normalize=True, return_attention_mask=True)
 
   # make sure that dataset decodes audio with correct sampling rate
   raw_datasets = raw_datasets.cast_column(args.audio_column_name,
