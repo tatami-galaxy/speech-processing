@@ -15,6 +15,7 @@ from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Pretrain a Wav2Vec2 model")
 
@@ -236,6 +237,11 @@ def main():
 
     args = parse_args()
 
+    # ddp settings
+    args.world_size = args.gpus * args.nodes
+    os.environ['MASTER_ADDR'] = '192.168.1.194'
+    os.environ['MASTER_PORT'] = '8888'
+
     # wandb
     if is_wandb_available():
         import wandb
@@ -271,8 +277,6 @@ def main():
     # this is only relevant if apply_spec_augment is True`
 
     config = Wav2Vec2Config(feat_extract_norm='layer')
-    print(config)
-    quit()
 
     # model
     model = Wav2Vec2ForPreTraining(config)
@@ -316,7 +320,8 @@ def main():
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     # training
-    train()
+    mp.spawn(train, nprocs=args.gpus, args=(args,))
+
 
 if __name__ == "__main__":
   main()
