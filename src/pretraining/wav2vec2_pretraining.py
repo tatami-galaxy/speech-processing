@@ -7,8 +7,11 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda import amp
-from transformers import SchedulerType, set_seed, is_wandb_available, Wav2Vec2Config
+from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForPreTraining, Wav2Vec2Config
+from transformers import AdamW, SchedulerType, get_scheduler
+from transformers import SchedulerType, set_seed, is_wandb_available
 from datasets import load_from_disk
+from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Pretrain a Wav2Vec2 model")
@@ -101,6 +104,11 @@ def parse_args():
     parser.add_argument(
         "--gumbel_temperature_decay", type=float, default=0.999995, help="Decay of gumbel temperature during training."
     )
+    # if you use mixed precision, you need all your tensors to have dimensions that are multiple of 8s
+    # to maximize the benefits of your tensor cores
+    # so pad_to_multiple_of=8 is a good value, unless you model has some pooling (like Funnel Transformer)
+    # in which case those 8 might be divided by 2 
+    # you’d need pad_to_multiple_of=32 for this model for instance, since there are two pooling operations
     parser.add_argument(
         "--pad_to_multiple_of",
         type=int,
@@ -218,6 +226,10 @@ class DataCollatorForWav2Vec2Pretraining:
         return batch
 
 
+def train():
+    pass
+
+
 def main():
 
     args = parse_args()
@@ -258,6 +270,51 @@ def main():
 
     config = Wav2Vec2Config(feat_extract_norm='layer')
     print(config)
+    quit()
+
+    # model
+    model = Wav2Vec2ForPreTraining(config)
+
+    # define data collator, optimizer and scheduler
+    data_collator = DataCollatorForWav2Vec2Pretraining(
+        model=model, feature_extractor=feature_extractor, pad_to_multiple_of=args.pad_to_multiple_of
+    )
+    train_dataloader = DataLoader(
+        vectorized_datasets["train"],
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=args.per_device_train_batch_size,
+    )
+    eval_dataloader = DataLoader(
+        vectorized_datasets["validation"], collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+    )
+
+    # Optimizer
+    optimizer = AdamW(
+        list(model.parameters()),
+        lr=args.learning_rate,
+        betas=[args.adam_beta1, args.adam_beta2],
+        eps=args.adam_epsilon,
+    )
+
+    # Scheduler and math around the number of training steps.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+
+    lr_scheduler = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=args.num_warmup_steps,
+        num_training_steps=args.max_train_steps,
+    )
+
+    # afterwards we recalculate our number of training epochs
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+    # training
+    train()
 
 if __name__ == "__main__":
   main()
