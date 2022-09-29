@@ -229,33 +229,13 @@ class DataCollatorForWav2Vec2Pretraining:
         return batch
 
 
-def train():
-    pass
+def train(gpu, args):   # fn(i, *args), i -> process index
 
-
-def main():
-
-    args = parse_args()
-
-    # ddp settings
-    args.world_size = args.gpus * args.nodes
-    os.environ['MASTER_ADDR'] = '192.168.1.194'
-    os.environ['MASTER_PORT'] = '8888'
-
-    # wandb
-    if is_wandb_available():
-        import wandb
-    wandb.init(project="wav2vec2", entity="suicune")
-    wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
-    "train_batch_size": args.per_device_train_batch_size * args.gpus,
-    "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
-
-    # seed
-    if args.seed is not None:
-        set_seed(args.seed)
+    rank = args.nr * args.gpus + gpu
+    dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
 
     # load vectorized dataset
-    #vectorized_datasets = load_from_disk(args.dataset)
+    vectorized_datasets = load_from_disk(args.dataset)
 
     # config
 
@@ -277,7 +257,7 @@ def main():
     # this is only relevant if apply_spec_augment is True`
 
     config = Wav2Vec2Config(feat_extract_norm='layer')
-
+    
     # model
     model = Wav2Vec2ForPreTraining(config)
 
@@ -318,6 +298,28 @@ def main():
 
     # afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+
+def main():
+
+    args = parse_args()
+
+    # ddp settings
+    args.world_size = args.gpus * args.nodes
+    os.environ['MASTER_ADDR'] = '192.168.1.194'
+    os.environ['MASTER_PORT'] = '8888'
+
+    # wandb
+    if is_wandb_available():
+        import wandb
+    wandb.init(project="wav2vec2", entity="suicune")
+    wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
+    "train_batch_size": args.per_device_train_batch_size * args.gpus,
+    "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
+
+    # seed
+    if args.seed is not None:
+        set_seed(args.seed)
 
     # training
     mp.spawn(train, nprocs=args.gpus, args=(args,))

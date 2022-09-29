@@ -76,11 +76,14 @@ def main():
 
 
   feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
-    padding_value=0.0, do_normalize=True, return_attention_mask=True)
+    padding_value=0.0, do_normalize=True, return_attention_mask=True) # kernel weights are random if not from_pretrained()
 
+  # Wav2Vec2 expects the input in the format of a 1-dimensional array of 16 kHz
   # make sure that dataset decodes audio with correct sampling rate
+  # audio Feature to extract audio data from an audio file
+  # the new "Audio" feature introduced in datasets == 4.13.3 loads and resamples audio files on-the-fly upon calling
   raw_datasets = raw_datasets.cast_column(args.audio_column_name,
-    datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate))
+    datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)) 
     
   # only normalized-inputs-training is supported
   if not feature_extractor.do_normalize:
