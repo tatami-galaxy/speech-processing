@@ -17,7 +17,7 @@ def parse_args():
   parser.add_argument("--cache_dir", type=str,default="~/.cache/huggingface/datasets",
     help="Cache directory",)
 
-  parser.add_argument("--processed_data_dir", type=str,default="~/speech-processing/data/processed",
+  parser.add_argument("--processed_data_dir", type=str,default="~/speech-processing/data/processed/libri_vectorized",
     help="Processed data directory.",)
 
   parser.add_argument("--seed", type=int, default=0, help="A seed for reproducible training.")
