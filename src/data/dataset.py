@@ -105,11 +105,17 @@ def main():
       max_length=max_length, truncation=True)
 
     batch["input_values"] = inputs.input_values[0] 
+    #print(type(inputs))
+    print(type(sample["array"]))
+    print(sample["array"].shape)
+    print(type(inputs.input_values[0]))
+    print(inputs.input_values[0].shape)
+    quit()
     batch["input_length"] = len(inputs.input_values[0])
 
     return batch
 
-
+  # maybe use raw datasets instead??
   vectorized_datasets = raw_datasets.map(prepare_dataset, 
     num_proc=args.preprocessing_num_workers, remove_columns=raw_datasets["train"].column_names,)
 
@@ -123,7 +129,7 @@ def main():
   vectorized_datasets = vectorized_datasets.remove_columns("input_length")
 
   # save to disk
-  vectorized_datasets.save_to_disk(args.processed_data_dir)
+  #vectorized_datasets.save_to_disk(args.processed_data_dir)
      
 
 

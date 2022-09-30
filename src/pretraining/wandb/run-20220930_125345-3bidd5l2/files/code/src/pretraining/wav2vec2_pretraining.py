@@ -309,7 +309,7 @@ def main():
     # ddp settings
     args.world_size = args.gpus * args.nodes
     os.environ['MASTER_ADDR'] = '192.168.1.194'
-    os.environ['MASTER_PORT'] = '9888'
+    os.environ['MASTER_PORT'] = '8888'
 
     # wandb
     if is_wandb_available():

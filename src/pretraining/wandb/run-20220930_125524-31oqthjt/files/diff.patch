@@ -1,0 +1,13 @@
+diff --git a/src/pretraining/wav2vec2_pretraining.py b/src/pretraining/wav2vec2_pretraining.py
+index d6da5a9..1d9a508 100644
+--- a/src/pretraining/wav2vec2_pretraining.py
++++ b/src/pretraining/wav2vec2_pretraining.py
+@@ -309,7 +309,7 @@ def main():
+     # ddp settings
+     args.world_size = args.gpus * args.nodes
+     os.environ['MASTER_ADDR'] = '192.168.1.194'
+-    os.environ['MASTER_PORT'] = '8888'
++    os.environ['MASTER_PORT'] = '9888'
+ 
+     # wandb
+     if is_wandb_available():

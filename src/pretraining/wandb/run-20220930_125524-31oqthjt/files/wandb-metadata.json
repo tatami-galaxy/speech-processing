@@ -1,0 +1,27 @@
+{
+    "os": "Linux-5.4.0-81-generic-x86_64-with-glibc2.31",
+    "python": "3.10.4",
+    "heartbeatAt": "2022-09-30T07:25:26.258470",
+    "startedAt": "2022-09-30T07:25:24.581661",
+    "docker": null,
+    "gpu": "NVIDIA A100-SXM-80GB",
+    "gpu_count": 5,
+    "cpu_count": 128,
+    "cuda": null,
+    "args": [
+        "--dataset",
+        "/home/ujan/speech-processing/data/processed/libri_vectorized"
+    ],
+    "state": "running",
+    "program": "/home/ujan/speech-processing/src/pretraining/wav2vec2_pretraining.py",
+    "codePath": "src/pretraining/wav2vec2_pretraining.py",
+    "git": {
+        "remote": "https://github.com/tatami-galaxy/speech-processing.git",
+        "commit": "d363890310fad2c68ecfca2e5d4f8332a76a6b70"
+    },
+    "email": "ujandev@gmail.com",
+    "root": "/home/ujan/speech-processing",
+    "host": "frsd-DGX-Station-A100",
+    "username": "ujan",
+    "executable": "/home/ujan/anaconda3/envs/asr/bin/python"
+}
