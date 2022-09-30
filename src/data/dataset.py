@@ -104,7 +104,7 @@ def main():
     inputs = feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"],
       max_length=max_length, truncation=True)
 
-    batch["input_values"] = inputs.input_values[0]  # where is this used?
+    batch["input_values"] = inputs.input_values[0] 
     batch["input_length"] = len(inputs.input_values[0])
 
     return batch
