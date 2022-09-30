@@ -236,6 +236,8 @@ def train(gpu, args):   # fn(i, *args), i -> process index
 
     # load vectorized dataset
     vectorized_datasets = load_from_disk(args.dataset)
+    print(vectorized_datasets)
+    quit()
 
     # config
 
