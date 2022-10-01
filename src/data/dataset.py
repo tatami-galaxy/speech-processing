@@ -36,6 +36,13 @@ def parse_args():
 
   parser.add_argument("--preprocessing_num_workers", type=int, default=None,
     help="The number of processes to use for the preprocessing.",)
+
+  parser.add_argument(
+    "--pad_to_multiple_of", type=int, default=32,
+    help=(
+      "If set will pad the sequence to a multiple of the provided value. This is especially useful to enable the"
+      " use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta)."),
+    )
     
   args = parser.parse_args()
 
@@ -75,8 +82,10 @@ def main():
   # such as wav2vec2-lv60, attention_mask should be passed for batched inference
 
 
+  # does padding and normalization
+  # https://github.com/huggingface/transformers/blob/main/src/transformers/models/wav2vec2/feature_extraction_wav2vec2.py
   feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
-    padding_value=0.0, do_normalize=True, return_attention_mask=True) # kernel weights are random if not from_pretrained()
+    padding_value=0.0, do_normalize=True, return_attention_mask=True, pad_to_multiple_of=args.pad_to_multiple_of) 
 
   # Wav2Vec2 expects the input in the format of a 1-dimensional array of 16 kHz
   # make sure that dataset decodes audio with correct sampling rate

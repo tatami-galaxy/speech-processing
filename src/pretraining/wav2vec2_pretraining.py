@@ -118,7 +118,7 @@ def parse_args():
         default=32,
         help=(
             "If set will pad the sequence to a multiple of the provided value. This is especially useful to enable the"
-            " use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta)."
+            " use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta). Make it same as dataset.py"
         ),
     )
     parser.add_argument(
