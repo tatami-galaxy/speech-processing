@@ -115,6 +115,7 @@ def main():
 
     batch["input_values"] = inputs.input_values[0] 
     batch["input_length"] = len(inputs.input_values[0])
+    batch["attention_mask"] = inputs.attention_mask[0]
 
     return batch
 
