@@ -1,5 +1,4 @@
 import os
-import socket
 from datetime import datetime
 import argparse
 import torch.multiprocessing as mp
@@ -23,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="/home/ujan/speech-processing/data/processed/libri_vectorized",
+        default="~/speech-processing/data/processed/libri_vectorized",
         help="Vectorized dataset directory",
     )
     parser.add_argument(
@@ -237,8 +236,7 @@ def train(gpu, args):   # fn(i, *args), i -> process index
 
     # load vectorized dataset
     vectorized_datasets = load_from_disk(args.dataset)
-    #print(type(vectorized_datasets['train']['input_values'][0]))
-    print(vectorized_datasets['train'])
+    print(vectorized_datasets)
     quit()
 
     # config
@@ -306,25 +304,20 @@ def train(gpu, args):   # fn(i, *args), i -> process index
 
 def main():
 
-    #mp.set_start_method('spawn')
     args = parse_args()
 
     # ddp settings
     args.world_size = args.gpus * args.nodes
     os.environ['MASTER_ADDR'] = '192.168.1.194'
-    #sock = socket.socket()
-    #sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    #sock.bind(('', 0))
-    #port = str(sock.getsockname()[1])
-    os.environ['MASTER_PORT'] = '8899'
+    os.environ['MASTER_PORT'] = '9888'
 
     # wandb
-    #if is_wandb_available():
-        #import wandb
-    #wandb.init(project="wav2vec2", entity="suicune")
-    #wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
-    #"train_batch_size": args.per_device_train_batch_size * args.gpus,
-    #"eval_batch_size": args.per_device_eval_batch_size * args.gpus}
+    if is_wandb_available():
+        import wandb
+    wandb.init(project="wav2vec2", entity="suicune")
+    wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
+    "train_batch_size": args.per_device_train_batch_size * args.gpus,
+    "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
 
     # seed
     if args.seed is not None:
@@ -343,4 +336,4 @@ if __name__ == "__main__":
 
 
         
-  
+    
