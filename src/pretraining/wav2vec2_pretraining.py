@@ -2,9 +2,11 @@ import os
 import socket
 from datetime import datetime
 import argparse
+import math
 import torch.multiprocessing as mp
 import torch
 import torch.nn as nn
+from torch.utils.data.dataloader import DataLoader
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda import amp
@@ -47,13 +49,13 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=8,
+        default=16,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=8,
+        default=16,
         help="Batch size (per device) for the evaluation dataloader.",
     )
     parser.add_argument(
@@ -63,7 +65,7 @@ def parse_args():
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
-    parser.add_argument("--epochs", type=int, default=3, help="Total number of training epochs to perform.")
+    parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
     parser.add_argument(
         "--max_train_steps",
         type=int,
@@ -230,6 +232,18 @@ class DataCollatorForWav2Vec2Pretraining:
         return batch
 
 
+def get_grad_norm(params, scale=1):
+    """Compute grad norm given a gradient scale."""
+    total_norm = 0.0
+    for p in params:
+        if p.grad is not None:
+            param_norm = (p.grad.detach().data / scale).norm(2)
+            total_norm += param_norm.item() ** 2
+    total_norm = total_norm**0.5
+    return total_norm
+
+
+
 def train(gpu, args):   # fn(i, *args), i -> process index
 
     rank = args.nr * args.gpus + gpu
@@ -262,18 +276,43 @@ def train(gpu, args):   # fn(i, *args), i -> process index
     # model
     model = Wav2Vec2ForPreTraining(config)
 
-    # define data collator, optimizer and scheduler
+    # define feature extractor (same as data proprocessing)
+    feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=args.sampling_rate,
+    padding_value=0.0, do_normalize=True, return_attention_mask=True, pad_to_multiple_of=args.pad_to_multiple_of) 
+
+    # data collator
     data_collator = DataCollatorForWav2Vec2Pretraining(
         model=model, feature_extractor=feature_extractor, pad_to_multiple_of=args.pad_to_multiple_of
     )
+
+    # samplers
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        vectorized_datasets["train"],
+        num_replicas=args.world_size,
+        rank=rank)
+    valid_sampler = torch.utils.data.distributed.DistributedSampler(
+        vectorized_datasets["validation"],
+        num_replicas=args.world_size,
+        rank=rank)
+
+    # dataloaders
     train_dataloader = DataLoader(
         vectorized_datasets["train"],
-        shuffle=True,
         collate_fn=data_collator,
         batch_size=args.per_device_train_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        sampler=train_sampler
     )
     eval_dataloader = DataLoader(
-        vectorized_datasets["validation"], collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+        vectorized_datasets["validation"],
+        collate_fn=data_collator,
+        batch_size=args.per_device_eval_batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        sampler=valid_sampler
     )
 
     # Optimizer
@@ -283,6 +322,14 @@ def train(gpu, args):   # fn(i, *args), i -> process index
         betas=[args.adam_beta1, args.adam_beta2],
         eps=args.adam_epsilon,
     )
+
+    # gpu
+    torch.cuda.set_device(gpu)
+    model.cuda(gpu)
+
+    # Wrap the model
+    model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
+    model = DDP(model)
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -299,6 +346,23 @@ def train(gpu, args):   # fn(i, *args), i -> process index
 
     # afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+
+    # training loop
+    for epoch in range(args.num_train_epochs):
+        model.train()
+
+        for step, batch in enumerate(train_dataloader):
+            # compute num of losses
+            num_losses = batch["mask_time_indices"].sum()
+            sub_attention_mask = batch.pop("sub_attention_mask", None)
+            sub_attention_mask = (
+                sub_attention_mask if sub_attention_mask is not None else torch.ones_like(batch["mask_time_indices"])
+            )
+            percent_masked = num_losses / sub_attention_mask.sum()
+
+            # forward
+
 
 
 def main():
