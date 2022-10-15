@@ -237,9 +237,6 @@ def train(gpu, args):   # fn(i, *args), i -> process index
 
     # load vectorized dataset
     vectorized_datasets = load_from_disk(args.dataset)
-    #print(type(vectorized_datasets['train']['input_values'][0]))
-    print(vectorized_datasets['train'])
-    quit()
 
     # config
 
