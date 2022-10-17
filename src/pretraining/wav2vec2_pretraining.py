@@ -16,6 +16,7 @@ from datasets import load_from_disk
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
 from accelerate import Accelerator
 from accelerate.logging import get_logger
+import tqdm
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
@@ -96,8 +97,8 @@ def parse_args():
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
     )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.") ###################################
-    parser.add_argument("--seed", type=int, default=0, help="A seed for reproducible training.")
+    parser.add_argument("--output_dir", type=str, default="/home/ujan/speech-processing/models", help="Where to store the final model.") 
+    parser.add_argument("--seed", type=int, default=1, help="A seed for reproducible training.")
     parser.add_argument(
         "--max_gumbel_temperature",
         type=float,
@@ -145,9 +146,7 @@ def parse_args():
         default=1e-8,
         help="Epsilon for AdamW optimizer",
     )
-    parser.add_argument('-n', '--nodes', default=1, type=int, metavar='N')
-    parser.add_argument('-g', '--gpus', default=1, type=int, help='number of gpus per node')
-    parser.add_argument('-nr', '--nr', default=0, type=int, help='ranking within the nodes')
+
     args = parser.parse_args()
 
 
