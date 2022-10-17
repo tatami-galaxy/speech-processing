@@ -1,0 +1,13 @@
+diff --git a/src/pretraining/wav2vec2_pretraining.py b/src/pretraining/wav2vec2_pretraining.py
+index bbff66e..970d08a 100644
+--- a/src/pretraining/wav2vec2_pretraining.py
++++ b/src/pretraining/wav2vec2_pretraining.py
+@@ -275,7 +275,7 @@ def main():
+         if is_wandb_available():
+             import wandb
+             wandb.init(project="wav2vec2", entity="suicune")
+-            wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
++            wandb.config = {"learning_rate": args.learning_rate, "epochs": args.num_train_epochs,
+             "train_batch_size": args.per_device_train_batch_size * args.gpus,
+             "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
+ 

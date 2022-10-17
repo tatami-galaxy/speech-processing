@@ -16,7 +16,7 @@ from datasets import load_from_disk
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from tqdm.auto import tqdm
+import tqdm
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
@@ -31,9 +31,6 @@ def parse_args():
         type=str,
         default="/home/ujan/speech-processing/data/processed/libri_vectorized",
         help="Vectorized dataset directory",
-    )
-    parser.add_argument("--sampling_rate", type=int, default=16000,
-        help="Audio sampling rate. Default=16000 for wav2vec2",
     )
     parser.add_argument(
         "--logging_steps",
@@ -279,8 +276,8 @@ def main():
             import wandb
             wandb.init(project="wav2vec2", entity="suicune")
             wandb.config = {"learning_rate": args.learning_rate, "epochs": args.num_train_epochs,
-            "train_batch_size": args.per_device_train_batch_size,
-            "eval_batch_size": args.per_device_eval_batch_size}
+            "train_batch_size": args.per_device_train_batch_size * args.gpus,
+            "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
 
     else:
         datasets.utils.logging.set_verbosity_error()
