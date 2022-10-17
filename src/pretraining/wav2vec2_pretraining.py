@@ -3,20 +3,23 @@ import socket
 from datetime import datetime
 import argparse
 import math
-import torch.multiprocessing as mp
 import torch
 import torch.nn as nn
+import transformers
+import datasets
 from torch.utils.data.dataloader import DataLoader
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda import amp
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2ForPreTraining, Wav2Vec2Config
 from transformers import AdamW, SchedulerType, get_scheduler
 from transformers import SchedulerType, set_seed, is_wandb_available
 from datasets import load_from_disk
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
+from accelerate import Accelerator
+from accelerate.logging import get_logger
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
+
+logger = get_logger(__name__)
 
 
 def parse_args():
@@ -93,7 +96,7 @@ def parse_args():
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
     )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
+    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.") ###################################
     parser.add_argument("--seed", type=int, default=0, help="A seed for reproducible training.")
     parser.add_argument(
         "--max_gumbel_temperature",
@@ -213,6 +216,9 @@ class DataCollatorForWav2Vec2Pretraining:
         features_shape = (batch_size, mask_indices_seq_length)
 
         # sample randomly masked indices
+        # Computes random mask spans for a given shape. Used to implement [SpecAugment: A Simple Data Augmentation Method for
+        # ASR](https://arxiv.org/abs/1904.08779). Note that this method is not optimized to run on TPU and should be run on
+        # CPU as part of the preprocessing during training.
         mask_time_indices = _compute_mask_indices(
             features_shape,
             self.model.config.mask_time_prob,
@@ -221,6 +227,7 @@ class DataCollatorForWav2Vec2Pretraining:
         )
 
         # sample negative indices
+        # for contrastive loss
         sampled_negative_indices = _sample_negative_indices(
             features_shape,
             self.model.config.num_negatives,
@@ -243,11 +250,44 @@ def get_grad_norm(params, scale=1):
     return total_norm
 
 
+def multiply_grads(params, c):
+    """Multiplies grads by a constant *c*."""
+    for p in params:
+        if p.grad is not None:
+            if torch.is_tensor(c):
+                c = c.to(p.grad.device)
+            p.grad.data.mul_(c)
 
-def train(gpu, args):   # fn(i, *args), i -> process index
 
-    rank = args.nr * args.gpus + gpu
-    dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=rank)
+
+def main():
+
+    args = parse_args()
+
+    # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
+    accelerator = Accelerator()
+    logger.info(accelerator.state, main_process_only=False)
+    if accelerator.is_local_main_process:
+
+        datasets.utils.logging.set_verbosity_warning()
+        transformers.utils.logging.set_verbosity_info()
+
+        # wandb
+        if is_wandb_available():
+            import wandb
+            wandb.init(project="wav2vec2", entity="suicune")
+            wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
+            "train_batch_size": args.per_device_train_batch_size * args.gpus,
+            "eval_batch_size": args.per_device_eval_batch_size * args.gpus}
+
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
+
+    # seed
+    if args.seed is not None:
+        set_seed(args.seed)
+
 
     # load vectorized dataset
     vectorized_datasets = load_from_disk(args.dataset)
@@ -285,37 +325,18 @@ def train(gpu, args):   # fn(i, *args), i -> process index
         model=model, feature_extractor=feature_extractor, pad_to_multiple_of=args.pad_to_multiple_of
     )
 
-    # samplers
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        vectorized_datasets["train"],
-        num_replicas=args.world_size,
-        rank=rank)
-    valid_sampler = torch.utils.data.distributed.DistributedSampler(
-        vectorized_datasets["validation"],
-        num_replicas=args.world_size,
-        rank=rank)
-
     # dataloaders
     train_dataloader = DataLoader(
         vectorized_datasets["train"],
+        shuffle=True,
         collate_fn=data_collator,
         batch_size=args.per_device_train_batch_size,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=True,
-        sampler=train_sampler
     )
     eval_dataloader = DataLoader(
-        vectorized_datasets["validation"],
-        collate_fn=data_collator,
-        batch_size=args.per_device_eval_batch_size,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=True,
-        sampler=valid_sampler
+        vectorized_datasets["validation"], collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
     )
 
-    # Optimizer
+    # optimizer
     optimizer = AdamW(
         list(model.parameters()),
         lr=args.learning_rate,
@@ -323,15 +344,12 @@ def train(gpu, args):   # fn(i, *args), i -> process index
         eps=args.adam_epsilon,
     )
 
-    # gpu
-    torch.cuda.set_device(gpu)
-    model.cuda(gpu)
+    # prepare everything with our `accelerator`.
+    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader
+    )
 
-    # Wrap the model
-    model, optimizer = amp.initialize(model, optimizer, opt_level='O2')
-    model = DDP(model)
-
-    # Scheduler and math around the number of training steps.
+    # scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
 
     if args.max_train_steps is None:
@@ -347,11 +365,26 @@ def train(gpu, args):   # fn(i, *args), i -> process index
     # afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
+    # train
+    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    # training loop
-    for epoch in range(args.num_train_epochs):
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(vectorized_datasets['train'])}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    completed_steps = 0
+    starting_epoch = 0
+
+    # Only show the progress bar once on each machine.
+    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    completed_steps = 0
+    starting_epoch = 0
+    for epoch in range(starting_epoch, args.num_train_epochs):
+
         model.train()
-
         for step, batch in enumerate(train_dataloader):
             # compute num of losses
             num_losses = batch["mask_time_indices"].sum()
@@ -362,41 +395,151 @@ def train(gpu, args):   # fn(i, *args), i -> process index
             percent_masked = num_losses / sub_attention_mask.sum()
 
             # forward
+            outputs = model(**batch)
+
+            # divide loss by gradient accumulation steps since gradients
+            # are accumulated for multiple backward passes in PyTorch
+            loss = outputs.loss / args.gradient_accumulation_steps
+            accelerator.backward(loss)
+
+            # make sure that `num_losses` is summed for distributed training
+            # and average gradients over losses of all devices
+            if accelerator.state.num_processes > 1:
+                num_losses = accelerator.gather_for_metrics(num_losses).sum()
+                gradient_multiplier = accelerator.state.num_processes / num_losses
+                multiply_grads(model.module.parameters(), gradient_multiplier)
+            else:
+                multiply_grads(model.parameters(), 1 / num_losses)
+
+            # update step
+            if (step + 1) % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+
+                # compute grad norm for monitoring
+                scale = (
+                    accelerator.scaler._scale.item()
+                    if hasattr(accelerator, "scaler") and accelerator.scaler is not None
+                    else 1
+                )
+                if accelerator.state.num_processes > 1:
+                    grad_norm = get_grad_norm(model.module.parameters(), scale)
+                else:
+                    grad_norm = get_grad_norm(model.parameters(), scale)
+
+                # update parameters
+                optimizer.step()
+                optimizer.zero_grad()
+
+                if not accelerator.optimizer_step_was_skipped:
+                    lr_scheduler.step()
+                elif accelerator.is_local_main_process:
+                    progress_bar.write(
+                        f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
+                    )
+
+                # update gumbel temperature
+                gumbel_temperature = max(
+                    args.max_gumbel_temperature * args.gumbel_temperature_decay**completed_steps,
+                    args.min_gumbel_temperature,
+                )
+                if hasattr(model, "module"):
+                    model.module.set_gumbel_temperature(gumbel_temperature)
+                else:
+                    model.set_gumbel_temperature(gumbel_temperature)
+
+                progress_bar.update(1)
+                completed_steps += 1
+
+            # log all results
+            if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
+                loss.detach()
+                outputs.contrastive_loss.detach()
+                outputs.diversity_loss.detach()
+
+                if accelerator.state.num_processes > 1:
+                    loss = accelerator.gather_for_metrics(loss).sum()
+                    outputs.contrastive_loss = accelerator.gather_for_metrics(outputs.contrastive_loss).sum()
+                    outputs.diversity_loss = accelerator.gather_for_metrics(outputs.diversity_loss).sum()
+                    percent_masked = accelerator.gather_for_metrics(percent_masked).sum()
+
+                train_logs = {
+                    "loss": (loss * args.gradient_accumulation_steps) / num_losses,
+                    "constrast_loss": outputs.contrastive_loss / num_losses,
+                    "div_loss": outputs.diversity_loss / num_losses,
+                    "%_mask_idx": percent_masked / accelerator.num_processes,
+                    "ppl": outputs.codevector_perplexity,
+                    "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
+                    "temp": torch.tensor(gumbel_temperature),
+                    "grad_norm": torch.tensor(grad_norm),
+                }
+                log_str = ""
+                for k, v in train_logs.items():
+                    log_str += "| {}: {:.3e}".format(k, v.item())
+
+                if accelerator.is_local_main_process:
+                    progress_bar.write(log_str)
+                    if is_wandb_available():
+                        wandb.log(train_logs)
+
+            # save model every `args.saving_steps` steps
+            if (step + 1) % (args.gradient_accumulation_steps * args.saving_steps) == 0:
+                if (args.push_to_hub and epoch < args.num_train_epochs - 1) or args.output_dir is not None:
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    unwrapped_model.save_pretrained(
+                        args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
 
 
+            # if completed steps > `args.max_train_steps` stop
+            if completed_steps >= args.max_train_steps:
+                break
 
-def main():
+        
+        # validate!
+        model.eval()
 
-    #mp.set_start_method('spawn')
-    args = parse_args()
+        # init logs
+        val_logs = {
+            "val_loss": 0,
+            "val_contrastive_loss": 0,
+            "val_diversity_loss": 0,
+            "val_num_losses": 0,
+        }
+        for step, batch in enumerate(eval_dataloader):
+            with torch.no_grad():
+                batch.pop("sub_attention_mask", None)
+                outputs = model(**batch)
 
-    # ddp settings
-    args.world_size = args.gpus * args.nodes
-    os.environ['MASTER_ADDR'] = '192.168.1.194'
-    #sock = socket.socket()
-    #sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    #sock.bind(('', 0))
-    #port = str(sock.getsockname()[1])
-    os.environ['MASTER_PORT'] = '8899'
+            val_logs["val_loss"] += outputs.loss
+            val_logs["val_contrastive_loss"] += outputs.contrastive_loss
+            val_logs["val_diversity_loss"] += outputs.diversity_loss
+            val_logs["val_num_losses"] += batch["mask_time_indices"].sum()
 
-    # wandb
-    #if is_wandb_available():
-        #import wandb
-    #wandb.init(project="wav2vec2", entity="suicune")
-    #wandb.config = {"learning_rate": args.learning_rate, "epochs": args.epochs,
-    #"train_batch_size": args.per_device_train_batch_size * args.gpus,
-    #"eval_batch_size": args.per_device_eval_batch_size * args.gpus}
+        # sum over devices in multi-processing
+        if accelerator.num_processes > 1:
+            val_logs = {k: accelerator.gather_for_metrics(v).sum() for k, v in val_logs.items()}
 
-    # seed
-    if args.seed is not None:
-        set_seed(args.seed)
+        val_logs = {k: v / val_logs["val_num_losses"] for k, v in val_logs.items()}
 
-    # training
-    mp.spawn(train, nprocs=args.gpus, args=(args,))
+        log_str = ""
+        for k, v in val_logs.items():
+            log_str += "| {}: {:.3e}".format(k, v.item())
+
+        if accelerator.is_local_main_process:
+            progress_bar.write(log_str)
+            if is_wandb_available():
+                wandb.log(val_logs)
+
+        if args.output_dir is not None:
+            accelerator.wait_for_everyone()
+            unwrapped_model = accelerator.unwrap_model(model)
+            unwrapped_model.save_pretrained(
+                args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+            )
 
 
 if __name__ == "__main__":
-  main()
+    main()
 
 
 
