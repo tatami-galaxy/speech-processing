@@ -117,6 +117,10 @@ def main():
     batch["input_length"] = len(inputs.input_values[0])
     batch["attention_mask"] = inputs.attention_mask[0]
 
+    print(inputs.input_values[0].type())
+    print(inputs.attention_mask[0].type())
+    quit()
+
     return batch
 
   # maybe use raw datasets instead??
