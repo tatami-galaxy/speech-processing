@@ -1,0 +1,25 @@
+diff --git a/src/pretraining/wav2vec2_pretraining.py b/src/pretraining/wav2vec2_pretraining.py
+index 8f41ad6..3e17f42 100644
+--- a/src/pretraining/wav2vec2_pretraining.py
++++ b/src/pretraining/wav2vec2_pretraining.py
+@@ -15,6 +15,7 @@ from transformers import SchedulerType, set_seed, is_wandb_available
+ from datasets import load_from_disk
+ from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
+ from accelerate import Accelerator
++from accelerate import DistributedDataParallelKwargs
+ from accelerate.logging import get_logger
+ from tqdm.auto import tqdm
+ from dataclasses import dataclass
+@@ -270,7 +271,11 @@ def main():
+     args = parse_args()
+ 
+     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
+-    accelerator = Accelerator()
++
++    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
++
++    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
++
+     logger.info(accelerator.state, main_process_only=False)
+     if accelerator.is_local_main_process:
+ 

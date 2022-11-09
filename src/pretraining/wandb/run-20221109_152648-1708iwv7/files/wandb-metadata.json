@@ -1,0 +1,24 @@
+{
+    "os": "Linux-5.4.0-128-generic-x86_64-with-glibc2.31",
+    "python": "3.10.4",
+    "heartbeatAt": "2022-11-09T09:56:49.378563",
+    "startedAt": "2022-11-09T09:56:48.362865",
+    "docker": null,
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "gpu_count": 5,
+    "cpu_count": 128,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/ujan/speech-processing/src/pretraining/wav2vec2_pretraining.py",
+    "codePath": "src/pretraining/wav2vec2_pretraining.py",
+    "git": {
+        "remote": "https://github.com/tatami-galaxy/speech-processing.git",
+        "commit": "9fcd9438ec086d3f6a778580a9a1fc1d9246dc20"
+    },
+    "email": "ujandev@gmail.com",
+    "root": "/home/ujan/speech-processing",
+    "host": "frsd-DGX-Station-A100",
+    "username": "ujan",
+    "executable": "/home/ujan/anaconda3/envs/asr/bin/python"
+}
