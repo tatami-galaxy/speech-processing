@@ -33,6 +33,18 @@ def parse_args():
         default="/home/ujan/speech-processing/data/processed/libri_vectorized",
         help="Vectorized dataset directory",
     )
+    parser.add_argument(
+        "--demo_dataset",
+        type=str,
+        default="/home/ujan/speech-processing/data/processed/libri_vectorized_demo",
+        help="Vectorized demo dataset directory",
+    )
+    parser.add_argument(
+        "--demo",
+        type=bool,
+        default=False,
+        help="Whether to load demo vectorized dataset",
+    )
     parser.add_argument("--sampling_rate", type=int, default=16000,
         help="Audio sampling rate. Default=16000 for wav2vec2",
     )
@@ -57,19 +69,19 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=16,
+        default=8, # 16
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=16,
+        default=8, # 16
         help="Batch size (per device) for the evaluation dataloader.",
     )
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=5e-5,
+        default=5e-5,  # 5e-5
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
@@ -300,7 +312,10 @@ def main():
 
 
     # load vectorized dataset
-    vectorized_datasets = load_from_disk(args.dataset)
+    if args.demo:
+      vectorized_datasets = load_from_disk(args.demo_dataset)
+    else:
+      vectorized_datasets = load_from_disk(args.dataset)
 
     # config
 
@@ -492,7 +507,7 @@ def main():
 
             # save model every `args.saving_steps` steps
             if (step + 1) % (args.gradient_accumulation_steps * args.saving_steps) == 0:
-                if (args.push_to_hub and epoch < args.num_train_epochs - 1) or args.output_dir is not None:
+                if (epoch < args.num_train_epochs - 1) or args.output_dir is not None:
                     accelerator.wait_for_everyone()
                     unwrapped_model = accelerator.unwrap_model(model)
                     unwrapped_model.save_pretrained(

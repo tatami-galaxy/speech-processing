@@ -14,11 +14,17 @@ def parse_args():
   parser.add_argument("--huggingface", type=bool, default=True,
     help="If its on HuggingFace",)
 
+  parser.add_argument("--demo", type=bool, default=False,
+    help="Only clean set for demo",)
+
   parser.add_argument("--cache_dir", type=str,default="~/.cache/huggingface/datasets",
     help="Cache directory",)
 
   parser.add_argument("--processed_data_dir", type=str,default="~/speech-processing/data/processed/libri_vectorized",
     help="Processed data directory.",)
+
+  parser.add_argument("--processed_demo_data_dir", type=str,default="~/speech-processing/data/processed/libri_vectorized_demo",
+    help="Processed demo data directory.",)
 
   parser.add_argument("--seed", type=int, default=0, help="A seed for reproducible training.")
 
@@ -56,7 +62,10 @@ def main():
 
   if args.huggingface:
     # load dataset from huggingface or cache
-    dataset = load_dataset(args.dataset, cache_dir=args.cache_dir)
+    if args.demo:
+      dataset = load_dataset(args.dataset, name="clean", cache_dir=args.cache_dir)
+    else:
+      dataset = load_dataset(args.dataset, cache_dir=args.cache_dir)
     # concatenate train, validation amd test splits
     train_sets = []
     valid_sets = []
@@ -69,6 +78,8 @@ def main():
     validset = concatenate_datasets(valid_sets).shuffle(seed=args.seed)
     testset = concatenate_datasets(test_sets).shuffle(seed=args.seed)
     raw_datasets = DatasetDict({'train':trainset, 'validation':validset, 'test':testset})
+    #print(raw_datasets)
+    #quit()
 
   # preprocessing
 
@@ -117,9 +128,9 @@ def main():
     batch["input_length"] = len(inputs.input_values[0])
     batch["attention_mask"] = inputs.attention_mask[0]
 
-    print(inputs.input_values[0].type())
-    print(inputs.attention_mask[0].type())
-    quit()
+    #print(inputs.input_values[0].type())
+    #print(inputs.attention_mask[0].type())
+    #quit()
 
     return batch
 
@@ -137,7 +148,10 @@ def main():
   vectorized_datasets = vectorized_datasets.remove_columns("input_length")
 
   # save to disk
-  vectorized_datasets.save_to_disk(args.processed_data_dir)
+  if args.demo:
+    vectorized_datasets.save_to_disk(args.processed_demo_data_dir)
+  else:
+    vectorized_datasets.save_to_disk(args.processed_data_dir)
      
 
 
