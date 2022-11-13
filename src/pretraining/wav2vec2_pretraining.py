@@ -241,7 +241,7 @@ class DataCollatorForWav2Vec2Pretraining:
             self.model.config.mask_time_prob,
             self.model.config.mask_time_length,
             attention_mask=batch.get("sub_attention_mask"),
-            min_masks = 1,
+            min_masks = 1,  # default 0, causes errors
         )
 
         # sample negative indices
