@@ -463,6 +463,10 @@ def main():
     tokenizer.save_pretrained(args.output_dir+'tokenizer')
     feature_extractor.save_pretrained(args.output_dir+'feature_extractor')
 
+    # write model name
+    with open(args.output_dir+'model_name', 'w') as f:
+        f.write(args.model_name_or_path)
+
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
     # be a timeout when running the script in distributed mode.

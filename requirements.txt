@@ -1,3 +1,6 @@
+mkdir data -> raw, processed, interim
+mkdir models
+
 pytorch
 transformers
 datasets
