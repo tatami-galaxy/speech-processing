@@ -68,13 +68,11 @@ def create_vocabulary_from_data(
         remove_columns=datasets["train"].column_names,
     )
 
-    # take union of all unique characters in each dataset
-    vocab_set = functools.reduce(
-        lambda vocab_1, vocab_2, vocab_3: set(vocab_1["vocab"][0]) | set(vocab_2["vocab"][0]) | set(vocab_3["vocab"][0]),
-        vocabs.values()
-    )
 
-    vocab_dict = {v: k for k, v in enumerate(sorted(list(vocab_set)))}
+    # take union of all unique characters in each dataset
+    vocab_list = list(set(vocabs["train"]["vocab"][0]) | set(vocabs["validation"]["vocab"][0]) | set(vocabs["test"]["vocab"][0]))
+
+    vocab_dict = {v: k for k, v in enumerate(sorted(vocab_list))}
 
     # replace white space with delimiter token
     if word_delimiter_token is not None:
@@ -103,6 +101,8 @@ def main():
     chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
     argp = ArgumentParser()
+
+    # CLI Arguments #
 
     argp.add_argument(
         '--seed',
@@ -150,21 +150,14 @@ def main():
         '--audio_column',
         type=str,
         default="audio",
-        help="The name of the dataset column containing the audio data. Defaults to audio."
+        help="The name of the dataset column containing the audio data. Defaults to audio for cv."
     )
 
     argp.add_argument(
         '--text_column',
         type=str,
-        default="text",
-        help="The name of the dataset column containing the text data. Defaults to text."
-    )
-
-    argp.add_argument(
-        '--overwrite_cache',
-        type=bool,
-        default=False,
-        help="Overwrite the cached preprocessed datasets or not."
+        default="sentence",
+        help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
 
     argp.add_argument(
@@ -260,7 +253,7 @@ def main():
     argp.add_argument(
         '--output_dir',
         type=str,
-        default=root+'/data/processed/cv/',
+        default=root+'/data/processed/cv/',  # take into account tokenizer config maybe?
         help="Where do you want to store the pretrained models downloaded from huggingface.co"
     )
 
@@ -271,7 +264,17 @@ def main():
     # set seed before initializing model.
     set_seed(args.seed)
 
-    # load the dataset
+    # check if model path is None
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model name or path for tokenizer"
+        )
+
+    # check if output directory exist
+    if not os.path.isdir(args.output_dir):
+        os.mkdir(args.output_dir)
+
+    # Load the dataset #
     print('Loading dataset')
     raw_datasets = DatasetDict()
 
@@ -291,6 +294,8 @@ def main():
         split=args.test_split,
     )
 
+    #raw_datasets.cleanup_cache_files()
+
     if args.audio_column not in raw_datasets["train"].column_names:
         raise ValueError(
             f"--audio_column '{args.audio_column}' not found in dataset '{args.dataset}'."
@@ -301,7 +306,7 @@ def main():
     if args.text_column not in raw_datasets["train"].column_names:
         raise ValueError(
             f"--text_column {args.text_column} not found in dataset '{args.dataset}'. "
-            "Make sure to set `--text_column_name` to the correct text column - one of "
+            "Make sure to set `--text_column` to the correct text column - one of "
             f"{', '.join(raw_datasets['train'].column_names)}."
         )
 
@@ -316,6 +321,8 @@ def main():
 
 
     text_column = args.text_column
+
+    # Remove Special Characters #
 
     def remove_special_characters(batch):
         if chars_to_ignore_regex is not None:
@@ -338,6 +345,8 @@ def main():
     # load the config as we might need it to create the tokenizer
     # load config
     config = AutoConfig.from_pretrained(args.model_name_or_path)
+
+    # Make Vocab #
 
     # if no tokenizer file is defined,
     # we create the vocabulary of the model by extracting all unique characters from
@@ -387,6 +396,8 @@ def main():
     # for distributed training, the .from_pretrained methods guarantee that only
     # one local process can concurrently download model & vocab.
 
+    # Tokenizer and Feature extractor #
+
     # load feature_extractor and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_name_or_path,
@@ -413,7 +424,8 @@ def main():
     num_workers = args.preprocessing_num_workers
 
 
-    # Preprocessing the datasets.
+    # Preprocessing Datasets #
+
     # We need to read the audio files as arrays and tokenize the targets.
     def prepare_dataset(batch):
         # load audio
@@ -446,12 +458,19 @@ def main():
         input_columns=["input_length"],
     )
 
+    print('Saving..')
+    vectorized_datasets.save_to_disk(args.output_dir+'vectorized_dataset')
+    tokenizer.save_pretrained(args.output_dir+'tokenizer')
+    feature_extractor.save_pretrained(args.output_dir+'feature_extractor')
+
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with ``args.preprocessing_only`` since there will mostly likely
     # be a timeout when running the script in distributed mode.
     # In a second step ``args.preprocessing_only`` can then be set to `False` to load the
     # cached dataset
-    print("Data preprocessing finished. Files cached at {vectorized_datasets.cache_files}")
+    #print("Data preprocessing finished. Files cached at {}".format(vectorized_datasets.cache_files))
+    print("Data preprocessing finished.")
+
     return
 
 
