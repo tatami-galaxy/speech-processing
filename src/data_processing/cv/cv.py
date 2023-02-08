@@ -114,7 +114,7 @@ def main():
     argp.add_argument(
         '--dataset',
         type=str,
-        default="common_voice",
+        default="mozilla-foundation/common_voice_11_0",
         help="The configuration name of the dataset to use (via the datasets library)"
     )
 
