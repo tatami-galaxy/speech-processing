@@ -414,6 +414,7 @@ def main():
 
     # Detecting last checkpoint.
     # where to store checkpoint? -> output_dir
+    # check when checkpoint is loaded
     last_checkpoint = None
     if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(args.output_dir)
