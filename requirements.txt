@@ -1,5 +1,5 @@
-mkdir data -> raw, processed, interim
-mkdir models
+mkdir data -> raw; processed -> processed data folders; interim
+mkdir models -> model folders
 
 pytorch
 transformers

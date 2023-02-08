@@ -196,13 +196,6 @@ def main():
     )
 
     argp.add_argument(
-        '--eval_metrics',
-        type=List[str],
-        default=["cer"],
-        help="A list of metrics the model should be evaluated on."
-    )
-
-    argp.add_argument(
         '--max_duration',
         type=float,
         default=20.0,
@@ -240,7 +233,7 @@ def main():
     argp.add_argument(
         '--model_name_or_path',
         type=str,
-        default='kehanlu/mandarin-wav2vec2',
+        default=None,
         help="Path to pretrained model or model identifier from huggingface.co/models"
     )
 
@@ -461,12 +454,14 @@ def main():
     )
 
     print('Saving..')
-    vectorized_datasets.save_to_disk(args.output_dir+'vectorized_dataset')
-    tokenizer.save_pretrained(args.output_dir+'tokenizer')
-    feature_extractor.save_pretrained(args.output_dir+'feature_extractor')
+    vectorized_datasets.save_to_disk(args.output_dir+'/vectorized_dataset')
+    # save feature extractor, tokenizer and config
+    tokenizer.save_pretrained(args.output_dir+'/tokenizer')
+    feature_extractor.save_pretrained(args.output_dir+'/feature_extractor')
+    config.save_pretrained(args.output_dir+'/config')
 
     # write model name
-    with open(args.output_dir+'model_name', 'w') as f:
+    with open(args.output_dir+'model_name.txt', 'w') as f:
         f.write(args.model_name_or_path)
 
     # for large datasets it is advised to run the preprocessing on a
@@ -476,6 +471,7 @@ def main():
     # cached dataset
     #print("Data preprocessing finished. Files cached at {}".format(vectorized_datasets.cache_files))
     print("Data preprocessing finished.")
+    print("Stored at {}".format(args.output_dir))
 
     return
 

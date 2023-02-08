@@ -41,8 +41,8 @@ from transformers import (
     AutoProcessor,
     AutoTokenizer,
     Trainer,
-    TrainingArguments,
     Wav2Vec2Processor,
+    TrainingArguments,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
@@ -133,6 +133,7 @@ def main():
 
     # CLI Arguments #
 
+
     # seed
     argp.add_argument(
         '--seed',
@@ -140,6 +141,7 @@ def main():
         default=42,
         help="Seed"
     )
+
 
     # dataset args
     argp.add_argument(
@@ -149,20 +151,23 @@ def main():
         help="Path to processed data, tokenizer, extractor."
     )
 
+
     # model args
     argp.add_argument(
         '--model_name_or_path',
         type=str,
+        default=None,
         help="Path to pretrained model or model identifier from huggingface.co/models"
     )
     argp.add_argument(
-        '--tokenizer_name_or_path',
+        '--output_dir',
         type=str,
-        default=None,
-        help="Path to pretrained tokenizer or tokenizer identifier from huggingface.co/models"
+        default=root+'/models/wav2vec2/',
+        help="Where do you want to store the pretrained models downloaded from huggingface.co"
     )
 
-    # model training args
+
+    # model config args
     argp.add_argument(
         '--freeze_feature_encoder',
         type=bool,
@@ -239,12 +244,9 @@ def main():
         default="mean",
         help="The way the ctc loss should be reduced. Should be one of 'mean' or 'sum'."
     )
-    argp.add_argument(
-        '--output_dir',
-        type=str,
-        default=root+'/models/wav2vec2/',
-        help="Where do you want to store the pretrained models downloaded from huggingface.co"
-    )
+
+
+    # model training args
     argp.add_argument(
         '--do_train',
         type=bool,
@@ -252,11 +254,103 @@ def main():
         help="Whether to train the model."
     )
     argp.add_argument(
+        '--do_eval',
+        type=bool,
+        default=True,
+        help="Whether to evaluatte the model."
+    )
+    argp.add_argument(
         '--overwrite_output_dir',
         type=bool,
         default=True,
         help="Whether to overwrite output directory."
     )
+    argp.add_argument(
+        '--gradient_checkpointing',
+        type=bool,
+        default=False,
+        help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
+    )
+    argp.add_argument(
+        '--group_by_length',
+        type=bool,
+        default=True
+    )
+    argp.add_argument(
+        '--per_device_train_batch_size',
+        type=int,
+        default=32
+    )
+    argp.add_argument(
+        '--per_device_eval_batch_size',
+        type=int,
+        default=8
+    )
+    argp.add_argument(
+        '--gradient_accumulation_steps',
+        type=int,
+        default=1
+    )
+    argp.add_argument(
+        '--eval_accumulation_steps',
+        type=int,
+        default=16
+    )
+    argp.add_argument(
+        '--evaluation_strategy',
+        type=str,
+        default="str"
+    )
+    argp.add_argument(
+        '--num_train_epochs',
+        type=int,
+        default=30
+    )
+    argp.add_argument(
+        '--save_steps',
+        type=int,
+        default=1000
+    )
+    argp.add_argument(
+        '--eval_steps',
+        type=int,
+        default=1000
+    )
+    argp.add_argument(
+        '--logging_steps',
+        type=int,
+        default=1000
+    )
+    argp.add_argument(
+        '--warmup_steps',
+        type=int,
+        default=0
+    )
+    argp.add_argument(
+        '--learning_rate',
+        type=float,
+        default=0.0002
+    )
+    argp.add_argument(
+        '--weight_decay',
+        type=float,
+        default=0.0
+    )
+    argp.add_argument(
+        '--save_total_limit',
+        type=int,
+        default=2
+    )
+    
+
+    # model eval args
+    argp.add_argument(
+        '--eval_metrics',
+        type=List[str],
+        default=["cer"],
+        help="A list of metrics the model should be evaluated on."
+    )
+
 
     # hardware args
     argp.add_argument(
@@ -290,12 +384,16 @@ def main():
         raise ValueError(
             f"pass in processed data directory"
         )
-    elif not os.path.isdir(args.processed_data_dir):
+    if not os.path.isdir(args.processed_data_dir):
         raise ValueError(
             f"processed data directory does not exist"
         )
 
     # check if output directory exist
+    if args.output_dir is None:
+        raise ValueError(
+            f"pass in output directory"
+        )
     if not os.path.isdir(args.output_dir):
         os.mkdir(args.output_dir)
 
@@ -305,6 +403,7 @@ def main():
     send_example_telemetry("run_speech_recognition_ctc", args)
 
     # Detecting last checkpoint.
+    # where to store checkpoint?
     last_checkpoint = None
     if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(args.output_dir)
@@ -339,180 +438,60 @@ def main():
 
 
 
-    # Load Pre-processed Datasets #
+    # Load Pre-processed Datasets and Models #
 
     # load dataset
+    print('loading processed data from {}'.format(args.processed_data_dir))
+    with open(args.processed_data_dir+'model_name.txt') as f:
+        processed_config = f.readline()
+        print('dataset was processed with config from {}'.format(processed_config))
     vectorized_datasets = load_from_disk(args.processed_data_dir+'/vectorized_dataset')
 
     # load config
-    config = AutoConfig.from_pretrained(
-        model_args.model_name_or_path, cache_dir=model_args.cache_dir, use_auth_token=data_args.use_auth_token
-    )
+    config = AutoConfig.from_pretrained(args.processed_data_dir+'/config')
 
-    # 4. Next, if no tokenizer file is defined,
-    # we create the vocabulary of the model by extracting all unique characters from
-    # the training and evaluation datasets
-    # We need to make sure that only first rank saves vocabulary
-    # make sure all processes wait until vocab is created
-    tokenizer_name_or_path = model_args.tokenizer_name_or_path
-    tokenizer_kwargs = {}
-    if tokenizer_name_or_path is None:
-        # save vocab in training output dir
-        tokenizer_name_or_path = training_args.output_dir
+    # load tokenizer
+    print('loading tokenizer..')
+    tokenizer = AutoTokenizer.from_pretrained(args.processed_data_dir+'/tokenizer')
 
-        vocab_file = os.path.join(tokenizer_name_or_path, "vocab.json")
-
-        with training_args.main_process_first():
-            if training_args.overwrite_output_dir and os.path.isfile(vocab_file):
-                try:
-                    os.remove(vocab_file)
-                except OSError:
-                    # in shared file-systems it might be the case that
-                    # two processes try to delete the vocab file at the some time
-                    pass
-
-        with training_args.main_process_first(desc="dataset map vocabulary creation"):
-            if not os.path.isfile(vocab_file):
-                os.makedirs(tokenizer_name_or_path, exist_ok=True)
-                vocab_dict = create_vocabulary_from_data(
-                    raw_datasets,
-                    word_delimiter_token=word_delimiter_token,
-                    unk_token=unk_token,
-                    pad_token=pad_token,
-                )
-
-                # save vocab dict to be loaded into tokenizer
-                with open(vocab_file, "w") as file:
-                    json.dump(vocab_dict, file)
-
-        # if tokenizer has just been created
-        # it is defined by `tokenizer_class` if present in config else by `model_type`
-        tokenizer_kwargs = {
-            "config": config if config.tokenizer_class is not None else None,
-            "tokenizer_type": config.model_type if config.tokenizer_class is None else None,
-            "unk_token": unk_token,
-            "pad_token": pad_token,
-            "word_delimiter_token": word_delimiter_token,
-        }
-
-    # 5. Now we can instantiate the feature extractor, tokenizer and model
-    # Note for distributed training, the .from_pretrained methods guarantee that only
-    # one local process can concurrently download model & vocab.
-
-    # load feature_extractor and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_name_or_path,
-        use_auth_token=data_args.use_auth_token,
-        **tokenizer_kwargs,
-    )
-    feature_extractor = AutoFeatureExtractor.from_pretrained(
-        model_args.model_name_or_path, cache_dir=model_args.cache_dir, use_auth_token=data_args.use_auth_token
-    )
+    # load feature exatractor
+    feature_extractor = AutoFeatureExtractor.from_pretrained(args.processed_data_dir+'/feature_extractor')
 
     # adapt config
     config.update(
         {
-            "feat_proj_dropout": model_args.feat_proj_dropout,
-            "attention_dropout": model_args.attention_dropout,
-            "hidden_dropout": model_args.hidden_dropout,
-            "final_dropout": model_args.final_dropout,
-            "mask_time_prob": model_args.mask_time_prob,
-            "mask_time_length": model_args.mask_time_length,
-            "mask_feature_prob": model_args.mask_feature_prob,
-            "mask_feature_length": model_args.mask_feature_length,
-            "gradient_checkpointing": training_args.gradient_checkpointing,
-            "layerdrop": model_args.layerdrop,
-            "ctc_loss_reduction": model_args.ctc_loss_reduction,
+            "feat_proj_dropout": args.feat_proj_dropout,
+            "attention_dropout": args.attention_dropout,
+            "hidden_dropout": args.hidden_dropout,
+            "final_dropout": args.final_dropout,
+            "mask_time_prob": args.mask_time_prob,
+            "mask_time_length": args.mask_time_length,
+            "mask_feature_prob": args.mask_feature_prob,
+            "mask_feature_length": args.mask_feature_length,
+            "gradient_checkpointing": args.gradient_checkpointing,
+            "layerdrop": args.layerdrop,
+            "ctc_loss_reduction": args.ctc_loss_reduction,
             "pad_token_id": tokenizer.pad_token_id,
             "vocab_size": len(tokenizer),
-            "activation_dropout": model_args.activation_dropout,
+            "activation_dropout": args.activation_dropout,
         }
     )
 
-    # create model
-    model = AutoModelForCTC.from_pretrained(
-        model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        config=config,
-        use_auth_token=data_args.use_auth_token,
-    )
+    # load model
+    model = AutoModelForCTC.from_pretrained(args.model_name_or_path, config=config)
 
-    # freeze encoder
-    if model_args.freeze_feature_encoder:
+    # Freeze Encoder #
+    if args.freeze_feature_encoder:
         model.freeze_feature_encoder()
 
-    # 6. Now we preprocess the datasets including loading the audio, resampling and normalization
-    # Thankfully, `datasets` takes care of automatically loading and resampling the audio,
-    # so that we just need to set the correct target sampling rate and normalize the input
-    # via the `feature_extractor`
 
-    # make sure that dataset decodes audio with correct sampling rate
-    dataset_sampling_rate = next(iter(raw_datasets.values())).features[data_args.audio_column_name].sampling_rate
-    if dataset_sampling_rate != feature_extractor.sampling_rate:
-        raw_datasets = raw_datasets.cast_column(
-            data_args.audio_column_name, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        )
+    # Evaluation Metric #
 
-    # derive max & min input length for sample rate & max duration
-    max_input_length = data_args.max_duration_in_seconds * feature_extractor.sampling_rate
-    min_input_length = data_args.min_duration_in_seconds * feature_extractor.sampling_rate
-    audio_column_name = data_args.audio_column_name
-    num_workers = data_args.preprocessing_num_workers
-
-    # `phoneme_language` is only relevant if the model is fine-tuned on phoneme classification
-    phoneme_language = data_args.phoneme_language
-
-    # Preprocessing the datasets.
-    # We need to read the audio files as arrays and tokenize the targets.
-    def prepare_dataset(batch):
-        # load audio
-        sample = batch[audio_column_name]
-
-        inputs = feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
-        batch["input_values"] = inputs.input_values[0]
-        batch["input_length"] = len(batch["input_values"])
-
-        # encode targets
-        additional_kwargs = {}
-        if phoneme_language is not None:
-            additional_kwargs["phonemizer_lang"] = phoneme_language
-
-        batch["labels"] = tokenizer(batch["target_text"], **additional_kwargs).input_ids
-        return batch
-
-    with training_args.main_process_first(desc="dataset map preprocessing"):
-        vectorized_datasets = raw_datasets.map(
-            prepare_dataset,
-            remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=num_workers,
-            desc="preprocess datasets",
-        )
-
-        def is_audio_in_length_range(length):
-            return length > min_input_length and length < max_input_length
-
-        # filter data that is shorter than min_input_length
-        vectorized_datasets = vectorized_datasets.filter(
-            is_audio_in_length_range,
-            num_proc=num_workers,
-            input_columns=["input_length"],
-        )
-
-    # 7. Next, we can prepare the training.
-    # Let's use word error rate (WER) as our evaluation metric,
     # instantiate a data collator and the trainer
-
     # Define evaluation metrics during training, *i.e.* word error rate, character error rate
-    eval_metrics = {metric: evaluate.load(metric) for metric in data_args.eval_metrics}
 
-    # for large datasets it is advised to run the preprocessing on a
-    # single machine first with ``args.preprocessing_only`` since there will mostly likely
-    # be a timeout when running the script in distributed mode.
-    # In a second step ``args.preprocessing_only`` can then be set to `False` to load the
-    # cached dataset
-    if data_args.preprocessing_only:
-        logger.info(f"Data preprocessing finished. Files cached at {vectorized_datasets.cache_files}")
-        return
+    # load from file for offline
+    eval_metrics = {metric: evaluate.load(metric) for metric in args.eval_metrics}
 
     def compute_metrics(pred):
         pred_logits = pred.predictions
@@ -528,48 +507,55 @@ def main():
 
         return metrics
 
-    # Now save everything to be able to create a single processor later
-    if is_main_process(training_args.local_rank):
-        # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(training_args.output_dir)
-        tokenizer.save_pretrained(training_args.output_dir)
-        config.save_pretrained(training_args.output_dir)
-
-    try:
-        processor = AutoProcessor.from_pretrained(training_args.output_dir)
-    except (OSError, KeyError):
-        warnings.warn(
-            "Loading a processor from a feature extractor config that does not"
-            " include a `processor_class` attribute is deprecated and will be removed in v5. Please add the following "
-            " attribute to your `preprocessor_config.json` file to suppress this warning: "
-            " `'processor_class': 'Wav2Vec2Processor'`",
-            FutureWarning,
-        )
-        processor = Wav2Vec2Processor.from_pretrained(training_args.output_dir)
+    # processor
+    processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
     # Instantiate custom data collator
     data_collator = DataCollatorCTCWithPadding(processor=processor)
 
-    # Initialize Trainer
+    # Training Arguments #
+
+    training_args = TrainingArguments(
+        output_dir=args.output_dir,
+        group_by_length=args.group_by_length,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        eval_accumulation_steps=args.eval_accumulation_steps,
+        evaluation_strategy=args.evaluation_strategy,
+        num_train_epochs=args.num_train_epochs,
+        fp16=args.fp16,
+        gradient_checkpointing=args.gradient_checkpointing,
+        save_steps=args.save_steps,
+        eval_steps=args.eval_steps,
+        logging_steps=args.logging_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        warmup_steps=args.warmup_steps,
+        save_total_limit=args.save_total_limit,
+    )
+
+
+    # initialize Trainer
     trainer = Trainer(
         model=model,
         data_collator=data_collator,
         args=training_args,
         compute_metrics=compute_metrics,
-        train_dataset=vectorized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=vectorized_datasets["eval"] if training_args.do_eval else None,
+        train_dataset=vectorized_datasets["train"] if args.do_train else None,
+        eval_dataset=vectorized_datasets["eval"] if args.do_eval else None,
         tokenizer=feature_extractor,
     )
 
-    # 8. Finally, we can start training
+    # Start training #
 
     # Training
-    if training_args.do_train:
+    if args.do_train:
         # use last checkpoint if exist
         if last_checkpoint is not None:
             checkpoint = last_checkpoint
-        elif os.path.isdir(model_args.model_name_or_path):
-            checkpoint = model_args.model_name_or_path
+        elif os.path.isdir(args.model_name_or_path):
+            checkpoint = args.model_name_or_path
         else:
             checkpoint = None
 
