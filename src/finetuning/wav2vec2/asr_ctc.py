@@ -341,6 +341,16 @@ def main():
         type=int,
         default=2
     )
+    argp.add_argument(
+        '--load_best_model_at_end',
+        type=bool,
+        default=True
+    )
+    argp.add_argument(
+        '--metric_for_best_model',
+        type=str,
+        default='cer'
+    )
     
 
     # model eval args
@@ -389,13 +399,13 @@ def main():
             f"processed data directory does not exist"
         )
 
-    # check if output directory exist
+    # check if output directory is passed in
     if args.output_dir is None:
         raise ValueError(
             f"pass in output directory"
         )
-    if not os.path.isdir(args.output_dir):
-        os.mkdir(args.output_dir)
+    #if not os.path.isdir(args.output_dir):
+        #os.mkdir(args.output_dir)
 
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -403,7 +413,7 @@ def main():
     send_example_telemetry("run_speech_recognition_ctc", args)
 
     # Detecting last checkpoint.
-    # where to store checkpoint?
+    # where to store checkpoint? -> output_dir
     last_checkpoint = None
     if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(args.output_dir)
@@ -533,6 +543,8 @@ def main():
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
         save_total_limit=args.save_total_limit,
+        load_best_model_at_end=args.oad_best_model_at_end,
+        metric_for_best_model=args.metric_for_best_model
     )
 
 
@@ -554,8 +566,8 @@ def main():
         # use last checkpoint if exist
         if last_checkpoint is not None:
             checkpoint = last_checkpoint
-        elif os.path.isdir(args.model_name_or_path):
-            checkpoint = args.model_name_or_path
+        #elif os.path.isdir(args.model_name_or_path):
+            #checkpoint = args.model_name_or_path
         else:
             checkpoint = None
 
@@ -564,8 +576,8 @@ def main():
 
         metrics = train_result.metrics
         max_train_samples = (
-            data_args.max_train_samples
-            if data_args.max_train_samples is not None
+            args.max_train_samples
+            if args.max_train_samples is not None
             else len(vectorized_datasets["train"])
         )
         metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
@@ -574,40 +586,18 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
-    # Evaluation
-    results = {}
+    # Evaluation # 
+
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
         max_eval_samples = (
-            data_args.max_eval_samples if data_args.max_eval_samples is not None else len(vectorized_datasets["eval"])
+            args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["eval"])
         )
         metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["eval"]))
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
-
-    # Write model card and (optionally) push to hub
-    config_name = data_args.dataset_config_name if data_args.dataset_config_name is not None else "na"
-    kwargs = {
-        "finetuned_from": model_args.model_name_or_path,
-        "tasks": "automatic-speech-recognition",
-        "tags": ["automatic-speech-recognition", data_args.dataset_name],
-        "dataset_args": (
-            f"Config: {config_name}, Training split: {data_args.train_split_name}, Eval split:"
-            f" {data_args.eval_split_name}"
-        ),
-        "dataset": f"{data_args.dataset_name.upper()} - {config_name.upper()}",
-    }
-    if "common_voice" in data_args.dataset_name:
-        kwargs["language"] = config_name
-
-    if training_args.push_to_hub:
-        trainer.push_to_hub(**kwargs)
-    else:
-        trainer.create_model_card(**kwargs)
-
-    return results
 
 
 if __name__ == "__main__":
