@@ -275,7 +275,7 @@ def main():
         os.mkdir(args.output_dir)
 
     # Load the dataset #
-    print('Loading dataset')
+    print('Loading dataset {} : {}'.format(args.dataset, args.dataset_config))
     raw_datasets = DatasetDict()
 
     raw_datasets["train"] = load_dataset(
