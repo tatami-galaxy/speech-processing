@@ -299,7 +299,7 @@ def main():
     argp.add_argument(
         '--evaluation_strategy',
         type=str,
-        default="str"
+        default="steps"
     )
     argp.add_argument(
         '--num_train_epochs',
@@ -543,7 +543,7 @@ def main():
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
         save_total_limit=args.save_total_limit,
-        load_best_model_at_end=args.oad_best_model_at_end,
+        load_best_model_at_end=args.load_best_model_at_end,
         metric_for_best_model=args.metric_for_best_model
     )
 
@@ -555,7 +555,7 @@ def main():
         args=training_args,
         compute_metrics=compute_metrics,
         train_dataset=vectorized_datasets["train"] if args.do_train else None,
-        eval_dataset=vectorized_datasets["eval"] if args.do_eval else None,
+        eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
         tokenizer=feature_extractor,
     )
 
@@ -598,6 +598,8 @@ def main():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+    print("Saved in {}".format(args.output_dir))
 
 
 if __name__ == "__main__":

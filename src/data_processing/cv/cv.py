@@ -261,7 +261,7 @@ def main():
     # check if model path is None
     if args.model_name_or_path is None:
         raise ValueError(
-            f"pass in model name or path for tokenizer"
+            f"pass in model_name_or_path for tokenizer"
         )
 
     # check if output directory exist
