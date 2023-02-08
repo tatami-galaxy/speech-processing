@@ -240,6 +240,7 @@ def main():
     argp.add_argument(
         '--model_name_or_path',
         type=str,
+        default='kehanlu/mandarin-wav2vec2',
         help="Path to pretrained model or model identifier from huggingface.co/models"
     )
 
@@ -452,6 +453,7 @@ def main():
         return length > min_input_length and length < max_input_length
 
     # filter data that is shorter than min_input_length
+    print('filtering')
     vectorized_datasets = vectorized_datasets.filter(
         is_audio_in_length_range,
         num_proc=num_workers,
