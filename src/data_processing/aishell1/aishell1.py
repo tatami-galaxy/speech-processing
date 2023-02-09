@@ -16,6 +16,7 @@
 """ Fine-tuning a 🤗 Transformers CTC model for automatic speech recognition"""
 
 import functools
+from functools import partial
 import json
 import os
 from os.path import dirname, abspath
@@ -89,6 +90,22 @@ def create_vocabulary_from_data(
     return vocab_dict
 
 
+def path_remap(x, args):
+
+    # get audio path
+    path_list = x['audio'].split('/')
+
+    for i in range(len(path_list)):
+        if path_list[i] == 'wav': break
+
+    new_path = '/'.join(path_list[i:])
+    new_path = args.dataset_dir+new_path
+    x['audio'] = new_path
+
+    return x
+
+
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -112,17 +129,10 @@ def main():
     )
 
     argp.add_argument(
-        '--dataset',
+        '--dataset_dir',
         type=str,
-        default="common_voice",
-        help="The configuration name of the dataset to use (via the datasets library)"
-    )
-
-    argp.add_argument(
-        '--dataset_config',
-        default="zh-CN",
-        type=str,
-        help="The configuration name of the dataset to use (via the datasets library)"
+        default=root+'/data/interim/aishell1/',
+        help="Dataset directory"
     )
 
     argp.add_argument(
@@ -247,8 +257,8 @@ def main():
     argp.add_argument(
         '--output_dir',
         type=str,
-        default=root+'/data/processed/cv/',  # take into account tokenizer config maybe?
-        help="Where do you want to store the pretrained models downloaded from huggingface.co"
+        default=root+'/data/processed/aishell1/',  # take into account tokenizer config maybe?
+        help="Where do you want to store the processed data etc."
     )
 
 
@@ -269,24 +279,20 @@ def main():
         os.mkdir(args.output_dir)
 
     # Load the dataset #
-    print('Loading dataset {} : {}'.format(args.dataset, args.dataset_config))
-    raw_datasets = DatasetDict()
 
-    raw_datasets["train"] = load_dataset(
-        args.dataset,
-        args.dataset_config,
-        split=args.train_split,
-    )
-    raw_datasets["validation"] = load_dataset(
-        args.dataset,
-        args.dataset_config,
-        split=args.eval_split,
-    )
-    raw_datasets["test"] = load_dataset(
-        args.dataset,
-        args.dataset_config,
-        split=args.test_split,
-    )
+    print('Loading dataset from {}'.format(args.dataset_dir))
+
+    # data files
+    data_files = {
+        'train': args.dataset_dir+'/train.csv',
+        'validation': args.dataset_dir+'/validation.csv',
+        'test': args.dataset_dir+'/test.csv',
+        }
+
+    raw_datasets = load_dataset('csv', data_files=data_files)
+
+    # map to new audio path
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
     #raw_datasets.cleanup_cache_files()
 

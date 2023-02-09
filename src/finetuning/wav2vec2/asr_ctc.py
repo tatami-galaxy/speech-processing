@@ -268,7 +268,7 @@ def main():
     argp.add_argument(
         '--gradient_checkpointing',
         type=bool,
-        default=False,
+        default=True,
         help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
     )
     argp.add_argument(
@@ -279,7 +279,7 @@ def main():
     argp.add_argument(
         '--per_device_train_batch_size',
         type=int,
-        default=32
+        default=16
     )
     argp.add_argument(
         '--per_device_eval_batch_size',
