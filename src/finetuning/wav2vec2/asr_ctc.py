@@ -263,7 +263,7 @@ def main():
         '--overwrite_output_dir',
         type=bool,
         default=True,
-        help="Whether to overwrite output directory."
+        help="Whether to overwrite output directory. Need to be False to load checkpoint"
     )
     argp.add_argument(
         '--gradient_checkpointing',
@@ -417,6 +417,7 @@ def main():
     # check when checkpoint is loaded
     last_checkpoint = None
     if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
+        print('Checkpoint found')
         last_checkpoint = get_last_checkpoint(args.output_dir)
         if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
             raise ValueError(
@@ -567,10 +568,12 @@ def main():
         # use last checkpoint if exist
         if last_checkpoint is not None:
             checkpoint = last_checkpoint
-        #elif os.path.isdir(args.model_name_or_path):
-            #checkpoint = args.model_name_or_path
+        elif os.path.isdir(args.model_name_or_path):
+            checkpoint = args.model_name_or_path
         else:
             checkpoint = None
+
+        print('checkpoint : {}'.format(checkpoint))
 
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
