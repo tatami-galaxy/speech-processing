@@ -24,6 +24,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
+from os.path import dirname, abspath
 import argparse
 from argparse import ArgumentParser
 
@@ -60,168 +61,6 @@ while root.split('/')[-1] != 'speech-processing':
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    feature_extractor_name: Optional[str] = field(
-        default=None, metadata={"help": "feature extractor name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None,
-        metadata={"help": "Where to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-    model_revision: str = field(
-        default="main",
-        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
-    )
-    use_auth_token: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "Will use the token generated when running `huggingface-cli login` (necessary to use this script "
-                "with private models)."
-            )
-        },
-    )
-    freeze_feature_encoder: bool = field(
-        default=True, metadata={"help": "Whether to freeze the feature encoder layers of the model."}
-    )
-    freeze_encoder: bool = field(
-        default=False, metadata={"help": "Whether to freeze the entire encoder of the seq2seq model."}
-    )
-    forced_decoder_ids: List[List[int]] = field(
-        default=None,
-        metadata={
-            "help": (
-                "A list of pairs of integers which indicates a mapping from generation indices to token indices "
-                "that will be forced before sampling. For example, [[0, 123]] means the first generated token "
-                "will always be a token of index 123."
-            )
-        },
-    )
-    suppress_tokens: List[int] = field(
-        default=None, metadata={"help": "A list of tokens that will be suppressed at generation."}
-    )
-
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
-    dataset_name: str = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
-    )
-    dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
-    )
-    text_column: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the column in the datasets containing the full texts (for summarization)."},
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
-    )
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of training examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
-    audio_column_name: str = field(
-        default="audio",
-        metadata={"help": "The name of the dataset column containing the audio data. Defaults to 'audio'"},
-    )
-    text_column_name: str = field(
-        default="text",
-        metadata={"help": "The name of the dataset column containing the text data. Defaults to 'text'"},
-    )
-    max_duration_in_seconds: float = field(
-        default=20.0,
-        metadata={
-            "help": (
-                "Truncate audio files that are longer than `max_duration_in_seconds` seconds to"
-                " 'max_duration_in_seconds`"
-            )
-        },
-    )
-    min_duration_in_seconds: float = field(
-        default=0.0, metadata={"help": "Filter audio files that are shorter than `min_duration_in_seconds` seconds"}
-    )
-    preprocessing_only: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "Whether to only do data preprocessing and skip training. This is especially useful when data"
-                " preprocessing errors out in distributed training due to timeout. In this case, one should run the"
-                " preprocessing in a non-distributed setup with `preprocessing_only=True` so that the cached datasets"
-                " can consequently be loaded in distributed training"
-            )
-        },
-    )
-    train_split_name: str = field(
-        default="train",
-        metadata={
-            "help": "The name of the training data set split to use (via the datasets library). Defaults to 'train'"
-        },
-    )
-    eval_split_name: str = field(
-        default="test",
-        metadata={
-            "help": "The name of the training data set split to use (via the datasets library). Defaults to 'train'"
-        },
-    )
-    do_lower_case: bool = field(
-        default=True,
-        metadata={"help": "Whether the target text should be lower cased."},
-    )
-    language: str = field(
-        default=None,
-        metadata={
-            "help": (
-                "Language for multilingual fine-tuning. This argument should be set for multilingual fine-tuning "
-                "only. For English speech recognition, it should be set to `None`."
-            )
-        },
-    )
-    task: str = field(
-        default="transcribe",
-        metadata={"help": "Task, either `transcribe` for speech recognition or `translate` for speech translation."},
-    )
 
 
 @dataclass
@@ -427,7 +266,7 @@ def main():
         default=None,
         help="A list of tokens that will be suppressed at generation."
     )
-    argp.add_argument(
+    argp.add_argument(   # need to be passed in
         '--predict_with_generate',
         default=False,
         action=argparse.BooleanOptionalAction,
@@ -629,6 +468,7 @@ def main():
         print('dataset was processed with config from {}'.format(processed_config))
     vectorized_datasets = load_from_disk(args.processed_data_dir+'/vectorized_dataset')
 
+    # truncate dataset
     if args.max_train_samples is not None:
         vectorized_datasets["train"] = vectorized_datasets["train"].select(range(args.max_train_samples))
 
@@ -667,12 +507,8 @@ def main():
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
         tokenizer.set_prefix_tokens(language=args.language, task=args.task)
 
-    # resample speech dataset if necessary
-    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[data_args.audio_column_name].sampling_rate
-    #if dataset_sampling_rate != feature_extractor.sampling_rate:
-        #raw_datasets = raw_datasets.cast_column(
-            #data_args.audio_column_name, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        #)
+    ## check tokenizer vocab ##
+    ## check sampling rate ##
 
 
     # Load Metric
@@ -701,7 +537,9 @@ def main():
 
     processor = AutoProcessor.from_pretrained(args.output_dir)
 
-    # 10. Define data collator
+    # compare this processor and pretrained whisper processor
+
+    # Define data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(
         processor=processor,
         decoder_start_token_id=model.config.decoder_start_token_id,
