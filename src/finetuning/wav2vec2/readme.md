@@ -1,0 +1,1 @@
+python asr_ctc.py --model_name_or_path facebook/wav2vec2-xls-r-300m --freeze_feature_encoder --do_train --do_eval --overwrite_output_dir --gradient_checkpointing --group_by_length --load_best_model_at_end

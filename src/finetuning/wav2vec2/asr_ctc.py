@@ -25,6 +25,7 @@ import sys
 import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
+import argparse
 from argparse import ArgumentParser
 
 import datasets
@@ -51,9 +52,9 @@ from transformers.utils.versions import require_version
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.27.0.dev0")
+#check_min_version("4.27.0.dev0")
 
-require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
+#require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
 
 # get root directory
 root = abspath(__file__)
@@ -150,6 +151,21 @@ def main():
         default=root+'/data/processed/cv/',
         help="Path to processed data, tokenizer, extractor."
     )
+    argp.add_argument(
+        '--max_train_samples',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--max_eval_samples',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--max_test_samples',
+        type=int,
+        default=None
+    )
 
 
     # model args
@@ -170,8 +186,8 @@ def main():
     # model config args
     argp.add_argument(
         '--freeze_feature_encoder',
-        type=bool,
-        default=True,
+        default=False,
+        action=argparse.BooleanOptionalAction,
         help="Whether to freeze the feature encoder layers of the model."
     )
     argp.add_argument(
@@ -249,32 +265,32 @@ def main():
     # model training args
     argp.add_argument(
         '--do_train',
-        type=bool,
-        default=True,
+        default=False,
+        action=argparse.BooleanOptionalAction,
         help="Whether to train the model."
     )
     argp.add_argument(
         '--do_eval',
-        type=bool,
-        default=True,
+        default=False,
+        action=argparse.BooleanOptionalAction,
         help="Whether to evaluatte the model."
     )
     argp.add_argument(
         '--overwrite_output_dir',
-        type=bool,
-        default=True,
+        default=False,
+        action=argparse.BooleanOptionalAction,
         help="Whether to overwrite output directory. Need to be False to load checkpoint"
     )
     argp.add_argument(
         '--gradient_checkpointing',
-        type=bool,
-        default=True,
+        default=False,
+        action=argparse.BooleanOptionalAction,
         help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
     )
     argp.add_argument(
         '--group_by_length',
-        type=bool,
-        default=True
+        default=False,
+        action=argparse.BooleanOptionalAction,
     )
     argp.add_argument(
         '--per_device_train_batch_size',
@@ -343,8 +359,8 @@ def main():
     )
     argp.add_argument(
         '--load_best_model_at_end',
-        type=bool,
-        default=True
+        default=False,
+        action=argparse.BooleanOptionalAction,
     )
     argp.add_argument(
         '--metric_for_best_model',
@@ -377,14 +393,15 @@ def main():
     )
     argp.add_argument(
         '--fp16',
-        type=bool,
         default=False,
+        action=argparse.BooleanOptionalAction,
         help="Whether to use fp16 16-bit (mixed) precision training instead of 32-bit training."
     )
 
 
     # parse cli arguments
     args = argp.parse_args() 
+
 
     # set seed before initializing model.
     set_seed(args.seed)
@@ -406,6 +423,12 @@ def main():
         )
     #if not os.path.isdir(args.output_dir):
         #os.mkdir(args.output_dir)
+
+    # check if model path is None
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model_name_or_path for tokenizer"
+        )
 
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
@@ -458,6 +481,15 @@ def main():
         processed_config = f.readline()
         print('dataset was processed with config from {}'.format(processed_config))
     vectorized_datasets = load_from_disk(args.processed_data_dir+'/vectorized_dataset')
+
+    if args.max_train_samples is not None:
+        vectorized_datasets["train"] = vectorized_datasets["train"].select(range(args.max_train_samples))
+
+    if args.max_eval_samples is not None:
+        vectorized_datasets["validation"] = vectorized_datasets["validation"].select(range(args.max_eval_samples))
+
+    if args.max_test_samples is not None:
+        vectorized_datasets["test"] = vectorized_datasets["test"].select(range(args.max_test_samples))
 
     # load config
     config = AutoConfig.from_pretrained(args.processed_data_dir+'/config')
@@ -579,12 +611,13 @@ def main():
         trainer.save_model()
 
         metrics = train_result.metrics
-        max_train_samples = (
-            args.max_train_samples
-            if args.max_train_samples is not None
-            else len(vectorized_datasets["train"])
-        )
-        metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
+        #max_train_samples = (
+            #args.max_train_samples
+            #if args.max_train_samples is not None
+            #else len(vectorized_datasets["train"])
+        #)
+        #metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
+        metrics["train_samples"] = len(vectorized_datasets["train"])
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
@@ -595,10 +628,11 @@ def main():
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
-        max_eval_samples = (
-            args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["eval"])
-        )
-        metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["eval"]))
+        #max_eval_samples = (
+            #args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
+        #)
+        #metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
+        metrics["eval_samples"] = len(vectorized_datasets["validation"])
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)

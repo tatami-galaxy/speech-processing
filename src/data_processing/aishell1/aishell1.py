@@ -39,9 +39,9 @@ from transformers.utils.versions import require_version
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.27.0.dev0")
+#check_min_version("4.27.0.dev0")
 
-require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
+#require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
 
 # get root directory
 root = abspath(__file__)
@@ -166,7 +166,7 @@ def main():
     argp.add_argument(
         '--text_column',
         type=str,
-        default="sentence",
+        default="transcript",
         help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
 
@@ -294,21 +294,24 @@ def main():
     # map to new audio path
     raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
+
     #raw_datasets.cleanup_cache_files()
 
+    # check audio column, text column names
     if args.audio_column not in raw_datasets["train"].column_names:
         raise ValueError(
-            f"--audio_column '{args.audio_column}' not found in dataset '{args.dataset}'."
+            f"--audio_column '{args.audio_column}' not found in dataset '{args.dataset_dir}'."
             " Make sure to set `--audio_column` to the correct audio column - one of"
             f" {', '.join(raw_datasets['train'].column_names)}."
         )
 
     if args.text_column not in raw_datasets["train"].column_names:
         raise ValueError(
-            f"--text_column {args.text_column} not found in dataset '{args.dataset}'. "
+            f"--text_column {args.text_column} not found in dataset '{args.dataset_dir}'. "
             "Make sure to set `--text_column` to the correct text column - one of "
             f"{', '.join(raw_datasets['train'].column_names)}."
         )
+    text_column = args.text_column
 
     if args.max_train_samples is not None:
         raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
@@ -319,8 +322,6 @@ def main():
     if args.max_test_samples is not None:
         raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
-
-    text_column = args.text_column
 
     # Remove Special Characters #
 
@@ -411,11 +412,12 @@ def main():
     # via the `feature_extractor`
 
     # make sure that dataset decodes audio with correct sampling rate
-    dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
-    if dataset_sampling_rate != feature_extractor.sampling_rate:
-        raw_datasets = raw_datasets.cast_column(
-            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        )
+
+    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
+    #if dataset_sampling_rate != feature_extractor.sampling_rate:
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
 
     # derive max & min input length for sample rate & max duration
     max_input_length = args.max_duration * feature_extractor.sampling_rate
