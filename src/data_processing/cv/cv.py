@@ -22,6 +22,7 @@ from os.path import dirname, abspath
 import re
 from typing import List, Optional
 from argparse import ArgumentParser
+import argparse
 
 import datasets
 from datasets import DatasetDict, load_dataset
@@ -162,9 +163,9 @@ def main():
 
     argp.add_argument(
         '--overwrite_output_dir',
-        type=bool,
-        default=True,
-        help="Overwrite output directory or not."
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to overwrite output directory. Need to be False to load checkpoint"
     )
 
     argp.add_argument(

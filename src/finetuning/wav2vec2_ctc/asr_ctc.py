@@ -410,8 +410,9 @@ def main():
     # check if processed data path exists
     if args.processed_data_dir is None:
         raise ValueError(
-            f"pass in processed data directory"
+            f"pass in processed data folder in processed directory"
         )
+    args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
     if not os.path.isdir(args.processed_data_dir):
         raise ValueError(
             f"processed data directory does not exist"
