@@ -1,1 +1,1 @@
-python asr_ctc.py --model_name_or_path facebook/wav2vec2-xls-r-300m --processed_data_dir cv --freeze_feature_encoder --do_train --do_eval --overwrite_output_dir --gradient_checkpointing --group_by_length --load_best_model_at_end
+python asr_ctc.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/wav2vec2-xls-r-1b --data_dir /home/ujan/Datasets/aishell2 --max_train_samples 1000 --max_eval_samples 100 --freeze_feature_encoder --do_train --do_eval --overwrite_output_dir --gradient_checkpointing --group_by_length --load_best_model_at_end
