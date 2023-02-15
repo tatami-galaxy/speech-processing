@@ -493,6 +493,11 @@ def main():
         default=0.0
     )
     argp.add_argument(
+        '--lr_scheduler_type',
+        type=str,
+        default='linear'
+    )
+    argp.add_argument(
         '--save_total_limit',
         type=int,
         default=2
@@ -882,7 +887,8 @@ def main():
         warmup_steps=args.warmup_steps,
         save_total_limit=args.save_total_limit,
         load_best_model_at_end=args.load_best_model_at_end,
-        metric_for_best_model=args.metric_for_best_model
+        metric_for_best_model=args.metric_for_best_model,
+        report_to='tensorboard'
     )
 
 
