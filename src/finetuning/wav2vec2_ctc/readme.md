@@ -1,1 +1,4 @@
-python asr_ctc.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/wav2vec2-xls-r-1b --data_dir /home/ujan/Datasets/aishell2 --learning_rate 5e-5 --lr_scheduler_type constant --max_train_samples 1000 --max_eval_samples 100 --eval_steps 100 --save_steps 100 --logging_steps 100 --freeze_feature_encoder --do_train --do_eval --overwrite_output_dir --gradient_checkpointing --group_by_length --load_best_model_at_end
+python asr_ctc.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/wav2vec2-xls-r-300m --data_dir /home/ujan/Downloads/aishell1 --learning_rate 3e-4 --lr_scheduler_type constant --max_train_samples 1000 --max_eval_samples 100 --max_test_samples 100 --eval_steps 100 --save_steps 100 --logging_steps 100 --warmup_steps 0 --freeze_feature_encoder --do_train --do_eval --overwrite_output_dir --gradient_checkpointing --group_by_length --load_best_model_at_end
+
+change path_remap, batch_size, epochs, csv names between dgx and z8
+

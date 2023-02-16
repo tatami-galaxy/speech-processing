@@ -111,15 +111,18 @@ def path_remap(x, args):
 
     # get audio path
     path_list = x['audio'].split('/')
+    #path = x['audio']
 
     for i in range(len(path_list)):
         if path_list[i] == 'wav': break
 
     new_path = '/'.join(path_list[i:])
     new_path = args.data_dir+'/'+new_path
+    #new_path = args.data_dir+'/'+path
     x['audio'] = new_path
 
     return x
+    
 
 
 
@@ -275,7 +278,7 @@ def main():
     argp.add_argument(
         '--min_duration',
         type=float,
-        default=0.0,
+        default=1.0, # 0.0
         help="Filter audio files that are shorter than min_duration."
     )
 
@@ -363,7 +366,7 @@ def main():
     argp.add_argument(
         '--mask_time_prob',
         type=float,
-        default=0.05,
+        default=0.05, # 0.3?
         help="""Probability of each feature vector along the time axis to be chosen as the start of the vector 
         span to be masked. Approximately ``mask_time_prob * sequence_length // mask_time_length`` feature 
         vectors will be masked along the time axis."""
@@ -377,7 +380,7 @@ def main():
     argp.add_argument(
         '--mask_feature_prob',
         type=float,
-        default=0.05,
+        default=0.05, # 0.1?
         help="""Probability of each feature vector along the feature axis to be chosen as the start of the vectorspan 
         to be masked. Approximately ``mask_feature_prob * sequence_length // mask_feature_length`` feature 
         bins will be masked along the time axis."""
@@ -435,12 +438,12 @@ def main():
     argp.add_argument(
         '--per_device_train_batch_size',
         type=int,
-        default=16
+        default=16 #32
     )
     argp.add_argument(
         '--per_device_eval_batch_size',
         type=int,
-        default=8
+        default=8 #16
     )
     argp.add_argument(
         '--gradient_accumulation_steps',
@@ -460,7 +463,7 @@ def main():
     argp.add_argument(
         '--num_train_epochs',
         type=int,
-        default=30
+        default=30 #50
     )
     argp.add_argument(
         '--save_steps',
@@ -480,12 +483,12 @@ def main():
     argp.add_argument(
         '--warmup_steps',
         type=int,
-        default=0
+        default=500
     )
     argp.add_argument(
         '--learning_rate',
         type=float,
-        default=0.0002
+        default=3e-4
     )
     argp.add_argument(
         '--weight_decay',
@@ -530,12 +533,12 @@ def main():
         default=-1,
         help="Rank of the process during distributed training."
     )
-    argp.add_argument(
-        '--n_gpu',
-        type=int,
-        default=1,
-        help="Number of GPUs to use."
-    )
+    #argp.add_argument(
+        #'--n_gpu',
+        #type=int,
+        #default=1,
+        #help="Number of GPUs to use."
+    #)
     argp.add_argument(
         '--fp16',
         default=False,
@@ -551,7 +554,7 @@ def main():
     # set seed before initializing model.
     set_seed(args.seed)
 
-    # check if processed data path exists
+    # check if data path exists
     if args.data_dir is None:
         raise ValueError(
             f"pass in dataset directory"
@@ -610,7 +613,7 @@ def main():
 
     # Log on each process the small summary:
     logger.warning(
-        f"Process rank: {args.local_rank}, n_gpu: {args.n_gpu} "
+        f"Process rank: {args.local_rank}"
         f"distributed training: {bool(args.local_rank != -1)}, 16-bits training: {args.fp16}"
     )
     # Set the verbosity to info of the Transformers logger (on main process only):
@@ -627,9 +630,9 @@ def main():
 
     # data files
     data_files = {
-        'train': args.data_dir+'/train.csv',
-        'validation': args.data_dir+'/validation.csv',
-        'test': args.data_dir+'/test.csv',
+        'train': args.data_dir+'/train.csv', # final_train.csv
+        'validation': args.data_dir+'/validation.csv', # final_train.csv
+        'test': args.data_dir+'/test.csv', # final_test.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
@@ -805,7 +808,6 @@ def main():
         input_columns=["input_length"],
     )
 
-
     # adapt config
     config.update(
         {
@@ -883,6 +885,7 @@ def main():
         eval_steps=args.eval_steps,
         logging_steps=args.logging_steps,
         learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
         save_total_limit=args.save_total_limit,
