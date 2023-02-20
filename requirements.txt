@@ -1,5 +1,5 @@
 mkdir data -> raw; processed -> processed data folders; interim
-mkdir models -> model folders
+mkdir models -> pretrained_models/cont_pre_training -> data2vec, wav2vec2
 
 pytorch
 transformers
