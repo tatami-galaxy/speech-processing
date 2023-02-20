@@ -31,6 +31,7 @@ from accelerate.logging import get_logger
 from datasets import DatasetDict, concatenate_datasets, load_dataset
 from huggingface_hub import Repository, create_repo
 from torch.utils.data.dataloader import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
 import transformers
@@ -845,10 +846,10 @@ def main():
         transformers.utils.logging.set_verbosity_info()
 
         # set up weights and biases if available
-        if is_wandb_available():
-            import wandb
+        #if is_wandb_available():
+            #import wandb
 
-            wandb.init(project=args.output_dir.split("/")[-1])
+            #wandb.init(project=args.output_dir.split("/")[-1])
 
     else:
         datasets.utils.logging.set_verbosity_error()
