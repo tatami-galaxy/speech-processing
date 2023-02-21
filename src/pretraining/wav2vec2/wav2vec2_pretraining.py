@@ -15,6 +15,7 @@
 
 """ Pre-Training a 🤗 Wav2Vec2 model on unlabeled audio data """
 
+from functools import partial
 import argparse
 from argparse import ArgumentParser
 import math
@@ -55,232 +56,6 @@ root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Finetune a transformers model on a text classification task")
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
-        help="The name of the dataset to use (via the datasets library).",
-    )
-    parser.add_argument(
-        "--dataset_config_names",
-        nargs="+",
-        type=str,
-        required=True,
-        help="The configuration names of the dataset to use (via the datasets library).",
-    )
-    parser.add_argument(
-        "--dataset_split_names",
-        nargs="+",
-        type=str,
-        required=True,
-        help="The names of the training data set splits to use (via the datasets library).",
-    )
-    parser.add_argument(
-        "--preprocessing_num_workers",
-        type=int,
-        default=None,
-        help="The number of processes to use for the preprocessing.",
-    )
-    parser.add_argument(
-        "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
-    )
-    parser.add_argument(
-        "--preprocessing_only",
-        action="store_true",
-        help="Only run the preprocessing script to be cached for future use",
-    )
-    parser.add_argument(
-        "--cache_dir",
-        type=str,
-        default=None,
-        help="Where do you want to store the pretrained models downloaded from huggingface.co",
-    )
-    parser.add_argument(
-        "--validation_split_percentage",
-        type=int,
-        default=1,
-        help="Percentage of training data that should be used for validation if no validation is present in dataset.",
-    )
-    parser.add_argument(
-        "--logging_steps",
-        type=int,
-        default=500,
-        help="Number of steps between each logging",
-    )
-    parser.add_argument(
-        "--saving_steps",
-        type=int,
-        default=500,
-        help="Number of steps between each logging",
-    )
-    parser.add_argument(
-        "--audio_column_name",
-        type=str,
-        default="audio",
-        help="Column in the dataset that contains speech file path. Defaults to 'audio'",
-    )
-    parser.add_argument(
-        "--model_name_or_path",
-        type=str,
-        help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
-    )
-    parser.add_argument(
-        "--config_name",
-        type=str,
-        default=None,
-        help="Pretrained config name or path if not the same as model_name",
-    )
-    parser.add_argument(
-        "--train_cache_file_name",
-        type=str,
-        default=None,
-        help="Path to the train cached file name",
-    )
-    parser.add_argument(
-        "--validation_cache_file_name",
-        type=str,
-        default=None,
-        help="Path to the validation cached file name",
-    )
-    parser.add_argument(
-        "--per_device_train_batch_size",
-        type=int,
-        default=8,
-        help="Batch size (per device) for the training dataloader.",
-    )
-    parser.add_argument(
-        "--per_device_eval_batch_size",
-        type=int,
-        default=8,
-        help="Batch size (per device) for the evaluation dataloader.",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=5e-5,
-        help="Initial learning rate (after the potential warmup period) to use.",
-    )
-    parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
-    parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
-    parser.add_argument(
-        "--max_train_steps",
-        type=int,
-        default=None,
-        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
-    )
-    parser.add_argument(
-        "--gradient_checkpointing",
-        action="store_true",
-        help="If True, use gradient checkpointing to save memory at the expense of slower backward pass.",
-    )
-    parser.add_argument(
-        "--lr_scheduler_type",
-        type=SchedulerType,
-        default="linear",
-        help="The scheduler type to use.",
-        choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
-    )
-    parser.add_argument(
-        "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
-    )
-    parser.add_argument("--output_dir", type=str, default=None, help="Where to store the final model.")
-    parser.add_argument("--seed", type=int, default=0, help="A seed for reproducible training.")
-    parser.add_argument(
-        "--max_gumbel_temperature",
-        type=float,
-        default=2.0,
-        help="Maximum temperature for gumbel softmax.",
-    )
-    parser.add_argument(
-        "--min_gumbel_temperature",
-        type=float,
-        default=0.5,
-        help="Minimum temperature for gumbel softmax.",
-    )
-    parser.add_argument(
-        "--gumbel_temperature_decay", type=float, default=0.999995, help="Decay of gumbel temperature during training."
-    )
-    parser.add_argument(
-        "--max_duration_in_seconds",
-        type=float,
-        default=5.0,
-        help="Filter out audio files that are longer than `max_duration_in_seconds` seconds",
-    )
-    parser.add_argument(
-        "--min_duration_in_seconds",
-        type=float,
-        default=3.0,
-        help="Filter out audio files that are shorter than `min_duration_in_seconds` seconds",
-    )
-    parser.add_argument(
-        "--pad_to_multiple_of",
-        type=int,
-        default=None,
-        help=(
-            "If set will pad the sequence to a multiple of the provided value. This is especially useful to enable the"
-            " use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta)."
-        ),
-    )
-    parser.add_argument(
-        "--adam_beta1",
-        type=float,
-        default=0.9,
-        help="Beta1 for AdamW optimizer",
-    )
-    parser.add_argument(
-        "--adam_beta2",
-        type=float,
-        default=0.999,
-        help="Beta2 for AdamW optimizer",
-    )
-    parser.add_argument(
-        "--adam_epsilon",
-        type=float,
-        default=1e-8,
-        help="Epsilon for AdamW optimizer",
-    )
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument(
-        "--hub_model_id", type=str, help="The name of the repository to keep in sync with the local `output_dir`."
-    )
-    parser.add_argument("--hub_token", type=str, help="The token to use to push to the Model Hub.")
-    parser.add_argument(
-        "--mask_time_prob",
-        type=float,
-        default=None,
-        help=(
-            "Percentage (between 0 and 1) of all feature vectors along the time axis which will be masked in the"
-            " contrastive task. If omitted, will pull value from model config."
-        ),
-    )
-    parser.add_argument(
-        "--mask_time_length",
-        type=int,
-        default=None,
-        help=(
-            "Length of each vector mask span to mask along the time axis in the contrastive task."
-            " If omitted, will pull value from model config."
-        ),
-    )
-    args = parser.parse_args()
-
-    if args.push_to_hub:
-        assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
-
-    if args.output_dir is not None:
-        os.makedirs(args.output_dir, exist_ok=True)
-
-    return args
 
 
 @dataclass
@@ -392,12 +167,29 @@ def get_grad_norm(params, scale=1):
     return total_norm
 
 
+def path_remap(x, args):
+
+    # get audio path
+    path_list = x['audio'].split('/')
+    #path = x['audio']
+
+    for i in range(len(path_list)):
+        if path_list[i] == 'wav': break
+
+    new_path = '/'.join(path_list[i:])
+    new_path = args.data_dir+'/'+new_path
+    #new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
+
+
+
 def main():
     
     argp = ArgumentParser()
 
     # CLI Arguments #
-
 
     # seed
     argp.add_argument(
@@ -406,6 +198,7 @@ def main():
         default=42,
         help="Seed"
     )
+
 
 
     # dataset args
@@ -436,28 +229,24 @@ def main():
         default="train",
         help="The name of the training data set split to use (via the datasets library). Defaults to train."
     )
-
     argp.add_argument(
         '--eval_split',
         type=str,
         default="validation",
         help="The name of the evaluation data set split to use (via the datasets library). Defaults to validation."
     )
-
     argp.add_argument(
         '--test_split',
         type=str,
         default="test",
         help="The name of the test data set split to use (via the datasets library). Defaults to test."
     )
-
     argp.add_argument(
-        '--audio_column',
+        '--audio_column_name',
         type=str,
         default="audio",
         help="The name of the dataset column containing the audio data. Defaults to audio for cv."
     )
-
     argp.add_argument(
         '--text_column',
         type=str,
@@ -467,43 +256,22 @@ def main():
     argp.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=None,
+        default=4, # None
         help="The number of processes to use for the preprocessing."
     )
     argp.add_argument(
-        '--max_duration',
+        "--max_duration_in_seconds",
         type=float,
         default=20.0,
-        help="Filter audio files that are longer than max_duration."
+        help="Filter out audio files that are longer than `max_duration_in_seconds` seconds",
     )
-
     argp.add_argument(
-        '--min_duration',
+        "--min_duration_in_seconds",
         type=float,
-        default=1.0, # 0.0
-        help="Filter audio files that are shorter than min_duration."
+        default=2.0,
+        help="Filter out audio files that are shorter than `min_duration_in_seconds` seconds",
     )
 
-    argp.add_argument(
-        '--unk_token',
-        type=str,
-        default="[UNK]",
-        help="The unk token for the tokenizer."
-    )
-
-    argp.add_argument(
-        '--pad_token',
-        type=str,
-        default="[PAD]",
-        help="The pad token for the tokenizer."
-    )
-
-    argp.add_argument(
-        '--word_delimiter_token',
-        type=str,
-        default="|",
-        help="The word delimiter token for the tokenizer."
-    )
 
 
 
@@ -515,12 +283,6 @@ def main():
         help="Path to pretrained model or model identifier from huggingface.co/models"
     )
     argp.add_argument(
-        '--tokenizer_name_or_path',
-        type=str,
-        default=None,
-        help="Path to pretrained tokenizer or tokenizer identifier from huggingface.co/models"
-    )
-    argp.add_argument(
         '--output_dir',
         type=str,
         default=None,
@@ -529,46 +291,12 @@ def main():
 
 
     # model config args
-    argp.add_argument(
-        '--freeze_feature_encoder',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to freeze the feature encoder layers of the model."
-    )
-    argp.add_argument(
-        '--attention_dropout',
-        type=float,
-        default=0.0,
-        help="The dropout ratio for the attention probabilities."
-    )
-    argp.add_argument(
-        '--activation_dropout',
-        type=float,
-        default=0.0,
-        help="The dropout ratio for activations inside the fully connected layer."
-    )
-    argp.add_argument(
-        '--feat_proj_dropout',
-        type=float,
-        default=0.0,
-        help="The dropout ratio for the projected features."
-    )
-    argp.add_argument(
-        '--hidden_dropout',
-        type=float,
-        default=0.0,
-        help="The dropout probability for all fully connected layers in the embeddings, encoder, and pooler."
-    )
-    argp.add_argument(
-        '--final_dropout',
-        type=float,
-        default=0.0,
-        help="The dropout probability for the final projection layer."
-    )
+
+
     argp.add_argument(
         '--mask_time_prob',
         type=float,
-        default=0.05, # 0.3?
+        default=0.65, # 0.3?
         help="""Probability of each feature vector along the time axis to be chosen as the start of the vector 
         span to be masked. Approximately ``mask_time_prob * sequence_length // mask_time_length`` feature 
         vectors will be masked along the time axis."""
@@ -593,33 +321,11 @@ def main():
         default=10,
         help="Length of vector span to mask along the feature axis."
     )
-    argp.add_argument(
-        '--layerdrop',
-        type=float,
-        default=0.0,
-        help="The LayerDrop probability."
-    )
-    argp.add_argument(
-        '--ctc_loss_reduction',
-        type=str,
-        default="mean",
-        help="The way the ctc loss should be reduced. Should be one of 'mean' or 'sum'."
-    )
+
 
 
     # model training args
-    argp.add_argument(
-        '--do_train',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to train the model."
-    )
-    argp.add_argument(
-        '--do_eval',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to evaluatte the model."
-    )
+
     argp.add_argument(
         "--preprocessing_only",
         action=argparse.BooleanOptionalAction,
@@ -644,21 +350,10 @@ def main():
         help="Path to the test cached file name"
     )
     argp.add_argument(
-        '--overwrite_output_dir',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to overwrite output directory. Need to be False to load checkpoint"
-    )
-    argp.add_argument(
         '--gradient_checkpointing',
         default=False,
         action=argparse.BooleanOptionalAction,
         help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
-    )
-    argp.add_argument(
-        '--group_by_length',
-        default=False,
-        action=argparse.BooleanOptionalAction,
     )
     argp.add_argument(
         '--per_device_train_batch_size',
@@ -691,14 +386,10 @@ def main():
         default=30 #50
     )
     argp.add_argument(
-        '--save_steps',
+        "--max_train_steps",
         type=int,
-        default=1000
-    )
-    argp.add_argument(
-        '--eval_steps',
-        type=int,
-        default=1000
+        default=400000, # None
+        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
     )
     argp.add_argument(
         '--logging_steps',
@@ -706,14 +397,19 @@ def main():
         default=1000
     )
     argp.add_argument(
-        '--warmup_steps',
+        '--saving_steps',
         type=int,
-        default=500
+        default=5000
+    )
+    argp.add_argument(
+        '--num_warmup_steps',
+        type=int,
+        default=1000
     )
     argp.add_argument(
         '--learning_rate',
         type=float,
-        default=3e-4
+        default=0.001 # 5e-5
     )
     argp.add_argument(
         '--weight_decay',
@@ -726,19 +422,19 @@ def main():
         default='linear'
     )
     argp.add_argument(
-        '--save_total_limit',
-        type=int,
-        default=2
+        "--max_gumbel_temperature",
+        type=float,
+        default=2.0,
+        help="Maximum temperature for gumbel softmax.",
     )
     argp.add_argument(
-        '--load_best_model_at_end',
-        default=False,
-        action=argparse.BooleanOptionalAction,
+        "--min_gumbel_temperature",
+        type=float,
+        default=0.5,
+        help="Minimum temperature for gumbel softmax.",
     )
     argp.add_argument(
-        '--metric_for_best_model',
-        type=str,
-        default='cer'
+        "--gumbel_temperature_decay", type=float, default=0.999995, help="Decay of gumbel temperature during training."
     )
     argp.add_argument(
         "--pad_to_multiple_of",
@@ -758,45 +454,16 @@ def main():
     argp.add_argument(
         "--adam_beta2",
         type=float,
-        default=0.999,
+        default=0.98,
         help="Beta2 for AdamW optimizer",
     )
     argp.add_argument(
         "--adam_epsilon",
         type=float,
-        default=1e-8,
+        default=1e-06,
         help="Epsilon for AdamW optimizer",
     )
-    
 
-    # model eval args
-    argp.add_argument(
-        '--eval_metrics',
-        type=List[str],
-        default=["cer"],
-        help="A list of metrics the model should be evaluated on."
-    )
-
-
-    # hardware args
-    argp.add_argument(
-        '--local_rank',
-        type=int,
-        default=-1,
-        help="Rank of the process during distributed training."
-    )
-    #argp.add_argument(
-        #'--n_gpu',
-        #type=int,
-        #default=1,
-        #help="Number of GPUs to use."
-    #)
-    argp.add_argument(
-        '--fp16',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to use fp16 16-bit (mixed) precision training instead of 32-bit training."
-    )
 
 
     # parse cli arguments
@@ -870,11 +537,15 @@ def main():
 
     raw_datasets = load_dataset('csv', data_files=data_files)
 
+    # map to new audio path
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+
+
     # check audio column, text column names
-    if args.audio_column not in raw_datasets["train"].column_names:
+    if args.audio_column_name not in raw_datasets["train"].column_names:
         raise ValueError(
-            f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
-            " Make sure to set `--audio_column` to the correct audio column - one of"
+            f"--audio_column_name '{args.audio_column_name}' not found in dataset '{args.data_dir}'."
+            " Make sure to set `--audio_column_name` to the correct audio column - one of"
             f" {', '.join(raw_datasets['train'].column_names)}."
         )
 
@@ -894,7 +565,7 @@ def main():
     # Thankfully, `datasets` takes care of automatically loading and resampling the audio,
     # so that we just need to set the correct target sampling rate and normalize the input
     # via the `feature_extractor`
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_name_or_path)
+    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_name_or_path)  # should work
 
 
     # make sure that dataset decodes audio with correct sampling rate
@@ -907,6 +578,7 @@ def main():
         raise ValueError(
             "Training is only supported for normalized inputs. Make sure ``feature_extractor.do_normalize == True``"
         )
+
 
     # set max & min audio length in number of samples
     max_length = int(args.max_duration_in_seconds * feature_extractor.sampling_rate)
@@ -971,8 +643,10 @@ def main():
         )
 
     # initialize random model
-    model = Wav2Vec2ForPreTraining(config)
+    #model = Wav2Vec2ForPreTraining(config)
 
+    # initialize from pretrained checkpoint
+    model = Wav2Vec2ForPreTraining.from_pretrained(args.model_name_or_path)
 
     # Activate gradient checkpointing if needed
     if args.gradient_checkpointing:
@@ -1043,6 +717,9 @@ def main():
     completed_steps = 0
     starting_epoch = 0
 
+    # summarywriter for tensorbaord
+    # writer will output to ./runs/ directory by default
+    writer = SummaryWriter()
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
@@ -1140,12 +817,24 @@ def main():
 
                 if accelerator.is_local_main_process:
                     progress_bar.write(log_str)
-                    if is_wandb_available():
-                        wandb.log(train_logs)
+                    #if is_wandb_available():
+                        #wandb.log(train_logs)
+
+                    # tensorboard logging
+                    writer.add_scalar("loss", train_logs["loss"], step+1)
+                    writer.add_scalar("constrast_loss", train_logs["constrast_loss"], step+1)
+                    writer.add_scalar("div_loss", train_logs["div_loss"], step+1)
+                    writer.add_scalar("%_mask_idx", train_logs["%_mask_idx"], step+1)
+                    writer.add_scalar("ppl", train_logs["ppl"], step+1)
+                    writer.add_scalar("lr", train_logs["lr"], step+1)
+                    writer.add_scalar("temp", train_logs["temp"], step+1)
+                    writer.add_scalar("grad_norm", train_logs["grad_norm"], step+1)
+
+         
 
             # save model every `args.saving_steps` steps
             if (step + 1) % (args.gradient_accumulation_steps * args.saving_steps) == 0:
-                if (args.push_to_hub and epoch < args.num_train_epochs - 1) or args.output_dir is not None:
+                if (epoch < args.num_train_epochs - 1) or args.output_dir is not None:
                     accelerator.wait_for_everyone()
                     unwrapped_model = accelerator.unwrap_model(model)
                     unwrapped_model.save_pretrained(
@@ -1189,8 +878,15 @@ def main():
 
         if accelerator.is_local_main_process:
             progress_bar.write(log_str)
-            if is_wandb_available():
-                wandb.log(val_logs)
+            #if is_wandb_available():
+                #wandb.log(val_logs)
+
+            # tensorboard logging
+            writer.add_scalar("val_loss", val_logs["val_loss"], step+1)
+            writer.add_scalar("val_contrastive_loss", val_logs["val_contrastive_loss"], step+1)
+            writer.add_scalar("val_diversity_loss", val_logs["val_diversity_loss"], step+1)
+
+
 
         if args.output_dir is not None:
             accelerator.wait_for_everyone()
@@ -1198,10 +894,8 @@ def main():
             unwrapped_model.save_pretrained(
                 args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
             )
-            if accelerator.is_main_process:
-                if args.push_to_hub:
-                    repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
 
 
 if __name__ == "__main__":
+
     main()
