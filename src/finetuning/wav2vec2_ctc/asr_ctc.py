@@ -790,6 +790,7 @@ def main():
         batch["labels"] = tokenizer(batch["target_text"], **additional_kwargs).input_ids
         return batch
 
+
     vectorized_datasets = raw_datasets.map(
         prepare_dataset,
         remove_columns=next(iter(raw_datasets.values())).column_names,

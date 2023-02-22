@@ -717,6 +717,7 @@ def main():
     completed_steps = 0
     starting_epoch = 0
 
+
     # summarywriter for tensorbaord
     # writer will output to ./runs/ directory by default
     writer = SummaryWriter()
@@ -726,6 +727,7 @@ def main():
     starting_epoch = 0
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
+
         for step, batch in enumerate(train_dataloader):
             # compute num of losses
             num_losses = batch["mask_time_indices"].sum()
