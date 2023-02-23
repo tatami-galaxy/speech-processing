@@ -29,12 +29,20 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 import argparse
 from argparse import ArgumentParser
+import math
 
 import datasets
 import evaluate
 import numpy as np
 import torch
+import datasets
+import transformers
+from transformers import AdamW
 from datasets import DatasetDict, load_dataset, load_from_disk
+from torch.utils.data.dataloader import DataLoader
+from accelerate import Accelerator
+from accelerate.logging import get_logger
+from tqdm.auto import tqdm
 
 import transformers
 from transformers import (
@@ -46,11 +54,13 @@ from transformers import (
     Trainer,
     Wav2Vec2Processor,
     TrainingArguments,
+    get_scheduler,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+from torch.utils.tensorboard import SummaryWriter
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -466,6 +476,12 @@ def main():
         default=30 #50
     )
     argp.add_argument(
+        "--max_train_steps",
+        type=int,
+        default=400000, # None
+        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
+    )
+    argp.add_argument(
         '--save_steps',
         type=int,
         default=1000
@@ -496,6 +512,24 @@ def main():
         default=0.0
     )
     argp.add_argument(
+        "--adam_beta1",
+        type=float,
+        default=0.9,
+        help="Beta1 for AdamW optimizer",
+    )
+    argp.add_argument(
+        "--adam_beta2",
+        type=float,
+        default=0.98,
+        help="Beta2 for AdamW optimizer",
+    )
+    argp.add_argument(
+        "--adam_epsilon",
+        type=float,
+        default=1e-06,
+        help="Epsilon for AdamW optimizer",
+    )
+    argp.add_argument(
         '--lr_scheduler_type',
         type=str,
         default='linear'
@@ -519,9 +553,9 @@ def main():
 
     # model eval args
     argp.add_argument(
-        '--eval_metrics',
-        type=List[str],
-        default=["cer"],
+        '--eval_metric',
+        type=str,
+        default="cer",
         help="A list of metrics the model should be evaluated on."
     )
 
@@ -603,23 +637,22 @@ def main():
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
-    # Setup logging
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
-    logger.setLevel(logging.INFO if is_main_process(args.local_rank) else logging.WARN)
-
-    # Log on each process the small summary:
-    logger.warning(
-        f"Process rank: {args.local_rank}"
-        f"distributed training: {bool(args.local_rank != -1)}, 16-bits training: {args.fp16}"
-    )
-    # Set the verbosity to info of the Transformers logger (on main process only):
-    if is_main_process(args.local_rank):
+    # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
+    accelerator = Accelerator()
+    logger.info(accelerator.state, main_process_only=False)
+    if accelerator.is_local_main_process:
+        datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_info()
-    logger.info("Training/evaluation parameters %s", args)
+
+        # set up weights and biases if available
+        #if is_wandb_available():
+            #import wandb
+
+            #wandb.init(project=args.output_dir.split("/")[-1])
+
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
 
 
 
@@ -638,7 +671,8 @@ def main():
     raw_datasets = load_dataset('csv', data_files=data_files)
 
     # map to new audio path
-    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+    with accelerator.main_process_first(): #
+        raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -659,14 +693,15 @@ def main():
         )
     text_column = args.text_column
 
-    if args.max_train_samples is not None:
-        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+    with accelerator.main_process_first(): #
+        if args.max_train_samples is not None:
+            raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
 
-    if args.max_eval_samples is not None:
-        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+        if args.max_eval_samples is not None:
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
-    if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+        if args.max_test_samples is not None:
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
     # Remove Special Characters #
@@ -678,11 +713,12 @@ def main():
             batch["target_text"] = batch[text_column].lower() + " "
         return batch
 
-    raw_datasets = raw_datasets.map(
-        remove_special_characters,
-        remove_columns=[text_column],
-        desc="remove special characters from datasets",
-    )
+    with accelerator.main_process_first(): #
+        raw_datasets = raw_datasets.map(
+            remove_special_characters,
+            remove_columns=[text_column],
+            desc="remove special characters from datasets",
+        )
 
     # save special tokens for tokenizer
     word_delimiter_token = args.word_delimiter_token
@@ -762,9 +798,10 @@ def main():
 
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
     #if dataset_sampling_rate != feature_extractor.sampling_rate:
-    raw_datasets = raw_datasets.cast_column(
-        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-    )
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.cast_column(
+            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+        )
 
     # derive max & min input length for sample rate & max duration
     max_input_length = args.max_duration * feature_extractor.sampling_rate
@@ -790,24 +827,24 @@ def main():
         batch["labels"] = tokenizer(batch["target_text"], **additional_kwargs).input_ids
         return batch
 
+    with accelerator.main_process_first():
+        vectorized_datasets = raw_datasets.map(
+            prepare_dataset,
+            remove_columns=next(iter(raw_datasets.values())).column_names,
+            num_proc=num_workers,
+            desc="preprocess dataset",
+        )
 
-    vectorized_datasets = raw_datasets.map(
-        prepare_dataset,
-        remove_columns=next(iter(raw_datasets.values())).column_names,
-        num_proc=num_workers,
-        desc="preprocess dataset",
-    )
+        def is_audio_in_length_range(length):
+            return length > min_input_length and length < max_input_length
 
-    def is_audio_in_length_range(length):
-        return length > min_input_length and length < max_input_length
-
-    # filter data that is shorter than min_input_length
-    print('filtering')
-    vectorized_datasets = vectorized_datasets.filter(
-        is_audio_in_length_range,
-        num_proc=num_workers,
-        input_columns=["input_length"],
-    )
+        # filter data that is shorter than min_input_length
+        print('filtering')
+        vectorized_datasets = vectorized_datasets.filter(
+            is_audio_in_length_range,
+            num_proc=num_workers,
+            input_columns=["input_length"],
+        )
 
     # adapt config
     config.update(
@@ -836,38 +873,198 @@ def main():
         config=config,
         ignore_mismatched_sizes=True)
 
+    # Activate gradient checkpointing if needed
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+
     # Freeze Encoder #
     if args.freeze_feature_encoder:
         model.freeze_feature_encoder()
-
-
-    # Evaluation Metric #
-
-    # instantiate a data collator and the trainer
-    # Define evaluation metrics during training, *i.e.* word error rate, character error rate
-
-    # load from file for offline
-    eval_metrics = {metric: evaluate.load(metric) for metric in args.eval_metrics}
-
-    def compute_metrics(pred):
-        pred_logits = pred.predictions
-        pred_ids = np.argmax(pred_logits, axis=-1)
-
-        pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
-
-        pred_str = tokenizer.batch_decode(pred_ids)
-        # we do not want to group tokens when computing the metrics
-        label_str = tokenizer.batch_decode(pred.label_ids, group_tokens=False)
-
-        metrics = {k: v.compute(predictions=pred_str, references=label_str) for k, v in eval_metrics.items()}
-
-        return metrics
 
     # processor
     processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
     # Instantiate custom data collator
     data_collator = DataCollatorCTCWithPadding(processor=processor)
+
+    # Define evaluation metrics during training, *i.e.* word error rate, character error rate
+
+    # load from cer metric
+    cer_metric = evaluate.load(args.eval_metric)
+
+
+    #def compute_metrics(pred):
+        #pred_logits = pred.predictions
+        #pred_ids = np.argmax(pred_logits, axis=-1)
+
+        #pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
+
+        #pred_str = tokenizer.batch_decode(pred_ids)
+        # we do not want to group tokens when computing the metrics
+        #label_str = tokenizer.batch_decode(pred.label_ids, group_tokens=False)
+
+        #metrics = {k: v.compute(predictions=pred_str, references=label_str) for k, v in eval_metrics.items()}
+
+        #return metrics
+
+    # dataloaders
+    train_dataloader = DataLoader(
+        vectorized_datasets["train"],
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=args.per_device_train_batch_size,
+    )
+    eval_dataloader = DataLoader(
+        vectorized_datasets["validation"], collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+    )
+
+    # Optimizer
+    optimizer = AdamW(
+        list(model.parameters()),
+        lr=args.learning_rate,
+        betas=[args.adam_beta1, args.adam_beta2],
+        eps=args.adam_epsilon,
+    )
+
+    # Prepare everything with our `accelerator`.
+    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader
+    )
+
+    # Scheduler and math around the number of training steps.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+
+    lr_scheduler = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=args.warmup_steps,
+        num_training_steps=args.max_train_steps,
+    )
+
+    # Afterwards we recalculate our number of training epochs
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+    # 5. Train
+    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(vectorized_datasets['train'])}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    completed_steps = 0
+    starting_epoch = 0
+
+
+    # summarywriter for tensorbaord
+    # writer will output to ./runs/ directory by default
+    writer = SummaryWriter()
+
+
+    # Only show the progress bar once on each machine.
+    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
+    completed_steps = 0
+    starting_epoch = 0
+    for epoch in range(starting_epoch, args.num_train_epochs):
+        model.train()
+
+        for step, batch in enumerate(train_dataloader):
+
+            # forward
+            outputs = model(**batch)
+
+
+            # divide loss by gradient accumulation steps since gradients
+            # are accumulated for multiple backward passes in PyTorch
+            loss = outputs.loss / args.gradient_accumulation_steps
+            accelerator.backward(loss)
+
+            # update step
+            if (step + 1) % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+
+                scale = (
+                    accelerator.scaler._scale.item()
+                    if hasattr(accelerator, "scaler") and accelerator.scaler is not None
+                    else 1
+                )
+
+                # update parameters
+                optimizer.step()
+                optimizer.zero_grad()
+
+                if not accelerator.optimizer_step_was_skipped:
+                    lr_scheduler.step()
+                elif accelerator.is_local_main_process:
+                    progress_bar.write(
+                        f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
+                    )
+
+                progress_bar.update(1)
+                completed_steps += 1
+
+
+            # eval
+            if (step + 1) % (args.gradient_accumulation_steps * args.eval_steps) == 0:
+                model.eval()
+
+                # init logs
+                val_logs = {
+                    "val_loss": 0,
+                    "val_cer" : 0
+                }
+
+                for step, batch in enumerate(eval_dataloader):
+                    with torch.no_grad():
+                        labels = batch["labels"]
+                        outputs = model(**batch)
+
+                    val_logs["val_loss"] += outputs.loss
+
+                    pred_ids = torch.argmax(outputs.logits, dim=-1)
+                    labels[labels == -100] = processor.tokenizer.pad_token_id
+                    pred_str = processor.batch_decode(pred_ids)
+                    # we do not want to group tokens when computing the metrics
+                    label_str = processor.batch_decode(labels, group_tokens=False)
+                    # CER
+                    cer_metric.add_batch(predictions=pred_str, references=label_str)
+
+                # compute metric
+                val_logs["val_cer"] = cer_metric.compute()
+
+
+
+            # log all results
+            if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
+                loss.detach()
+
+                if accelerator.state.num_processes > 1:
+                    loss = accelerator.gather_for_metrics(loss).sum()
+
+                train_logs = {
+                    "loss": (loss * args.gradient_accumulation_steps),
+                    "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
+                }
+                log_str = ""
+                for k, v in train_logs.items():
+                    log_str += "| {}: {:.3e}".format(k, v.item())
+
+                if accelerator.is_local_main_process:
+                    progress_bar.write(log_str)
+                    #if is_wandb_available():
+                        #wandb.log(train_logs)
+
+                    # tensorboard logging
+                    writer.add_scalar("loss", train_logs["loss"], step+1)
+                    writer.add_scalar("lr", train_logs["lr"], step+1)
+
+
+
+
 
     # Training Arguments #
 
@@ -910,8 +1107,7 @@ def main():
     # Start training #
 
     # Training
-    if args.do_train:        # init logs
-
+    if args.do_train:
         # use last checkpoint if exist
         if last_checkpoint is not None:
             checkpoint = last_checkpoint
