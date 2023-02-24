@@ -637,6 +637,7 @@ def main():
 
     raw_datasets = load_dataset('csv', data_files=data_files)
 
+
     # map to new audio path
     raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
@@ -765,6 +766,7 @@ def main():
     raw_datasets = raw_datasets.cast_column(
         args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
     )
+    
 
     # derive max & min input length for sample rate & max duration
     max_input_length = args.max_duration * feature_extractor.sampling_rate

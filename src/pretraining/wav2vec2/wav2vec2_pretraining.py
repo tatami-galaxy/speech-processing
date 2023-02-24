@@ -51,6 +51,7 @@ from transformers.utils import get_full_repo_name, send_example_telemetry
 
 logger = get_logger(__name__)
 
+
 # get root directory
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
@@ -219,11 +220,6 @@ def main():
         default=None
     )
     argp.add_argument(
-        '--max_test_samples',
-        type=int,
-        default=None
-    )
-    argp.add_argument(
         '--train_split',
         type=str,
         default="train",
@@ -234,12 +230,6 @@ def main():
         type=str,
         default="validation",
         help="The name of the evaluation data set split to use (via the datasets library). Defaults to validation."
-    )
-    argp.add_argument(
-        '--test_split',
-        type=str,
-        default="test",
-        help="The name of the test data set split to use (via the datasets library). Defaults to test."
     )
     argp.add_argument(
         '--audio_column_name',
@@ -342,12 +332,6 @@ def main():
         type=str,
         default=None,
         help="Path to the validation cached file name"
-    )
-    argp.add_argument(
-        "--test_cache_file_name",
-        type=str,
-        default=None,
-        help="Path to the test cached file name"
     )
     argp.add_argument(
         '--gradient_checkpointing',
@@ -532,7 +516,6 @@ def main():
     data_files = {
         'train': args.data_dir+'/train.csv', # final_train.csv
         'validation': args.data_dir+'/validation.csv', # final_train.csv
-        'test': args.data_dir+'/test.csv', # final_test.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
@@ -554,9 +537,6 @@ def main():
 
     if args.max_eval_samples is not None:
         raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
-
-    if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
 
@@ -602,8 +582,7 @@ def main():
     if args.train_cache_file_name is not None:
         cache_file_names = {
             "train": args.train_cache_file_name,
-            "validation": args.validation_cache_file_name,
-            "test": args.test_cache_file_name}
+            "validation": args.validation_cache_file_name,}
 
     # load audio files into numpy arrays
     with accelerator.main_process_first():
