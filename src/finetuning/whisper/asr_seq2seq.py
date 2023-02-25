@@ -58,6 +58,22 @@ from transformers.utils.versions import require_version
 
 #require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
 
+def path_remap(x, args):
+
+    # get audio path
+    path_list = x['audio'].split('/')
+    #path = x['audio']
+
+    for i in range(len(path_list)):
+        if path_list[i] == 'wav': break
+
+    new_path = '/'.join(path_list[i:])
+    new_path = args.data_dir+'/'+new_path
+    #new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
+
 # get root directory
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
@@ -68,167 +84,6 @@ logger = logging.getLogger(__name__)
 
 
 
-@dataclass
-class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
-    model_name_or_path: str = field(
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
-    )
-    config_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
-    )
-    tokenizer_name: Optional[str] = field(
-        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
-    )
-    feature_extractor_name: Optional[str] = field(
-        default=None, metadata={"help": "feature extractor name or path if not the same as model_name"}
-    )
-    cache_dir: Optional[str] = field(
-        default=None,
-        metadata={"help": "Where to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
-    )
-    model_revision: str = field(
-        default="main",
-        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
-    )
-    use_auth_token: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "Will use the token generated when running `huggingface-cli login` (necessary to use this script "
-                "with private models)."
-            )
-        },
-    )
-    freeze_feature_encoder: bool = field(
-        default=True, metadata={"help": "Whether to freeze the feature encoder layers of the model."}
-    )
-    freeze_encoder: bool = field(
-        default=False, metadata={"help": "Whether to freeze the entire encoder of the seq2seq model."}
-    )
-    forced_decoder_ids: List[List[int]] = field(
-        default=None,
-        metadata={
-            "help": (
-                "A list of pairs of integers which indicates a mapping from generation indices to token indices "
-                "that will be forced before sampling. For example, [[0, 123]] means the first generated token "
-                "will always be a token of index 123."
-            )
-        },
-    )
-    suppress_tokens: List[int] = field(
-        default=None, metadata={"help": "A list of tokens that will be suppressed at generation."}
-    )
-
-
-@dataclass
-class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-    """
-
-    dataset_name: str = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
-    )
-    dataset_config_name: Optional[str] = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
-    )
-    text_column: Optional[str] = field(
-        default=None,
-        metadata={"help": "The name of the column in the datasets containing the full texts (for summarization)."},
-    )
-    overwrite_cache: bool = field(
-        default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
-    )
-    preprocessing_num_workers: Optional[int] = field(
-        default=None,
-        metadata={"help": "The number of processes to use for the preprocessing."},
-    )
-    max_train_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of training examples to this "
-                "value if set."
-            )
-        },
-    )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
-    audio_column_name: str = field(
-        default="audio",
-        metadata={"help": "The name of the dataset column containing the audio data. Defaults to 'audio'"},
-    )
-    text_column_name: str = field(
-        default="text",
-        metadata={"help": "The name of the dataset column containing the text data. Defaults to 'text'"},
-    )
-    max_duration_in_seconds: float = field(
-        default=20.0,
-        metadata={
-            "help": (
-                "Truncate audio files that are longer than `max_duration_in_seconds` seconds to"
-                " 'max_duration_in_seconds`"
-            )
-        },
-    )
-    min_duration_in_seconds: float = field(
-        default=0.0, metadata={"help": "Filter audio files that are shorter than `min_duration_in_seconds` seconds"}
-    )
-    preprocessing_only: bool = field(
-        default=False,
-        metadata={
-            "help": (
-                "Whether to only do data preprocessing and skip training. This is especially useful when data"
-                " preprocessing errors out in distributed training due to timeout. In this case, one should run the"
-                " preprocessing in a non-distributed setup with `preprocessing_only=True` so that the cached datasets"
-                " can consequently be loaded in distributed training"
-            )
-        },
-    )
-    train_split_name: str = field(
-        default="train",
-        metadata={
-            "help": "The name of the training data set split to use (via the datasets library). Defaults to 'train'"
-        },
-    )
-    eval_split_name: str = field(
-        default="test",
-        metadata={
-            "help": "The name of the training data set split to use (via the datasets library). Defaults to 'train'"
-        },
-    )
-    do_lower_case: bool = field(
-        default=True,
-        metadata={"help": "Whether the target text should be lower cased."},
-    )
-    language: str = field(
-        default=None,
-        metadata={
-            "help": (
-                "Language for multilingual fine-tuning. This argument should be set for multilingual fine-tuning "
-                "only. For English speech recognition, it should be set to `None`."
-            )
-        },
-    )
-    task: str = field(
-        default="transcribe",
-        metadata={"help": "Task, either `transcribe` for speech recognition or `translate` for speech translation."},
-    )
 
 
 @dataclass
@@ -285,6 +140,262 @@ def main():
     )
 
 
+    # dataset args
+    argp.add_argument(
+        '--data_dir',
+        type=str,
+        default=None,
+        help="Path to dataset"
+    )
+    argp.add_argument(
+        '--max_train_samples',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--max_eval_samples',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--max_test_samples',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--audio_column',
+        type=str,
+        default="audio",
+        help="The name of the dataset column containing the audio data. Defaults to audio for cv."
+    )
+
+    argp.add_argument(
+        '--text_column',
+        type=str,
+        default="transcript",
+        help="The name of the dataset column containing the text data. Defaults to sentence for cv."
+    )
+    argp.add_argument(
+        '--preprocessing_num_workers',
+        type=int,
+        default=4, # None
+        help="The number of processes to use for the preprocessing."
+    )
+    argp.add_argument(
+        '--max_duration',
+        type=float,
+        default=20.0,
+        help="Filter audio files that are longer than max_duration."
+    )
+
+    argp.add_argument(
+        '--min_duration',
+        type=float,
+        default=1.0, # 0.0
+        help="Filter audio files that are shorter than min_duration."
+    )
+    argp.add_argument(
+        '--preprocessing_only',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to only do data preprocessing and skip training."
+    )
+
+
+
+    # model args
+    argp.add_argument(
+        '--model_name_or_path',
+        type=str,
+        default=None,
+        help="Path to pretrained model or model identifier from huggingface.co/models"
+    )
+    argp.add_argument(
+        '--output_dir',
+        type=str,
+        default=None,
+        help="Where do you want to store the pretrained models downloaded from huggingface.co"
+    )
+
+
+    # model config args
+    argp.add_argument(
+        '--language',
+        type=str,
+        default="zh"
+    )
+    argp.add_argument(
+        '--task',
+        type=str,
+        default="transcribe"
+    )
+    argp.add_argument(
+        '--forced_decoder_ids',
+        type=List[List[int]],
+        default=None,
+        help="""A list of pairs of integers which indicates a mapping from generation indices to token indices 
+                that will be forced before sampling. For example, [[0, 123]] means the first generated token 
+                will always be a token of index 123."""
+    )
+    argp.add_argument(
+        '--suppress_tokens',
+        type=List[int],
+        default=None,
+        help="A list of tokens that will be suppressed at generation."
+    )
+    argp.add_argument(
+        '--freeze_encoder',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to freeze the transformer encoder of the model."
+    )
+
+
+
+    # model training args
+    argp.add_argument(
+        '--do_train',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to train the model."
+    )
+    argp.add_argument(
+        '--do_eval',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to evaluatte the model."
+    )
+    argp.add_argument(
+        '--overwrite_output_dir',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to overwrite output directory. Need to be False to load checkpoint"
+    )
+    argp.add_argument(
+        '--gradient_checkpointing',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
+    )
+    argp.add_argument(
+        '--per_device_train_batch_size',
+        type=int,
+        default=16 #32
+    )
+    argp.add_argument(
+        '--per_device_eval_batch_size',
+        type=int,
+        default=8 #16
+    )
+    argp.add_argument(
+        '--gradient_accumulation_steps',
+        type=int,
+        default=1
+    )
+    argp.add_argument(
+        '--eval_accumulation_steps',
+        type=int,
+        default=None
+    )
+    argp.add_argument(
+        '--evaluation_strategy',
+        type=str,
+        default="steps"
+    )
+    argp.add_argument(
+        '--predict_with_generate',
+        default=False,
+        action=argparse.BooleanOptionalAction
+    )
+    argp.add_argument(
+        '--generation_max_length',
+        type=int,
+        default=225
+    )
+    argp.add_argument(
+        '--num_train_epochs',
+        type=int,
+        default=30 #50
+    )
+    argp.add_argument(
+        '--max_steps',
+        type=int,
+        default=5000 
+    )
+    argp.add_argument(
+        '--save_steps',
+        type=int,
+        default=500
+    )
+    argp.add_argument(
+        '--eval_steps',
+        type=int,
+        default=500
+    )
+    argp.add_argument(
+        '--logging_steps',
+        type=int,
+        default=500
+    )
+    argp.add_argument(
+        '--warmup_steps',
+        type=int,
+        default=100
+    )
+    argp.add_argument(
+        '--learning_rate',
+        type=float,
+        default=1e-5 # 3e-4
+    )
+    argp.add_argument(
+        '--weight_decay',
+        type=float,
+        default=0.0
+    )
+    argp.add_argument(
+        '--lr_scheduler_type',
+        type=str,
+        default='linear'
+    )
+    argp.add_argument(
+        '--save_total_limit',
+        type=int,
+        default=2
+    )
+    argp.add_argument(
+        '--load_best_model_at_end',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    argp.add_argument(
+        '--metric_for_best_model',
+        type=str,
+        default='cer'
+    )
+    
+
+
+    # hardware args
+    argp.add_argument(
+        '--local_rank',
+        type=int,
+        default=-1,
+        help="Rank of the process during distributed training."
+    )
+    #argp.add_argument(
+        #'--n_gpu',
+        #type=int,
+        #default=1,
+        #help="Number of GPUs to use."
+    #)
+    argp.add_argument(
+        '--fp16',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to use fp16 16-bit (mixed) precision training instead of 32-bit training."
+    )
+
+
     # parse input arguments
     # parse cli arguments
     args = argp.parse_args() 
@@ -293,12 +404,66 @@ def main():
     # set seed before initializing model.
     set_seed(args.seed)
 
+    # check if data path exists
+    if args.data_dir is None:
+        raise ValueError(
+            f"pass in dataset directory"
+        )
+    #args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
+    if not os.path.isdir(args.data_dir):
+        raise ValueError(
+            f"data directory does not exist"
+        )
+
+    # check if output directory is passed in
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        data_str = args.data_dir.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+    print('output directory set to : {}'.format(args.output_dir))
+    #if not os.path.isdir(args.output_dir):
+        #os.mkdir(args.output_dir)
+
+    # check if model path is None
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model_name_or_path"
+        )
+
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_speech_recognition_seq2seq", args)
 
     # seq2seq training args
+
+    training_args = Seq2SeqTrainingArguments(
+        output_dir=args.output_dir,
+        #group_by_length=args.group_by_length,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        eval_accumulation_steps=args.eval_accumulation_steps,
+        evaluation_strategy=args.evaluation_strategy,
+        #num_train_epochs=args.num_train_epochs,
+        max_steps=args.max_steps,
+        fp16=args.fp16,
+        gradient_checkpointing=args.gradient_checkpointing,
+        save_steps=args.save_steps,
+        eval_steps=args.eval_steps,
+        logging_steps=args.logging_steps,
+        learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
+        weight_decay=args.weight_decay,
+        warmup_steps=args.warmup_steps,
+        save_total_limit=args.save_total_limit,
+        predict_with_generate=args.predict_with_generate, ##
+        generation_max_length=args.generation_max_length,
+        load_best_model_at_end=args.load_best_model_at_end,
+        metric_for_best_model=args.metric_for_best_model,  # cer
+        greater_is_better=False, 
+        report_to='tensorboard'
+    )
 
 
 
@@ -309,8 +474,7 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     log_level = training_args.get_process_log_level()
-    print(log_level)
-    quit()
+
     logger.setLevel(log_level)
     datasets.utils.logging.set_verbosity(log_level)
     transformers.utils.logging.set_verbosity(log_level)
@@ -331,13 +495,13 @@ def main():
         transformers.utils.logging.set_verbosity_info()
     logger.info("Training/evaluation parameters %s", training_args)
 
-    # 3. Detecting last checkpoint and eventually continue from last checkpoint
+    # detecting last checkpoint and eventually continue from last checkpoint
     last_checkpoint = None
-    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+    if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(args.output_dir)
+        if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
             raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                f"Output directory ({args.output_dir}) already exists and is not empty. "
                 "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
@@ -346,114 +510,123 @@ def main():
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
-    # Set seed before initializing model.
-    set_seed(training_args.seed)
 
-    # 4. Load dataset
-    raw_datasets = DatasetDict()
 
-    if training_args.do_train:
-        raw_datasets["train"] = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            split=data_args.train_split_name,
-            cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
-        )
+    # Load dataset
 
-    if training_args.do_eval:
-        raw_datasets["eval"] = load_dataset(
-            data_args.dataset_name,
-            data_args.dataset_config_name,
-            split=data_args.eval_split_name,
-            cache_dir=model_args.cache_dir,
-            use_auth_token=True if model_args.use_auth_token else None,
-        )
+    # Load Datasets and Models #
 
-    if data_args.audio_column_name not in next(iter(raw_datasets.values())).column_names:
+    # load dataset
+    print('loading dataset from {}'.format(args.data_dir))
+
+    # data files
+    data_files = {
+        'train': args.data_dir+'/train.csv', # final_train.csv
+        'validation': args.data_dir+'/validation.csv', # final_train.csv
+        'test': args.data_dir+'/test.csv', # final_test.csv
+        }
+
+    raw_datasets = load_dataset('csv', data_files=data_files)
+
+
+    # map to new audio path
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+
+
+    #raw_datasets.cleanup_cache_files()
+
+    # check audio column, text column names
+    if args.audio_column not in raw_datasets["train"].column_names:
         raise ValueError(
-            f"--audio_column_name '{data_args.audio_column_name}' not found in dataset '{data_args.dataset_name}'. "
-            "Make sure to set `--audio_column_name` to the correct audio column - one of "
-            f"{', '.join(next(iter(raw_datasets.values())).column_names)}."
+            f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
+            " Make sure to set `--audio_column` to the correct audio column - one of"
+            f" {', '.join(raw_datasets['train'].column_names)}."
         )
 
-    if data_args.text_column_name not in next(iter(raw_datasets.values())).column_names:
+    if args.text_column not in raw_datasets["train"].column_names:
         raise ValueError(
-            f"--text_column_name {data_args.text_column_name} not found in dataset '{data_args.dataset_name}'. "
-            "Make sure to set `--text_column_name` to the correct text column - one of "
-            f"{', '.join(next(iter(raw_datasets.values())).column_names)}."
+            f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
+            "Make sure to set `--text_column` to the correct text column - one of "
+            f"{', '.join(raw_datasets['train'].column_names)}."
         )
 
-    # 5. Load pretrained model, tokenizer, and feature extractor
+    if args.max_train_samples is not None:
+        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+
+    if args.max_eval_samples is not None:
+        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+
+    if args.max_test_samples is not None:
+        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+
+
+
+
+    # Load pretrained model, tokenizer, and feature extractor
     #
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     config = AutoConfig.from_pretrained(
-        model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
     )
 
-    config.update({"forced_decoder_ids": model_args.forced_decoder_ids, "suppress_tokens": model_args.suppress_tokens})
+    config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
-        model_args.feature_extractor_name if model_args.feature_extractor_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #use_fast=model_args.use_fast_tokenizer,
+        #revision=model_args.model_revision,
+        #use_auth_token=True if model_args.use_auth_token else None,
     )
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        model_args.model_name_or_path,
+        args.model_name_or_path,
         config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
     )
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
-    if model_args.freeze_feature_encoder:
-        model.freeze_feature_encoder()
 
-    if model_args.freeze_encoder:
+    if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-    if data_args.language is not None:
+    if args.language is not None:
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-        tokenizer.set_prefix_tokens(language=data_args.language, task=data_args.task)
+        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
 
-    # 6. Resample speech dataset if necessary
-    dataset_sampling_rate = next(iter(raw_datasets.values())).features[data_args.audio_column_name].sampling_rate
-    if dataset_sampling_rate != feature_extractor.sampling_rate:
-        raw_datasets = raw_datasets.cast_column(
-            data_args.audio_column_name, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        )
+
+    # resample speech dataset if necessary
+    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
+    #if dataset_sampling_rate != feature_extractor.sampling_rate:
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
 
     # 7. Preprocessing the datasets.
     # We need to read the audio files as arrays and tokenize the targets.
-    max_input_length = data_args.max_duration_in_seconds * feature_extractor.sampling_rate
-    min_input_length = data_args.min_duration_in_seconds * feature_extractor.sampling_rate
-    audio_column_name = data_args.audio_column_name
-    num_workers = data_args.preprocessing_num_workers
-    text_column_name = data_args.text_column_name
+    max_input_length = args.max_duration * feature_extractor.sampling_rate
+    min_input_length = args.min_duration * feature_extractor.sampling_rate
+    audio_column_name = args.audio_column
+    num_workers = args.preprocessing_num_workers
+    text_column_name = args.text_column
     model_input_name = feature_extractor.model_input_names[0]
-    do_lower_case = data_args.do_lower_case
+    #do_lower_case = args.do_lower_case
 
-    if data_args.max_train_samples is not None:
-        raw_datasets["train"] = raw_datasets["train"].select(range(data_args.max_train_samples))
 
-    if data_args.max_eval_samples is not None:
-        raw_datasets["eval"] = raw_datasets["eval"].select(range(data_args.max_eval_samples))
 
     def prepare_dataset(batch):
         # process audio
@@ -464,7 +637,8 @@ def main():
         batch["input_length"] = len(sample["array"])
 
         # process targets
-        input_str = batch[text_column_name].lower() if do_lower_case else batch[text_column_name]
+        #input_str = batch[text_column_name].lower() if do_lower_case else batch[text_column_name]
+        input_str = batch[text_column_name]
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
 
@@ -472,7 +646,7 @@ def main():
         vectorized_datasets = raw_datasets.map(
             prepare_dataset,
             remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=data_args.preprocessing_num_workers,
+            num_proc=args.preprocessing_num_workers,
             desc="preprocess train dataset",
         )
 
@@ -492,13 +666,17 @@ def main():
     # be a timeout when running the script in distributed mode.
     # In a second step `args.preprocessing_only` can then be set to `False` to load the
     # cached dataset
-    if data_args.preprocessing_only:
+    if args.preprocessing_only:
         cache = {k: v.cache_files for k, v in vectorized_datasets.items()}
         logger.info(f"Data preprocessing finished. Files cached at {cache}.")
         return
 
-    # 8. Load Metric
-    metric = evaluate.load("wer")
+
+    # Load Metric
+    # load offline
+    #metric = evaluate.load("cer")
+    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+
 
     def compute_metrics(pred):
         pred_ids = pred.predictions
@@ -509,50 +687,57 @@ def main():
         # we do not want to group tokens when computing the metrics
         label_str = tokenizer.batch_decode(pred.label_ids, skip_special_tokens=True)
 
-        wer = metric.compute(predictions=pred_str, references=label_str)
+        cer = metric.compute(predictions=pred_str, references=label_str)
 
-        return {"wer": wer}
+        return {"cer": cer}
 
-    # 9. Create a single speech processor
+
+    # create a single speech processor
     if is_main_process(training_args.local_rank):
         # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(training_args.output_dir)
-        tokenizer.save_pretrained(training_args.output_dir)
-        config.save_pretrained(training_args.output_dir)
+        feature_extractor.save_pretrained(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
+        config.save_pretrained(args.output_dir)
 
-    processor = AutoProcessor.from_pretrained(training_args.output_dir)
 
-    # 10. Define data collator
+    processor = AutoProcessor.from_pretrained(args.output_dir)
+
+
+    # data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(
         processor=processor,
         decoder_start_token_id=model.config.decoder_start_token_id,
     )
 
-    # 11. Initialize Trainer
+
+    # Initialize Trainer
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
-        train_dataset=vectorized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=vectorized_datasets["eval"] if training_args.do_eval else None,
+        train_dataset=vectorized_datasets["train"] if args.do_train else None,
+        eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
         tokenizer=feature_extractor,
         data_collator=data_collator,
-        compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        compute_metrics=compute_metrics if args.predict_with_generate else None,
     )
 
-    # 12. Training
-    if training_args.do_train:
+
+    # Training
+    if args.do_train:  # args and not training_args
         checkpoint = None
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
+
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the feature extractor too for easy upload
+        trainer.save_model()  # Saves the feature extractor too 
+
 
         metrics = train_result.metrics
         max_train_samples = (
-            data_args.max_train_samples
-            if data_args.max_train_samples is not None
+            args.max_train_samples
+            if args.max_train_samples is not None
             else len(vectorized_datasets["train"])
         )
         metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
@@ -560,40 +745,26 @@ def main():
         trainer.save_metrics("train", metrics)
         trainer.save_state()
 
-    # 13. Evaluation
+
+    # Evaluation
     results = {}
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(
             metric_key_prefix="eval",
-            max_length=training_args.generation_max_length,
-            num_beams=training_args.generation_num_beams,
+            max_length=args.generation_max_length,
+            #num_beams=training_args.generation_num_beams,
         )
         max_eval_samples = (
-            data_args.max_eval_samples if data_args.max_eval_samples is not None else len(vectorized_datasets["eval"])
+            args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
         )
-        metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["eval"]))
+        metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-    # 14. Write Training Stats
-    kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "automatic-speech-recognition"}
-    if data_args.dataset_name is not None:
-        kwargs["dataset_tags"] = data_args.dataset_name
-        if data_args.dataset_config_name is not None:
-            kwargs["dataset_args"] = data_args.dataset_config_name
-            kwargs["dataset"] = f"{data_args.dataset_name} {data_args.dataset_config_name}"
-        else:
-            kwargs["dataset"] = data_args.dataset_name
-
-    if training_args.push_to_hub:
-        trainer.push_to_hub(**kwargs)
-    else:
-        trainer.create_model_card(**kwargs)
-
-    return results
 
 
 if __name__ == "__main__":
+
     main()
