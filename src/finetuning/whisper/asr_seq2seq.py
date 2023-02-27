@@ -178,7 +178,7 @@ def main():
     argp.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=4, # None
+        default=8, # None
         help="The number of processes to use for the preprocessing."
     )
     argp.add_argument(
@@ -360,7 +360,7 @@ def main():
     argp.add_argument(
         '--save_total_limit',
         type=int,
-        default=2
+        default=4
     )
     argp.add_argument(
         '--load_best_model_at_end',
@@ -499,6 +499,7 @@ def main():
     last_checkpoint = None
     if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(args.output_dir)
+
         if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
             raise ValueError(
                 f"Output directory ({args.output_dir}) already exists and is not empty. "
@@ -509,7 +510,7 @@ def main():
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
-
+    
 
 
     # Load dataset
@@ -747,7 +748,7 @@ def main():
 
 
     # Evaluation
-    results = {}
+
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(
