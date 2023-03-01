@@ -61,15 +61,15 @@ from transformers.utils.versions import require_version
 def path_remap(x, args):
 
     # get audio path
-    path_list = x['audio'].split('/')
-    #path = x['audio']
+    #path_list = x['audio'].split('/')
+    path = x['audio']
 
-    for i in range(len(path_list)):
-        if path_list[i] == 'wav': break
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
 
-    new_path = '/'.join(path_list[i:])
-    new_path = args.data_dir+'/'+new_path
-    #new_path = args.data_dir+'/'+path
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
     x['audio'] = new_path
 
     return x
@@ -320,27 +320,27 @@ def main():
     argp.add_argument(
         '--max_steps',
         type=int,
-        default=5000 
+        default=50000 
     )
     argp.add_argument(
         '--save_steps',
         type=int,
-        default=500
+        default=1000
     )
     argp.add_argument(
         '--eval_steps',
         type=int,
-        default=500
+        default=1000
     )
     argp.add_argument(
         '--logging_steps',
         type=int,
-        default=500
+        default=1000
     )
     argp.add_argument(
         '--warmup_steps',
         type=int,
-        default=100
+        default=500
     )
     argp.add_argument(
         '--learning_rate',
@@ -522,13 +522,12 @@ def main():
 
     # data files
     data_files = {
-        'train': args.data_dir+'/train.csv', # final_train.csv
-        'validation': args.data_dir+'/validation.csv', # final_train.csv
-        'test': args.data_dir+'/test.csv', # final_test.csv
+        'train': args.data_dir+'/final_train.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_short.csv', # final_train.csv
+        'test': args.data_dir+'/final_test_short.csv', # final_test.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
-
 
     # map to new audio path
     raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
