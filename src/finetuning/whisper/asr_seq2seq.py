@@ -647,6 +647,7 @@ def main():
             prepare_dataset,
             remove_columns=next(iter(raw_datasets.values())).column_names,
             num_proc=args.preprocessing_num_workers,
+            keep_in_memory=True, # no cache
             desc="preprocess train dataset",
         )
 
