@@ -642,14 +642,14 @@ def main():
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
 
-    with training_args.main_process_first(desc="dataset map pre-processing"):
-        vectorized_datasets = raw_datasets.map(
-            prepare_dataset,
-            remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=args.preprocessing_num_workers,
-            keep_in_memory=True, # no cache
-            desc="preprocess train dataset",
-        )
+    #with training_args.main_process_first(desc="dataset map pre-processing"):
+    vectorized_datasets = raw_datasets.map(
+        prepare_dataset,
+        remove_columns=next(iter(raw_datasets.values())).column_names,
+        num_proc=args.preprocessing_num_workers,
+        keep_in_memory=True, # no cache
+        desc="preprocess train dataset",
+    )
 
     # filter data that is shorter than min_input_length or longer than
     # max_input_length
