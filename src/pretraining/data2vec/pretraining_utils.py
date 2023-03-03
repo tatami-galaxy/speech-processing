@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import CrossEntropyLoss
+from dataclasses import dataclass
 
 from transformers import (
     Data2VecAudioPreTrainedModel,
@@ -14,22 +14,15 @@ from transformers import (
     Data2VecAudioModel
 )
 
-from ...activations import ACT2FN
-from ...deepspeed import is_deepspeed_zero3_enabled
-from ...modeling_outputs import (
-    BaseModelOutput,
-    CausalLMOutput,
-    SequenceClassifierOutput,
-    TokenClassifierOutput,
-    Wav2Vec2BaseModelOutput,
-    XVectorOutput,
-)
-from ...modeling_utils import PreTrainedModel
-from ...pytorch_utils import torch_int_div
-from ...utils import add_code_sample_docstrings, add_start_docstrings, add_start_docstrings_to_model_forward, logging
+from transformers.utils.generic import ModelOutput
 
 
-logger = logging.get_logger(__name__)
+
+@dataclass
+class Data2VecAudioForPreTrainingOutput(ModelOutput):
+    pass
+
+
 
 
 class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
@@ -58,7 +51,24 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, Wav2Vec2ForPreTrainingOutput]:
+    ) -> Union[Tuple, Data2VecAudioForPreTrainingOutput]:
+        
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if mask_time_indices is not None:
+            mask_time_indices = mask_time_indices.to(torch.bool)
+
+        outputs = self.wav2vec2(
+            input_values,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            mask_time_indices=mask_time_indices,
+            return_dict=return_dict,
+        )
+
+        # check outputs
+        print(outputs)
 
     
 
