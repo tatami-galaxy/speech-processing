@@ -11,10 +11,15 @@ from dataclasses import dataclass
 from transformers import (
     Data2VecAudioPreTrainedModel,
     Data2VecAudioConfig,
-    Data2VecAudioModel
+    Data2VecAudioModel,
+    Wav2Vec2FeatureExtractor
 )
 
 from transformers.utils.generic import ModelOutput
+
+
+import datasets
+from datasets import load_from_disk
 
 
 
@@ -72,9 +77,67 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
 
     
 
-
+## demo to test classes ##
 def main():
-    pass
+
+    max_train_samples = 100
+    audio_column_name = 'audio'
+    max_duration_in_seconds = 20.0
+    min_duration_in_seconds = 1.0
+   
+
+    # load cv data
+    dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
+    dataset = dataset.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
+    
+    # sample data
+    dataset = dataset["train"].select(range(max_train_samples))
+
+    feature_extractor = Wav2Vec2FeatureExtractor()
+    dataset = dataset.cast_column(
+        audio_column_name, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
+
+    max_length = int(max_duration_in_seconds * feature_extractor.sampling_rate)
+    min_length = int(min_duration_in_seconds * feature_extractor.sampling_rate)
+    
+    def prepare_dataset(batch):
+        sample = batch[audio_column_name]
+
+        inputs = feature_extractor(
+            sample["array"], sampling_rate=sample["sampling_rate"], max_length=max_length, truncation=True
+        )
+        batch["input_values"] = inputs.input_values[0]
+        batch["input_length"] = len(inputs.input_values[0])
+
+        return batch
+    
+    dataset = dataset.map(
+        prepare_dataset,
+        num_proc=2,
+        remove_columns=dataset.column_names,
+    )
+
+    if min_length > 0.0:
+        dataset = dataset.filter(
+            lambda x: x > min_length,
+            num_proc=2,
+            input_columns=["input_length"],
+        )
+
+        dataset = dataset.remove_columns("input_length")
+
+
+    print(dataset)
+
+    # config 
+
+    # model
+
+    # data collator
+
+    # get a batch
+
 
 
 
