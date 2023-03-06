@@ -422,7 +422,7 @@ def main():
         '--overwrite_output_dir',
         default=False,
         action=argparse.BooleanOptionalAction,
-        help="Whether to overwrite output directory. Need to be False to load checkpoint"
+        help="Whether to overwrite output directory. True ignores checkpoints and remakes vocab"
     )
     argp.add_argument(
         '--gradient_checkpointing',
