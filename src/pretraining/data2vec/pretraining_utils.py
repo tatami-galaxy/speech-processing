@@ -16,11 +16,13 @@ from transformers import (
 )
 
 from transformers.utils.generic import ModelOutput
+from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
 
 
 import datasets
 from datasets import load_from_disk
 from typing import Dict, List, Optional, Union
+from torch.utils.data.dataloader import DataLoader
 
 
 
@@ -32,6 +34,8 @@ class Data2VecAudioForPreTrainingOutput(ModelOutput):
 
 
 class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
+
+    # check mask time, mask feature
 
     def __init__(self, config: Data2VecAudioConfig):
         super().__init__(config)
@@ -63,6 +67,8 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         if mask_time_indices is not None:
             mask_time_indices = mask_time_indices.to(torch.bool)
 
+        # outputs[0] -> masked (spec augment), projected hidden states, hidden_state dim (768)
+        # outputs[1] -> unmasked, un-projected hidden states, xvector dim (512)
         outputs = self.data2vec(
             input_values,
             attention_mask=attention_mask,
@@ -72,10 +78,9 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             return_dict=return_dict,
         )
 
-        # check outputs
-        print(outputs)
+        hidden_state = outputs[0] # b,s,d
 
-    
+
 
 @dataclass
 class DataCollatorForData2VecPretraining:
@@ -146,7 +151,7 @@ class DataCollatorForData2VecPretraining:
 
         features_shape = (batch_size, mask_indices_seq_length)
 
-        # sample randomly masked indices
+        # sample randomly masked indices for spec augment
         mask_time_indices = _compute_mask_indices(
             features_shape,
             self.mask_time_prob,
@@ -155,13 +160,13 @@ class DataCollatorForData2VecPretraining:
         )
 
         # sample negative indices
-        sampled_negative_indices = _sample_negative_indices(
-            features_shape,
-            self.model.config.num_negatives,
-            mask_time_indices=mask_time_indices,
-        )
+        #sampled_negative_indices = _sample_negative_indices(
+            #features_shape,
+            #self.model.config.num_negatives,
+            #mask_time_indices=mask_time_indices,
+        #)
         batch["mask_time_indices"] = torch.tensor(mask_time_indices, dtype=torch.long, device=device)
-        batch["sampled_negative_indices"] = torch.tensor(sampled_negative_indices, dtype=torch.long, device=device)
+        #batch["sampled_negative_indices"] = torch.tensor(sampled_negative_indices, dtype=torch.long, device=device)
 
         return batch
 
@@ -174,6 +179,8 @@ def main():
     audio_column_name = 'audio'
     max_duration_in_seconds = 20.0
     min_duration_in_seconds = 1.0
+    model_name = 'facebook/data2vec-audio-base'
+    batch_size = 4
    
 
     # load cv data
@@ -218,16 +225,36 @@ def main():
         dataset = dataset.remove_columns("input_length")
 
 
-    print(dataset)
-    print(dataset[0])
+    #print(dataset)
 
     # config 
-
+    config = Data2VecAudioConfig.from_pretrained(model_name)
     # model
+    model = Data2VecAudioForPreTraining(config=config)
 
-    # data collator
+    mask_time_prob = config.mask_time_prob 
+    mask_time_length = config.mask_time_length 
+
+    # data collator, data loader
+    data_collator = DataCollatorForData2VecPretraining(
+        model=model,
+        feature_extractor=feature_extractor,
+        #pad_to_multiple_of=args.pad_to_multiple_of,
+        mask_time_prob=mask_time_prob,
+        mask_time_length=mask_time_length,
+    )
+
+    dataloader = DataLoader(
+        dataset,
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=batch_size,
+    )
 
     # get a batch
+    batch = next(iter(dataloader))
+    #print(batch)
+    model(**batch)
 
 
 
