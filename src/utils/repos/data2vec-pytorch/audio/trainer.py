@@ -44,6 +44,7 @@ class AudioTrainer:
         # Trackers
         self.loss_tracker = AverageMeter('loss')
 
+
     def train_step(self, batch):
         """
         Train one batch of data and return loss.
@@ -54,16 +55,20 @@ class AudioTrainer:
         Returns:
             Loss value
         """
+        # mask -> mask time indices
+
+
         src, mask = batch
         src, mask = src.to(self.device), mask.to(self.device)
         # src is not masked so can be used as trg. (src will be masked in the encoder forward)
         x, y = self.model(src, src, mask)
-        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0))
+        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0))  # average of hidden embeddings
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
 
         return loss.item()
+
 
     def test_step(self, batch):
         """
@@ -79,9 +84,10 @@ class AudioTrainer:
         src, mask = src.to(self.device), mask.to(self.device)
         # src is not masked so can be used as trg. (src will be masked in the encoder forward)
         x, y = self.model(src, src, mask=mask)
-        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0))
+        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0))  # average of hidden embeddings
 
         return loss.item()
+
 
     def train_epoch(self, epoch_num):
         """
@@ -106,6 +112,7 @@ class AudioTrainer:
 
         return avg_loss
 
+
     def evaluate(self):
         """
         Evaluate the model on the test set
@@ -125,6 +132,7 @@ class AudioTrainer:
                     iterator.set_postfix(loss=avg_loss)
 
         return avg_loss
+
 
     def train(self):
         """

@@ -57,8 +57,8 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         input_values: Optional[torch.Tensor],
         attention_mask: Optional[torch.Tensor] = None,
         mask_time_indices: Optional[torch.BoolTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,  # whether to output attentions from pretraining model
+        output_hidden_states: Optional[bool] = None,  # whether to output hidden states from pretraining model
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, Data2VecAudioForPreTrainingOutput]:
         
@@ -67,8 +67,9 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         if mask_time_indices is not None:
             mask_time_indices = mask_time_indices.to(torch.bool)
 
-        # outputs[0] -> masked (spec augment), projected hidden states, hidden_state dim (768)
-        # outputs[1] -> unmasked, un-projected hidden states, xvector dim (512)
+        # outputs[0] -> masked (spec augment), last, projected hidden state, hidden_state dim (768)
+        # outputs[1] -> unmasked, un-projected hidden state, xvector dim (512)
+        # outputs[2] -> masked all projected hidden states, dim (768)
         outputs = self.data2vec(
             input_values,
             attention_mask=attention_mask,
@@ -77,8 +78,26 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             mask_time_indices=mask_time_indices,
             return_dict=return_dict,
         )
+        # encoder outputs with masked conv features after layer norm and projection
+        masked_hidden_states = outputs[2] # [b,s,d] x 13, predict unmasked from this (maybe just final hidden?)
+        # conv features after layer norm
+        unmasked_input_features = outputs[1]  # b,s,c
+        # projection and dropout before encoder
+        unmasked_input_features, _ = self.data2vec.feature_projection(unmasked_input_features)  # b,s,c
+        # pass through encoder without masking
+        unmasked_model_outputs = self.encoder(
+            unmasked_input_features,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+            output_hidden_states=True,  # need average of encoder hidden states
+            return_dict=return_dict,
+        )
 
-        hidden_state = outputs[0] # b,s,d
+        # how to predict average of unmasked representations from layers?
+        # final output -> average of K unmasked reps?
+        # k masked layer reps -> k unmasked layer reps?
+
+        # need to pass unmasked input through the model
 
 
 
