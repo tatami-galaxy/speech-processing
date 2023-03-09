@@ -96,9 +96,12 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             return_dict=return_dict,
         )
         unmasked_hidden_states = outputs[2]  # [b,s,d] x 13
+
         # take top k layer representations
         top_k_unmasked = unmasked_hidden_states[-self.top_k:]
         
+        # instance normalization of target
+
         # loss
         # ema
         # set k, tau
