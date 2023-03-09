@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Union
 import datasets
 import torch
 from accelerate import Accelerator
+from accelerate import DistributedDataParallelKwargs
 from accelerate.logging import get_logger
 from datasets import DatasetDict, concatenate_datasets, load_dataset
 from huggingface_hub import Repository, create_repo
@@ -383,12 +384,12 @@ def main():
     argp.add_argument(
         '--saving_steps',
         type=int,
-        default=5000
+        default=1000
     )
     argp.add_argument(
         '--num_warmup_steps',
         type=int,
-        default=1000
+        default=500
     )
     argp.add_argument(
         '--learning_rate',
@@ -489,8 +490,10 @@ def main():
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_wav2vec2_pretraining", args)
 
-    # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
-    accelerator = Accelerator()
+    # Initialize the accelerator. We will let the accelerator handle device placement for us in this example
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -793,16 +796,13 @@ def main():
                     "temp": torch.tensor(gumbel_temperature),
                     "grad_norm": torch.tensor(grad_norm),
                 }
-                log_str = ""
+                train_log_str = ""
                 for k, v in train_logs.items():
-                    log_str += "| {}: {:.3e}".format(k, v.item())
+                    train_log_str += "| {}: {:.3e}".format(k, v.item())
 
                 if accelerator.is_local_main_process:
-                    progress_bar.write(log_str)
-                    #if is_wandb_available():
-                        #wandb.log(train_logs)
+                    progress_bar.write(train_log_str)
 
-                    # tensorboard logging
                     writer.add_scalar("loss", train_logs["loss"], step+1)
                     writer.add_scalar("constrast_loss", train_logs["constrast_loss"], step+1)
                     writer.add_scalar("div_loss", train_logs["div_loss"], step+1)
@@ -811,6 +811,49 @@ def main():
                     writer.add_scalar("lr", train_logs["lr"], step+1)
                     writer.add_scalar("temp", train_logs["temp"], step+1)
                     writer.add_scalar("grad_norm", train_logs["grad_norm"], step+1)
+
+
+                # validate
+                model.eval()
+
+                # init logs
+                val_logs = {
+                    "val_loss": 0,
+                    "val_contrastive_loss": 0,
+                    "val_diversity_loss": 0,
+                    "val_num_losses": 0,
+                }
+                for _, batch in enumerate(eval_dataloader):
+                    with torch.no_grad():
+                        batch.pop("sub_attention_mask", None)
+                        outputs = model(**batch)
+
+                    val_logs["val_loss"] += outputs.loss
+                    val_logs["val_contrastive_loss"] += outputs.contrastive_loss
+                    val_logs["val_diversity_loss"] += outputs.diversity_loss
+                    val_logs["val_num_losses"] += batch["mask_time_indices"].sum()
+
+                model.train()
+
+                # sum over devices in multi-processing
+                if accelerator.num_processes > 1:
+                    val_logs = {k: accelerator.gather_for_metrics(v).sum() for k, v in val_logs.items()}
+
+                val_logs = {k: v / val_logs["val_num_losses"] for k, v in val_logs.items()}
+
+                val_log_str = ""
+                for k, v in val_logs.items():
+                    val_log_str += "| {}: {:.3e}".format(k, v.item())
+
+
+                if accelerator.is_local_main_process:
+                    progress_bar.write(val_log_str)
+
+                    # tensorboard logging
+
+                    writer.add_scalar("val_loss", val_logs["val_loss"], step+1)
+                    writer.add_scalar("val_contrastive_loss", val_logs["val_contrastive_loss"], step+1)
+                    writer.add_scalar("val_diversity_loss", val_logs["val_diversity_loss"], step+1)
 
          
 
@@ -828,7 +871,7 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-        # 7. Validate!
+        # 7. Validate after an epoch anyway
         model.eval()
 
         # init logs
