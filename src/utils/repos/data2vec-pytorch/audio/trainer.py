@@ -84,7 +84,7 @@ class AudioTrainer:
         src, mask = src.to(self.device), mask.to(self.device)
         # src is not masked so can be used as trg. (src will be masked in the encoder forward)
         x, y = self.model(src, src, mask=mask)
-        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0))  # average of hidden embeddings
+        loss = self.criterion(x.float(), y.float()).sum(dim=-1).div(x.size(0)) 
 
         return loss.item()
 

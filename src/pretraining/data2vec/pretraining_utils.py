@@ -40,6 +40,8 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
     def __init__(self, config: Data2VecAudioConfig):
         super().__init__(config)
         self.data2vec = Data2VecAudioModel(config)
+        self.top_k = None # 8, num top layers to average representations for target
+        self.ema_tau = None
 
 
     def freeze_feature_encoder(self):
@@ -67,9 +69,9 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         if mask_time_indices is not None:
             mask_time_indices = mask_time_indices.to(torch.bool)
 
-        # outputs[0] -> masked (spec augment), last, projected hidden state, hidden_state dim (768)
-        # outputs[1] -> unmasked, un-projected hidden state, xvector dim (512)
-        # outputs[2] -> masked all projected hidden states, dim (768)
+        # pass inputs though model without mask
+        # outputs[0] -> masked (spec augment), last, projected, hidden state, hidden_state dim (768)
+        # outputs[1] -> unmasked, un-projected, conv feature, layer norm, xvector dim (512)
         outputs = self.data2vec(
             input_values,
             attention_mask=attention_mask,
@@ -79,25 +81,29 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             return_dict=return_dict,
         )
         # encoder outputs with masked conv features after layer norm and projection
-        masked_hidden_states = outputs[2] # [b,s,d] x 13, predict unmasked from this (maybe just final hidden?)
-        # conv features after layer norm
-        unmasked_input_features = outputs[1]  # b,s,c
-        # projection and dropout before encoder
-        unmasked_input_features, _ = self.data2vec.feature_projection(unmasked_input_features)  # b,s,c
-        # pass through encoder without masking
-        unmasked_model_outputs = self.encoder(
-            unmasked_input_features,
+        masked_final_state = outputs[0] # [b,s,d], predict unmasked from this
+
+        # pass inputs though model without mask
+        # outputs[0] -> unmasked (check mask_time_indices None), last, projected, hidden state, hidden_state dim (768)
+        # outputs[1] -> unmasked, un-projected, conv feature, layer norm, xvector dim (512)
+        # outputs[2] -> unmasked, all hidden states (768)
+        outputs = self.data2vec(
+            input_values,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
-            output_hidden_states=True,  # need average of encoder hidden states
+            output_hidden_states=True,  # need top k unmasked hidden states for target
+            mask_time_indices=None,  # no mask
             return_dict=return_dict,
         )
+        unmasked_hidden_states = outputs[2]  # [b,s,d] x 13
+        # take top k layer representations
+        top_k_unmasked = unmasked_hidden_states[-self.top_k:]
+        
+        # loss
+        # ema
+        # set k, tau
 
-        # how to predict average of unmasked representations from layers?
-        # final output -> average of K unmasked reps?
-        # k masked layer reps -> k unmasked layer reps?
-
-        # need to pass unmasked input through the model
+        
 
 
 
