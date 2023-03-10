@@ -28,7 +28,10 @@ from torch.utils.data.dataloader import DataLoader
 
 @dataclass
 class Data2VecAudioForPreTrainingOutput(ModelOutput):
-    pass
+
+    loss: Optional[torch.FloatTensor] = None
+    #hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+    #attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
 
@@ -40,8 +43,16 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
     def __init__(self, config: Data2VecAudioConfig):
         super().__init__(config)
         self.data2vec = Data2VecAudioModel(config)
-        self.top_k = None # 8, num top layers to average representations for target
+        self.embed_dim = self.config.hidden_size
+        # where to set k and tau?
+        self.top_k = 8 # 8, num top layers to average representations for target
         self.ema_tau = None
+        # affine = True -> learnable paramters
+        self.instance_norm = nn.InstanceNorm1d(self.embed_dim, affine=True)
+        # regression head
+        self.regression_head = nn.Linear(self.embed_dim, self.embed_dim)
+        # loss
+        self.mse_loss = nn.MSELoss()
 
 
     def freeze_feature_encoder(self):
@@ -81,7 +92,10 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             return_dict=return_dict,
         )
         # encoder outputs with masked conv features after layer norm and projection
+
         masked_final_state = outputs[0] # [b,s,d], predict unmasked from this
+        # pass x though regression head
+        masked_final_state = self.regression_head(masked_final_state)  # X (prediction)
 
         # pass inputs though model without mask
         # outputs[0] -> unmasked (check mask_time_indices None), last, projected, hidden state, hidden_state dim (768)
@@ -98,13 +112,18 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         unmasked_hidden_states = outputs[2]  # [b,s,d] x 13
 
         # take top k layer representations
-        top_k_unmasked = unmasked_hidden_states[-self.top_k:]
-        
-        # instance normalization of target
+        unmasked_hidden_states = unmasked_hidden_states[-self.top_k:]     
+        # instance normalization of target for each block (layer)
+        # transpose to d x s and then back after instance norm
+        unmasked_hidden_states = [self.instance_norm(l.transpose(1, 2)).transpose(1,2) for l in unmasked_hidden_states]
+        # average top k blocks after instance norm
+        unmasked_k_avg = torch.mean(torch.stack(unmasked_hidden_states), dim=0)  # Y (target)
 
-        # loss
-        # ema
-        # set k, tau
+        # l2(MSE) loss
+        loss = self.mse_loss(masked_final_state, unmasked_k_avg)
+    
+
+        return Data2VecAudioForPreTraining(loss=loss)
 
         
 
