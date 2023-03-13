@@ -56,10 +56,10 @@ class Data2Vec(nn.Module):
                 decay = self.ema_end_decay
             else:
                 decay = self.ema.get_annealed_rate(
-                    self.ema_decay,
-                    self.ema_end_decay,
-                    self.ema.num_updates,
-                    self.ema_anneal_end_step,
+                    self.ema_decay, # start
+                    self.ema_end_decay, # end
+                    self.ema.num_updates, # current
+                    self.ema_anneal_end_step, # total
                 )
             self.ema.decay = decay
         if self.ema.decay < 1:

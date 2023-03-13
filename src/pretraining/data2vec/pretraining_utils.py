@@ -1,5 +1,5 @@
 import math
-import warnings
+import copy
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -23,6 +23,7 @@ import datasets
 from datasets import load_from_disk
 from typing import Dict, List, Optional, Union
 from torch.utils.data.dataloader import DataLoader
+from transformers import AdamW
 
 
 
@@ -42,11 +43,24 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
 
     def __init__(self, config: Data2VecAudioConfig):
         super().__init__(config)
-        self.data2vec = Data2VecAudioModel(config)
+        # model in student mode
+        self.student = Data2VecAudioModel(config) 
+        # model in teacher mode
+        self.teacher = copy.deepcopy(self.student)
+        # keys to skip during teacher update (maybe teacher already trained)
+        self.skip_keys = None
+        # hidden dimension for regression head
         self.embed_dim = self.config.hidden_size
         # where to set k and tau?
         self.top_k = 8 # 8, num top layers to average representations for target
-        self.ema_tau = None
+        # initial decay
+        self.tau = None
+        # final decay
+        self.tau_e = None
+        # number of steps to reach final from initial
+        self.n_tau = None
+        # current steps
+        self.c_tau = 0
         # affine = True -> learnable paramters
         self.instance_norm = nn.InstanceNorm1d(self.embed_dim, affine=True)
         # regression head
@@ -55,12 +69,51 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         self.mse_loss = nn.MSELoss()
 
 
+
+    # check device, strict=False
+    def ema(self):
+
+        # get current decay
+        # if number of steps exceeded n_tau, set tau = tau_e
+        if self.tau != self.tau_e:
+            if self.c_tau >= self.n_tau:
+                self.tau = self.tau_e
+        # else linearly increase tau 
+        else:
+            r = self.tau_e - self.tau
+            pct_remaining = 1 - self.c_tau / self.n_tau
+            self.tau = self.tau_e - r * pct_remaining
+            self.c_tau += 1
+        
+        # update teacher weights
+        if self.tau < 1:
+            ema_state_dict = {}
+            ema_params = self.teacher.state_dict()
+            for key, param in self.student.state_dict().items():
+                ema_param = ema_params[key].float()
+                if key in self.skip_keys:
+                    ema_param = param.to(dtype=ema_param.dtype).clone()
+                else:
+                    # mul_, add_ inplace versions
+                    ema_param.mul_(self.tau)
+                    ema_param.add_(param.to(dtype=ema_param.dtype), alpha=1 - self.tau)
+                ema_state_dict[key] = ema_param
+            self.teacher.load_state_dict(ema_state_dict)  #, strict=False)
+
+        else:
+            raise ValueError(
+                f"tau exceeding 1"
+            )
+
+
+
     def freeze_feature_encoder(self):
         """
         Calling this function will disable the gradient computation for the feature encoder so that its parameter will
         not be updated during training.
         """
         self.data2vec.feature_extractor._freeze_parameters()
+
 
 
     #@replace_return_docstrings(output_type=Wav2Vec2ForPreTrainingOutput, config_class=_CONFIG_FOR_DOC)
@@ -80,10 +133,10 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         if mask_time_indices is not None:
             mask_time_indices = mask_time_indices.to(torch.bool)
 
-        # pass inputs though model without mask
+        # pass inputs though model in student mode with mask
         # outputs[0] -> masked (spec augment), last, projected, hidden state, hidden_state dim (768)
         # outputs[1] -> unmasked, un-projected, conv feature, layer norm, xvector dim (512)
-        outputs = self.data2vec(
+        outputs = self.student(
             input_values,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
@@ -97,11 +150,11 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         # pass x though regression head
         masked_final_state = self.regression_head(masked_final_state)  # X (prediction)
 
-        # pass inputs though model without mask
+        # pass inputs though model in teacher mode without mask
         # outputs[0] -> unmasked (check mask_time_indices None), last, projected, hidden state, hidden_state dim (768)
         # outputs[1] -> unmasked, un-projected, conv feature, layer norm, xvector dim (512)
         # outputs[2] -> unmasked, all hidden states (768)
-        outputs = self.data2vec(
+        outputs = self.teacher(
             input_values,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
@@ -123,7 +176,7 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         loss = self.mse_loss(masked_final_state, unmasked_k_avg)
     
 
-        return Data2VecAudioForPreTraining(loss=loss)
+        return Data2VecAudioForPreTrainingOutput(loss=loss)
 
         
 
@@ -231,7 +284,8 @@ def main():
    
 
     # load cv data
-    dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
+    #dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
+    dataset = load_from_disk('/home/ujan/Downloads/common_voice_11')
     dataset = dataset.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
     
     # sample data
@@ -298,10 +352,34 @@ def main():
         batch_size=batch_size,
     )
 
+    for name, param in model.named_parameters():
+        if 'teacher' in name:
+            print(name, param.grad)
+            break
+
+    optimizer = AdamW(model.parameters(), lr=1e-4, weight_decay=0.005)
+
     # get a batch
     batch = next(iter(dataloader))
     #print(batch)
-    model(**batch)
+    loss = model(**batch).loss
+    
+    loss.backward()
+
+    print('after backward')
+    for name, param in model.named_parameters():
+        if 'teacher' in name:
+            print(name, param.grad)
+            break
+
+    print('after zeroing')
+
+    model.teacher.zero_grad()
+    for name, param in model.named_parameters():
+        if 'student' in name:
+            print(name, param.grad)
+            break
+
 
 
 
