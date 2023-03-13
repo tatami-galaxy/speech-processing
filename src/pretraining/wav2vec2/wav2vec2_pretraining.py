@@ -172,15 +172,15 @@ def get_grad_norm(params, scale=1):
 def path_remap(x, args):
 
     # get audio path
-    path_list = x['audio'].split('/')
-    #path = x['audio']
+    #path_list = x['audio'].split('/')
+    path = x['audio']
 
-    for i in range(len(path_list)):
-        if path_list[i] == 'wav': break
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
 
-    new_path = '/'.join(path_list[i:])
-    new_path = args.data_dir+'/'+new_path
-    #new_path = args.data_dir+'/'+path
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
     x['audio'] = new_path
 
     return x
@@ -517,8 +517,8 @@ def main():
 
     # data files
     data_files = {
-        'train': args.data_dir+'/train.csv', # final_train.csv
-        'validation': args.data_dir+'/validation.csv', # final_train.csv
+        'train': args.data_dir+'/final_train_short.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_short.csv', # final_train.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
