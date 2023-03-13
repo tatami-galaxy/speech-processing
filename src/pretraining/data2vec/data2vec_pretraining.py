@@ -38,9 +38,9 @@ from tqdm.auto import tqdm
 import transformers
 from transformers import (
     AdamW,
-    Wav2Vec2Config,
+    Data2VecAudioConfig,
     Wav2Vec2FeatureExtractor,
-    Wav2Vec2ForPreTraining,
+    Data2VecAudioForPreTraining,
     get_scheduler,
     set_seed,
 )
@@ -59,7 +59,7 @@ while root.split('/')[-1] != 'speech-processing':
 
 
 @dataclass
-class DataCollatorForWav2Vec2Pretraining:
+class DataCollatorForData2VecPretraining:
     """
     Data collator that will dynamically pad the inputs received and prepare masked indices
     for self-supervised pretraining.
@@ -95,8 +95,8 @@ class DataCollatorForWav2Vec2Pretraining:
             originates from the original wav2vec 2.0 article and corresponds to the ``M`` variable mentioned there.
     """
 
-    model: Wav2Vec2ForPreTraining
-    feature_extractor: Wav2Vec2FeatureExtractor
+    model: Data2VecAudioForPreTraining
+    feature_extractor: Wav2Vec2FeatureExtractor  # same for data2vec
     padding: Union[bool, str] = "longest"
     pad_to_multiple_of: Optional[int] = None
     mask_time_prob: Optional[float] = 0.65
@@ -127,7 +127,7 @@ class DataCollatorForWav2Vec2Pretraining:
 
         features_shape = (batch_size, mask_indices_seq_length)
 
-        # sample randomly masked indices
+        # sample randomly masked indices for spec augment
         mask_time_indices = _compute_mask_indices(
             features_shape,
             self.mask_time_prob,
@@ -136,13 +136,13 @@ class DataCollatorForWav2Vec2Pretraining:
         )
 
         # sample negative indices
-        sampled_negative_indices = _sample_negative_indices(
-            features_shape,
-            self.model.config.num_negatives,
-            mask_time_indices=mask_time_indices,
-        )
+        #sampled_negative_indices = _sample_negative_indices(
+            #features_shape,
+            #self.model.config.num_negatives,
+            #mask_time_indices=mask_time_indices,
+        #)
         batch["mask_time_indices"] = torch.tensor(mask_time_indices, dtype=torch.long, device=device)
-        batch["sampled_negative_indices"] = torch.tensor(sampled_negative_indices, dtype=torch.long, device=device)
+        #batch["sampled_negative_indices"] = torch.tensor(sampled_negative_indices, dtype=torch.long, device=device)
 
         return batch
 

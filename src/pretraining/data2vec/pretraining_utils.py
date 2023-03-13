@@ -16,7 +16,7 @@ from transformers import (
 )
 
 from transformers.utils.generic import ModelOutput
-from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
+from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices
 
 
 import datasets
@@ -54,11 +54,11 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
         # where to set k and tau?
         self.top_k = 8 # 8, num top layers to average representations for target
         # initial decay
-        self.tau = None
+        self.tau = 0.90
         # final decay
-        self.tau_e = None
+        self.tau_e = 0.99
         # number of steps to reach final from initial
-        self.n_tau = None
+        self.n_tau = 1000
         # current steps
         self.c_tau = 0
         # affine = True -> learnable paramters
@@ -70,7 +70,7 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
 
 
 
-    # check device, strict=False
+    # check device
     def ema(self):
 
         # get current decay
@@ -91,14 +91,14 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
             ema_params = self.teacher.state_dict()
             for key, param in self.student.state_dict().items():
                 ema_param = ema_params[key].float()
-                if key in self.skip_keys:
+                if self.skip_keys is not None and key in self.skip_keys:
                     ema_param = param.to(dtype=ema_param.dtype).clone()
                 else:
                     # mul_, add_ inplace versions
                     ema_param.mul_(self.tau)
                     ema_param.add_(param.to(dtype=ema_param.dtype), alpha=1 - self.tau)
                 ema_state_dict[key] = ema_param
-            self.teacher.load_state_dict(ema_state_dict)  #, strict=False)
+            self.teacher.load_state_dict(ema_state_dict)  # strict=False
 
         else:
             raise ValueError(
@@ -284,8 +284,8 @@ def main():
    
 
     # load cv data
-    #dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
-    dataset = load_from_disk('/home/ujan/Downloads/common_voice_11')
+    dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
+    #dataset = load_from_disk('/home/ujan/Downloads/common_voice_11')
     dataset = dataset.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
     
     # sample data
@@ -366,20 +366,16 @@ def main():
     
     loss.backward()
 
-    print('after backward')
-    for name, param in model.named_parameters():
-        if 'teacher' in name:
-            print(name, param.grad)
-            break
-
-    print('after zeroing')
-
+    # do not update teacher. only student. teacher updated through ema
     model.teacher.zero_grad()
-    for name, param in model.named_parameters():
-        if 'student' in name:
-            print(name, param.grad)
-            break
 
+    optimizer.step()
+    optimizer.zero_grad()
+
+    # update teacher weights
+    model.ema()
+
+    print('done')
 
 
 
