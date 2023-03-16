@@ -41,24 +41,24 @@ class Data2VecAudioForPreTraining(Data2VecAudioPreTrainedModel):
 
     # check mask time, mask feature
 
-    def __init__(self, config: Data2VecAudioConfig):
+    def __init__(self, config: Data2VecAudioConfig, top_k, tau, tau_e, n_tau, skip_keys=None):
         super().__init__(config)
         # model in student mode
         self.student = Data2VecAudioModel(config) 
         # model in teacher mode
         self.teacher = copy.deepcopy(self.student)
         # keys to skip during teacher update (maybe teacher already trained)
-        self.skip_keys = None
+        self.skip_keys = skip_keys
         # hidden dimension for regression head
         self.embed_dim = self.config.hidden_size
         # where to set k and tau?
-        self.top_k = 8 # 8, num top layers to average representations for target
+        self.top_k = top_k # 8, num top layers to average representations for target
         # initial decay
-        self.tau = 0.90
+        self.tau = tau  # 0.90
         # final decay
-        self.tau_e = 0.99
+        self.tau_e = tau_e  # 0.99
         # number of steps to reach final from initial
-        self.n_tau = 1000
+        self.n_tau = n_tau  # 1000
         # current steps
         self.c_tau = 0
         # affine = True -> learnable paramters

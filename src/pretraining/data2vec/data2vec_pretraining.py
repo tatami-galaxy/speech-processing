@@ -40,10 +40,10 @@ from transformers import (
     AdamW,
     Data2VecAudioConfig,
     Wav2Vec2FeatureExtractor,
-    Data2VecAudioForPreTraining,
     get_scheduler,
     set_seed,
 )
+from pretraining_utils import Data2VecAudioForPreTraining
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
 from transformers.utils import send_example_telemetry
 
@@ -296,20 +296,6 @@ def main():
         default=10,
         help="Length of vector span to mask along the time axis."
     )
-    argp.add_argument(
-        '--mask_feature_prob',
-        type=float,
-        default=0.05, # 0.1?
-        help="""Probability of each feature vector along the feature axis to be chosen as the start of the vectorspan 
-        to be masked. Approximately ``mask_feature_prob * sequence_length // mask_feature_length`` feature 
-        bins will be masked along the time axis."""
-    )
-    argp.add_argument(
-        '--mask_feature_length',
-        type=int,
-        default=10,
-        help="Length of vector span to mask along the feature axis."
-    )
 
 
 
@@ -405,21 +391,6 @@ def main():
         default='linear'
     )
     argp.add_argument(
-        "--max_gumbel_temperature",
-        type=float,
-        default=2.0,
-        help="Maximum temperature for gumbel softmax.",
-    )
-    argp.add_argument(
-        "--min_gumbel_temperature",
-        type=float,
-        default=0.5,
-        help="Minimum temperature for gumbel softmax.",
-    )
-    argp.add_argument(
-        "--gumbel_temperature_decay", type=float, default=0.999995, help="Decay of gumbel temperature during training."
-    )
-    argp.add_argument(
         "--pad_to_multiple_of",
         type=int,
         default=None,
@@ -427,6 +398,30 @@ def main():
             "If set will pad the sequence to a multiple of the provided value. This is especially useful to enable the"
             " use of Tensor Cores on NVIDIA hardware with compute capability >= 7.5 (Volta)."
         ),
+    )
+    argp.add_argument(
+        "--top_k",
+        type=int,
+        default=8,
+        help="Top k teacher layers to consider as student target",
+    )
+    argp.add_argument(
+        "--tau",
+        type=float,
+        default=0.90,
+        help="Initial EMA decay",
+    )
+    argp.add_argument(
+        "--tau_e",
+        type=float,
+        default=0.99,
+        help="Final EMA decay",
+    )
+    argp.add_argument(
+        "--n_tau",
+        type=int,
+        default=1000,
+        help="Number of steps to reach tau_e",
     )
     argp.add_argument(
         "--adam_beta1",
@@ -471,7 +466,7 @@ def main():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/pretrained_models/cont_pre_training/wav2vec2/'+model_str+'_'+data_str
+        args.output_dir = root+'/models/pretrained_models/cont_pre_training/data2vec/'+model_str+'_'+data_str
     print('output directory set to : {}'.format(args.output_dir))
     #if not os.path.isdir(args.output_dir):
         #os.mkdir(args.output_dir)
@@ -486,7 +481,7 @@ def main():
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_wav2vec2_pretraining", args)
+    send_example_telemetry("run_data2vec_pretraining", args)
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -546,6 +541,7 @@ def main():
     # Thankfully, `datasets` takes care of automatically loading and resampling the audio,
     # so that we just need to set the correct target sampling rate and normalize the input
     # via the `feature_extractor`
+    # needs preprocessor_config.json
     feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(args.model_name_or_path)  # should work
 
 
@@ -612,21 +608,17 @@ def main():
         return
 
     # 3. Load model
-    config = Wav2Vec2Config.from_pretrained(args.model_name_or_path)
+    # skip_keys, top_k, tau, tau_e, n_tau
+    config = Data2VecAudioConfig.from_pretrained(args.model_name_or_path)
 
-    # pretraining is only supported for "newer" stable layer norm architecture
-    # apply_spec_augment has to be True, mask_feature_prob has to be 0.0
-    if not config.do_stable_layer_norm or config.feat_extract_norm != "layer":
-        raise ValueError(
-            "PreTraining is only supported for ``config.do_stable_layer_norm=True`` and"
-            " ``config.feat_extract_norm='layer'"
-        )
 
     # initialize random model
-    #model = Wav2Vec2ForPreTraining(config)
+    #model = Data2VecAudioForPreTraining(config)
 
     # initialize from pretrained checkpoint
-    model = Wav2Vec2ForPreTraining.from_pretrained(args.model_name_or_path)
+    # init
+    # skip_keys, top_k, tau, tau_e, n_tau
+    model = Data2VecAudioForPreTraining.from_pretrained(args.model_name_or_path, args.top_k, args.tau, args.tau_e, args.n_tau)
 
     # Activate gradient checkpointing if needed
     if args.gradient_checkpointing:
@@ -638,7 +630,7 @@ def main():
     mask_time_prob = config.mask_time_prob if args.mask_time_prob is None else args.mask_time_prob
     mask_time_length = config.mask_time_length if args.mask_time_length is None else args.mask_time_length
 
-    data_collator = DataCollatorForWav2Vec2Pretraining(
+    data_collator = DataCollatorForData2VecPretraining(
         model=model,
         feature_extractor=feature_extractor,
         pad_to_multiple_of=args.pad_to_multiple_of,
@@ -726,6 +718,11 @@ def main():
             loss = outputs.loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
 
+            # do not update teacher. only student. teacher updated through ema
+            model.teacher.zero_grad()
+
+
+            ## grad norm ##
             # make sure that `num_losses` is summed for distributed training
             # and average gradients over losses of all devices
             if accelerator.state.num_processes > 1:
@@ -747,10 +744,15 @@ def main():
                     grad_norm = get_grad_norm(model.module.parameters(), scale)
                 else:
                     grad_norm = get_grad_norm(model.parameters(), scale)
+                ##
+
 
                 # update parameters
                 optimizer.step()
                 optimizer.zero_grad()
+
+                # update teacher weights
+                model.ema()
 
                 if not accelerator.optimizer_step_was_skipped:
                     lr_scheduler.step()
@@ -759,15 +761,6 @@ def main():
                         f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
                     )
 
-                # update gumbel temperature
-                gumbel_temperature = max(
-                    args.max_gumbel_temperature * args.gumbel_temperature_decay**completed_steps,
-                    args.min_gumbel_temperature,
-                )
-                if hasattr(model, "module"):
-                    model.module.set_gumbel_temperature(gumbel_temperature)
-                else:
-                    model.set_gumbel_temperature(gumbel_temperature)
 
                 progress_bar.update(1)
                 completed_steps += 1
@@ -775,23 +768,15 @@ def main():
             # 6. Log all results
             if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
                 loss.detach()
-                outputs.contrastive_loss.detach()
-                outputs.diversity_loss.detach()
 
                 if accelerator.state.num_processes > 1:
                     loss = accelerator.gather_for_metrics(loss).sum()
-                    outputs.contrastive_loss = accelerator.gather_for_metrics(outputs.contrastive_loss).sum()
-                    outputs.diversity_loss = accelerator.gather_for_metrics(outputs.diversity_loss).sum()
                     percent_masked = accelerator.gather_for_metrics(percent_masked).sum()
 
                 train_logs = {
                     "loss": (loss * args.gradient_accumulation_steps) / num_losses,
-                    "constrast_loss": outputs.contrastive_loss / num_losses,
-                    "div_loss": outputs.diversity_loss / num_losses,
                     "%_mask_idx": percent_masked / accelerator.num_processes,
-                    "ppl": outputs.codevector_perplexity,
                     "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
-                    "temp": torch.tensor(gumbel_temperature),
                     "grad_norm": torch.tensor(grad_norm),
                 }
                 train_log_str = ""
@@ -802,12 +787,8 @@ def main():
                     progress_bar.write(train_log_str)
 
                     writer.add_scalar("loss", train_logs["loss"], step+1)
-                    writer.add_scalar("constrast_loss", train_logs["constrast_loss"], step+1)
-                    writer.add_scalar("div_loss", train_logs["div_loss"], step+1)
                     writer.add_scalar("%_mask_idx", train_logs["%_mask_idx"], step+1)
-                    writer.add_scalar("ppl", train_logs["ppl"], step+1)
                     writer.add_scalar("lr", train_logs["lr"], step+1)
-                    writer.add_scalar("temp", train_logs["temp"], step+1)
                     writer.add_scalar("grad_norm", train_logs["grad_norm"], step+1)
 
 
@@ -817,8 +798,6 @@ def main():
                 # init logs
                 val_logs = {
                     "val_loss": 0,
-                    "val_contrastive_loss": 0,
-                    "val_diversity_loss": 0,
                     "val_num_losses": 0,
                 }
                 for _, batch in enumerate(eval_dataloader):
@@ -827,8 +806,6 @@ def main():
                         outputs = model(**batch)
 
                     val_logs["val_loss"] += outputs.loss
-                    val_logs["val_contrastive_loss"] += outputs.contrastive_loss
-                    val_logs["val_diversity_loss"] += outputs.diversity_loss
                     val_logs["val_num_losses"] += batch["mask_time_indices"].sum()
 
                 model.train()
@@ -850,8 +827,6 @@ def main():
                     # tensorboard logging
 
                     writer.add_scalar("val_loss", val_logs["val_loss"], step+1)
-                    writer.add_scalar("val_contrastive_loss", val_logs["val_contrastive_loss"], step+1)
-                    writer.add_scalar("val_diversity_loss", val_logs["val_diversity_loss"], step+1)
 
          
 
@@ -875,8 +850,6 @@ def main():
         # init logs
         val_logs = {
             "val_loss": 0,
-            "val_contrastive_loss": 0,
-            "val_diversity_loss": 0,
             "val_num_losses": 0,
         }
         for step, batch in enumerate(eval_dataloader):
@@ -885,8 +858,6 @@ def main():
                 outputs = model(**batch)
 
             val_logs["val_loss"] += outputs.loss
-            val_logs["val_contrastive_loss"] += outputs.contrastive_loss
-            val_logs["val_diversity_loss"] += outputs.diversity_loss
             val_logs["val_num_losses"] += batch["mask_time_indices"].sum()
 
         # sum over devices in multi-processing
@@ -906,8 +877,6 @@ def main():
 
             # tensorboard logging
             writer.add_scalar("val_loss", val_logs["val_loss"], step+1)
-            writer.add_scalar("val_contrastive_loss", val_logs["val_contrastive_loss"], step+1)
-            writer.add_scalar("val_diversity_loss", val_logs["val_diversity_loss"], step+1)
 
 
 
