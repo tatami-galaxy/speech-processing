@@ -331,7 +331,7 @@ def main():
     # config 
     config = Data2VecAudioConfig.from_pretrained(model_name)
     # model
-    model = Data2VecAudioForPreTraining(config=config)
+    model = Data2VecAudioForPreTraining(config, 8, 0.9, 0.99, 1000)
 
     mask_time_prob = config.mask_time_prob 
     mask_time_length = config.mask_time_length 
@@ -361,7 +361,9 @@ def main():
 
     # get a batch
     batch = next(iter(dataloader))
-    #print(batch)
+    #print(batch['input_values'].shape)
+    #quit()
+
     loss = model(**batch).loss
     
     loss.backward()
