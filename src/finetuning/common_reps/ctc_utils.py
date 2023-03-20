@@ -203,19 +203,24 @@ class Wav2Vec2ForCTC(Wav2Vec2PreTrainedModel):
             # when not being attended to
             labels_mask = labels >= 0
             target_lengths = labels_mask.sum(-1)
+
+            print('labels')
+            print(labels.shape)
             flattened_targets = labels.masked_select(labels_mask)
 
-
-            print(flattened_targets)
-            print(input_lengths)
-            print(target_lengths)
+            print('flattened_targets')
             print(flattened_targets.shape)
-            print(self.config.pad_token_id)
+            print('input_lengths')
+            print(input_lengths.shape)
+            print('target_lengths')
+            print(target_lengths.shape)
+
 
             # ctc_loss doesn't support fp16
             # input_size x batch_size x vocab_size
             log_probs = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).transpose(0, 1)
 
+            print('log_probs')
             print(log_probs.shape)
 
             with torch.backends.cudnn.flags(enabled=False):
@@ -257,8 +262,8 @@ def main():
    
 
     # load cv data
-    dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
-    #dataset = load_from_disk('/home/ujan/Downloads/common_voice_11')
+    #dataset = load_from_disk('/users/ujan/Downloads/common_voice_11')
+    dataset = load_from_disk('/home/ujan/Downloads/common_voice_11')
     dataset = dataset.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
     
     # sample data
@@ -359,7 +364,6 @@ def main():
         }
     )
 
-    print(len(tokenizer))
 
     # load model
     model = Wav2Vec2ForCTC.from_pretrained(
