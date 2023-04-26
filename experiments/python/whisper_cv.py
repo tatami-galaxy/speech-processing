@@ -628,6 +628,8 @@ def main():
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
 
+
+
     #with training_args.main_process_first(desc="dataset map pre-processing"):
     vectorized_datasets = common_voice.map(
         prepare_dataset,
@@ -657,6 +659,9 @@ def main():
         cache = {k: v.cache_files for k, v in vectorized_datasets.items()}
         logger.info(f"Data preprocessing finished. Files cached at {cache}.")
         return
+
+    print('preprocessing done')
+    quit()
 
 
     # Load Metric
