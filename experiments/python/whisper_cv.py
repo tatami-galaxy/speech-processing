@@ -579,7 +579,7 @@ def main():
 
     processor = WhisperProcessor.from_pretrained(
         args.model_name_or_path,
-        args.model_lang,
+        language=args.model_lang,
         task=args.task,
     )
 
