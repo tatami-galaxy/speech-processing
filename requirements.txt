@@ -1,7 +1,4 @@
-mkdir data -> raw; processed -> processed data folders; interim
-mkdir models -> pretrained_models/cont_pre_training -> data2vec, wav2vec2, models -> wav2vec2, whisper
-
-pytorch
+#pytorch
 transformers
 datasets
 evaluate
