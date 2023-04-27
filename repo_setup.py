@@ -15,4 +15,4 @@ os.mkdir('models/pretrained_models/cont_pre_training')
  
 # Using system() method to
 # execute shell commands
-subprocess.Popen('huggingface-cli login"', shell=True)
+#subprocess.Popen('huggingface-cli login', shell=True)
