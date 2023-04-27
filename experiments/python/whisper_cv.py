@@ -742,6 +742,9 @@ def main():
         num_training_steps=args.max_train_steps,
     )
 
+    # register the LR scheduler and optimizer
+    accelerator.register_for_checkpointing(optimizer, lr_scheduler)
+
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
@@ -779,6 +782,23 @@ def main():
     # summarywriter for tensorbaord
     # writer will output to ./runs/ directory by default
     writer = SummaryWriter()
+
+    # Save the starting state
+    accelerator.save_state(args.output_dir)
+
+    #device = accelerator.device
+    #model.to(device)
+
+    # checkpoint
+    if args.do_train:  # args and not training_args
+        checkpoint = None
+        if training_args.resume_from_checkpoint is not None:
+            checkpoint = training_args.resume_from_checkpoint
+        elif last_checkpoint is not None:
+            checkpoint = last_checkpoint
+
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        trainer.save_model()  # Saves the feature extractor too 
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
@@ -821,9 +841,35 @@ def main():
                 progress_bar.update(1)
                 completed_steps += 1
 
+            
+            # log all results
+            if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
+                loss.detach()
+
+                if accelerator.state.num_processes > 1:
+                    loss = accelerator.gather_for_metrics(loss).sum()
+
+                train_logs = {
+                    "loss": (loss * args.gradient_accumulation_steps),
+                    "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
+                }
+                log_str = ""
+                for k, v in train_logs.items():
+                    log_str += "| {}: {:.3e}".format(k, v.item())
+
+                if accelerator.is_local_main_process:
+                    progress_bar.write(log_str)
+                    #if is_wandb_available():
+                        #wandb.log(train_logs)
+
+                    # tensorboard logging
+                    writer.add_scalar("loss", train_logs["loss"], step+1)
+                    writer.add_scalar("lr", train_logs["lr"], step+1)
+
 
             # eval
-            if (step + 1) % (args.gradient_accumulation_steps * args.eval_steps) == 0:
+            if (step + 1) % (args.gradient_accumulation_steps * args.eval_steps) == 0 and args.do_eval:
+
                 model.eval()
 
                 # init logs
@@ -850,121 +896,42 @@ def main():
                 # compute metric
                 val_logs["val_cer"] = metric.compute()
 
+                # sum over devices in multi-processing
+                if accelerator.num_processes > 1:
+                    val_logs = {k: accelerator.gather_for_metrics(v).sum() for k, v in val_logs.items()}
 
-
-            # log all results
-            if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
-                loss.detach()
-
-                if accelerator.state.num_processes > 1:
-                    loss = accelerator.gather_for_metrics(loss).sum()
-
-                train_logs = {
-                    "loss": (loss * args.gradient_accumulation_steps),
-                    "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
-                }
-                log_str = ""
-                for k, v in train_logs.items():
-                    log_str += "| {}: {:.3e}".format(k, v.item())
+                val_log_str = ""
+                for k, v in val_logs.items():
+                    val_log_str += "| {}: {:.3e}".format(k, v.item())
 
                 if accelerator.is_local_main_process:
-                    progress_bar.write(log_str)
-                    #if is_wandb_available():
-                        #wandb.log(train_logs)
+                    progress_bar.write(val_log_str)
 
                     # tensorboard logging
-                    writer.add_scalar("loss", train_logs["loss"], step+1)
-                    writer.add_scalar("lr", train_logs["lr"], step+1)
 
-
-    # Load Metric
-    # load offline
-    #metric = evaluate.load("cer")
-    metric = evaluate.load("cer")
-
-
-    def compute_metrics(pred):
-        pred_ids = pred.predictions
-
-        pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
-
-        pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        # we do not want to group tokens when computing the metrics
-        label_str = tokenizer.batch_decode(pred.label_ids, skip_special_tokens=True)
-
-        cer = 100 * metric.compute(predictions=pred_str, references=label_str)
-
-        return {"cer": cer}
-
-
-    # create a single speech processor
-    if is_main_process(training_args.local_rank):
-        # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        config.save_pretrained(args.output_dir)
+                    writer.add_scalar("val_loss", val_logs["val_loss"], step+1)
+                    writer.add_scalar("val_cer", val_logs["val_cer"], step+1)
 
 
 
-    # data collator
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
-        processor=processor,
-        decoder_start_token_id=model.config.decoder_start_token_id,
-    )
+            # save model every `args.saving_steps` steps
+            # save state
+            if (step + 1) % (args.gradient_accumulation_steps * args.save_steps) == 0:
+                if (epoch < args.num_train_epochs - 1) or args.output_dir is not None:
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    unwrapped_model.save_pretrained(
+                        args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
+
+                # save state
+                accelerator.save_state(args.output_dir)
 
 
-    # Initialize Trainer
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=vectorized_datasets["train"] if args.do_train else None,
-        eval_dataset=vectorized_datasets["test"] if args.do_eval else None,
-        tokenizer=feature_extractor,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics if args.predict_with_generate else None,
-    )
+            # if completed steps > `args.max_train_steps` stop
+            if completed_steps >= args.max_train_steps:
+                break
 
-
-    # Training
-    if args.do_train:  # args and not training_args
-        checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
-
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the feature extractor too 
-
-
-        metrics = train_result.metrics
-        max_train_samples = (
-            args.max_train_samples
-            if args.max_train_samples is not None
-            else len(vectorized_datasets["train"])
-        )
-        metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-
-
-    # Evaluation
-
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate(
-            metric_key_prefix="eval",
-            max_length=args.generation_max_length,
-            #num_beams=training_args.generation_num_beams,
-        )
-        max_eval_samples = (
-            args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["test"])
-        )
-        metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["test"]))
-
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
 
 
 
