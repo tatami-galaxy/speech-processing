@@ -126,13 +126,13 @@ def main():
     argp.add_argument(
         '--data_dir',
         type=str,
-        default="mozilla-foundation/common_voice_11_0",
+        default="mozilla-foundation/common_voice_13_0",
         help="Path to dataset or dataset string"
     )
     argp.add_argument(
         '--data_lang',
         type=str,
-        default="zh-CN",
+        default="hi",  # zh-CN
         help="Path to dataset or dataset string"
     )
     argp.add_argument(
@@ -210,7 +210,7 @@ def main():
     argp.add_argument(
         '--model_lang',
         type=str,
-        default="Chinese"
+        default="Hindi"
     )
     argp.add_argument(
         '--task',
