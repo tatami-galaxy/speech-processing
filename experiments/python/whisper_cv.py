@@ -740,22 +740,25 @@ def main():
     # writer will output to ./runs/ directory by default
     writer = SummaryWriter()
 
-    # Save the starting state
-    accelerator.save_state(args.output_dir)
+    # check if checkpoint exists
+    if len(os.listdir(args.output_dir)) > 0 and not args.overwrite_output_dir: # output_dir not empty
+        # load model from checkpoint
+        model = WhisperForConditionalGeneration.from_pretrained(
+            args.output_dir,
+            config=config,
+            #cache_dir=args.cache_dir,
+            #revision=args.model_revision,
+            #use_auth_token=True if args.use_auth_token else None,
+        )
+        # load optimizer, scheduler from checkpoint
+        accelerator.load_state(args.output_dir)
+
+    else:
+        # save the starting state
+        accelerator.save_state(args.output_dir)
 
     #device = accelerator.device
     #model.to(device)
-
-    ## add checkpointing ##
-    #if args.do_train:  # args and not training_args
-        #checkpoint = None
-        #if training_args.resume_from_checkpoint is not None:
-            #checkpoint = training_args.resume_from_checkpoint
-        #elif last_checkpoint is not None:
-            #checkpoint = last_checkpoint
-
-        #train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        #trainer.save_model()  # Saves the feature extractor too 
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
