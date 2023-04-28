@@ -432,36 +432,6 @@ def main():
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_speech_recognition_seq2seq", args)
 
-    # seq2seq training args
-
-    training_args = Seq2SeqTrainingArguments(
-        output_dir=args.output_dir,
-        #group_by_length=args.group_by_length,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        eval_accumulation_steps=args.eval_accumulation_steps,
-        evaluation_strategy=args.evaluation_strategy,
-        #num_train_epochs=args.num_train_epochs,
-        max_steps=args.max_steps,
-        fp16=args.fp16,
-        gradient_checkpointing=args.gradient_checkpointing,
-        save_steps=args.save_steps,
-        eval_steps=args.eval_steps,
-        logging_steps=args.logging_steps,
-        learning_rate=args.learning_rate,
-        lr_scheduler_type=args.lr_scheduler_type,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        save_total_limit=args.save_total_limit,
-        predict_with_generate=args.predict_with_generate, ##
-        generation_max_length=args.generation_max_length,
-        load_best_model_at_end=args.load_best_model_at_end,
-        metric_for_best_model=args.metric_for_best_model,  # cer
-        greater_is_better=False, 
-        report_to='tensorboard'
-    )
-
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -516,20 +486,21 @@ def main():
 
     # detecting last checkpoint and eventually continue from last checkpoint
     ## change for looped execution ##
-    last_checkpoint = None
-    if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(args.output_dir)
 
-        if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
-        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-            logger.info(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
+    #last_checkpoint = None
+    #if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
+        #last_checkpoint = get_last_checkpoint(args.output_dir)
+
+        #if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
+            #raise ValueError(
+                #f"Output directory ({args.output_dir}) already exists and is not empty. "
+                #"Use --overwrite_output_dir to overcome."
+            #)
+        #elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            #logger.info(
+                #f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                #"the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            #)
     
 
 
@@ -765,20 +736,6 @@ def main():
     metric = evaluate.load("cer")
 
 
-    def compute_metrics(pred):
-        pred_ids = pred.predictions
-
-        pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
-
-        pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        # we do not want to group tokens when computing the metrics
-        label_str = tokenizer.batch_decode(pred.label_ids, skip_special_tokens=True)
-
-        cer = 100 * metric.compute(predictions=pred_str, references=label_str)
-
-        return {"cer": cer}
-
-
     # summarywriter for tensorbaord
     # writer will output to ./runs/ directory by default
     writer = SummaryWriter()
@@ -789,16 +746,16 @@ def main():
     #device = accelerator.device
     #model.to(device)
 
-    # checkpoint
-    if args.do_train:  # args and not training_args
-        checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
+    ## add checkpointing ##
+    #if args.do_train:  # args and not training_args
+        #checkpoint = None
+        #if training_args.resume_from_checkpoint is not None:
+            #checkpoint = training_args.resume_from_checkpoint
+        #elif last_checkpoint is not None:
+            #checkpoint = last_checkpoint
 
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the feature extractor too 
+        #train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        #trainer.save_model()  # Saves the feature extractor too 
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
