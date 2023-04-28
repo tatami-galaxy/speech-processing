@@ -867,7 +867,7 @@ def main():
 
                 val_log_str = ""
                 for k, v in val_logs.items():
-                    val_log_str += "| {}: {:.3e}".format(k, v) # v.item()
+                    val_log_str += "| {}: {:.3e}".format(k, v*100) # v.item()
 
                 if accelerator.is_local_main_process:
                     progress_bar.write(val_log_str)
