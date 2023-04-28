@@ -742,6 +742,8 @@ def main():
 
     # check if checkpoint exists
     if len(os.listdir(args.output_dir)) > 0 and not args.overwrite_output_dir: # output_dir not empty
+
+        print('loading from checkpoint')
         # load model from checkpoint
         model = WhisperForConditionalGeneration.from_pretrained(
             args.output_dir,
