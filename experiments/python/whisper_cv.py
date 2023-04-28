@@ -314,7 +314,7 @@ def main():
         default=30 #50
     )
     argp.add_argument(
-        '--max_steps',
+        '--max_train_steps',
         type=int,
         default=50000 
     )
@@ -709,7 +709,7 @@ def main():
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
         optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps,
+        num_warmup_steps=args.warmup_steps,
         num_training_steps=args.max_train_steps,
     )
 
