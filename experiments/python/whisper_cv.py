@@ -755,6 +755,9 @@ def main():
         # load optimizer, scheduler from checkpoint
         accelerator.load_state(args.output_dir)
 
+        # skip 100 batches
+        #accelerator.skip_first_batches(train_dataloader, 100)
+
     else:
         # save the starting state
         accelerator.save_state(args.output_dir)
