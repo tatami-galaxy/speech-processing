@@ -161,7 +161,7 @@ def main():
     argp.add_argument(
         '--text_column',
         type=str,
-        default="transcript",
+        default="sentence", # sentence, transcript
         help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
     argp.add_argument(
