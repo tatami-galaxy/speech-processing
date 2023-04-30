@@ -69,8 +69,6 @@ logger = logging.getLogger(__name__)
 
 
 
-
-
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
     """
@@ -658,10 +656,10 @@ def main():
         return
 
 
-    # Load Metric
+    # load metric
+    metric = evaluate.load("cer")
     # load offline
-    #metric = evaluate.load("cer")
-    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+    #metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
 
 
     def compute_metrics(pred):
@@ -700,7 +698,6 @@ def main():
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
-        train_dataset=vectorized_datasets["train"] if args.do_train else None,
         eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
         tokenizer=feature_extractor,
         data_collator=data_collator,
@@ -708,46 +705,21 @@ def main():
     )
 
 
-    # Training
-    if args.do_train:  # args and not training_args
-        checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
-
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the feature extractor too 
-
-
-        metrics = train_result.metrics
-        max_train_samples = (
-            args.max_train_samples
-            if args.max_train_samples is not None
-            else len(vectorized_datasets["train"])
-        )
-        metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-
-
     # Evaluation
 
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate(
-            metric_key_prefix="eval",
-            max_length=args.generation_max_length,
-            #num_beams=training_args.generation_num_beams,
-        )
-        max_eval_samples = (
-            args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
-        )
-        metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate(
+        metric_key_prefix="eval",
+        max_length=args.generation_max_length,
+        #num_beams=training_args.generation_num_beams,
+    )
+    max_eval_samples = (
+        args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
+    )
+    metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
 
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
 
 
 
