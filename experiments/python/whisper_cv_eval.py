@@ -598,7 +598,7 @@ def main():
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
-        eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
+        eval_dataset=vectorized_datasets["test"],
         tokenizer=feature_extractor,
         data_collator=data_collator,
         compute_metrics=compute_metrics if args.predict_with_generate else None,
@@ -614,9 +614,9 @@ def main():
         #num_beams=training_args.generation_num_beams,
     )
     max_eval_samples = (
-        args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
+        args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["test"])
     )
-    metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
+    metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["test"]))
 
     trainer.log_metrics("eval", metrics)
     trainer.save_metrics("eval", metrics)
