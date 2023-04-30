@@ -368,8 +368,8 @@ def main():
         #save_total_limit=args.save_total_limit,
         predict_with_generate=args.predict_with_generate, ##
         generation_max_length=args.generation_max_length,
-        load_best_model_at_end=args.load_best_model_at_end,
-        metric_for_best_model=args.metric_for_best_model,  # cer
+        #load_best_model_at_end=args.load_best_model_at_end,
+        #metric_for_best_model=args.metric_for_best_model,  # cer
         greater_is_better=False, 
         report_to='tensorboard'
     )
