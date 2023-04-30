@@ -127,8 +127,14 @@ def main():
     argp.add_argument(
         '--data_dir',
         type=str,
-        default=None,
-        help="Path to dataset"
+        default="mozilla-foundation/common_voice_13_0",
+        help="Path to dataset or dataset string"
+    )
+    argp.add_argument(
+        '--data_lang',
+        type=str,
+        default="hi",  # zh-CN
+        help="Path to dataset or dataset string"
     )
     argp.add_argument(
         '--max_train_samples',
@@ -194,6 +200,12 @@ def main():
         help="Path to pretrained model or model identifier from huggingface.co/models"
     )
     argp.add_argument(
+        '--checkpoint',
+        type=str,
+        default=None,
+        help="Path to model to eval"
+    )
+    argp.add_argument(
         '--output_dir',
         type=str,
         default=None,
@@ -203,9 +215,9 @@ def main():
 
     # model config args
     argp.add_argument(
-        '--language',
+        '--model_lang',
         type=str,
-        default="zh"
+        default="Hindi"
     )
     argp.add_argument(
         '--task',
@@ -237,43 +249,9 @@ def main():
 
     # model training args
     argp.add_argument(
-        '--do_train',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to train the model."
-    )
-    argp.add_argument(
-        '--do_eval',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to evaluatte the model."
-    )
-    argp.add_argument(
-        '--overwrite_output_dir',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="Whether to overwrite output directory. Need to be False to load checkpoint"
-    )
-    argp.add_argument(
-        '--gradient_checkpointing',
-        default=False,
-        action=argparse.BooleanOptionalAction,
-        help="If True, use gradient checkpointing to save memory at the expense of slower backward pass."
-    )
-    argp.add_argument(
-        '--per_device_train_batch_size',
-        type=int,
-        default=16 #32
-    )
-    argp.add_argument(
         '--per_device_eval_batch_size',
         type=int,
         default=8 #16
-    )
-    argp.add_argument(
-        '--gradient_accumulation_steps',
-        type=int,
-        default=1
     )
     argp.add_argument(
         '--eval_accumulation_steps',
@@ -294,56 +272,6 @@ def main():
         '--generation_max_length',
         type=int,
         default=225
-    )
-    argp.add_argument(
-        '--num_train_epochs',
-        type=int,
-        default=30 #50
-    )
-    argp.add_argument(
-        '--max_steps',
-        type=int,
-        default=50000 
-    )
-    argp.add_argument(
-        '--save_steps',
-        type=int,
-        default=1000
-    )
-    argp.add_argument(
-        '--eval_steps',
-        type=int,
-        default=1000
-    )
-    argp.add_argument(
-        '--logging_steps',
-        type=int,
-        default=1000
-    )
-    argp.add_argument(
-        '--warmup_steps',
-        type=int,
-        default=500
-    )
-    argp.add_argument(
-        '--learning_rate',
-        type=float,
-        default=1e-5 # 3e-4
-    )
-    argp.add_argument(
-        '--weight_decay',
-        type=float,
-        default=0.0
-    )
-    argp.add_argument(
-        '--lr_scheduler_type',
-        type=str,
-        default='linear'
-    )
-    argp.add_argument(
-        '--save_total_limit',
-        type=int,
-        default=4
     )
     argp.add_argument(
         '--load_best_model_at_end',
@@ -384,19 +312,17 @@ def main():
     args = argp.parse_args() 
 
 
-    # set seed before initializing model.
-    set_seed(args.seed)
-
     # check if data path exists
     if args.data_dir is None:
         raise ValueError(
-            f"pass in dataset directory"
+            f"pass in dataset directory or dataset string"
         )
     #args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
-    if not os.path.isdir(args.data_dir):
-        raise ValueError(
-            f"data directory does not exist"
-        )
+    #if not os.path.isdir(args.data_dir):
+        #raise ValueError(
+            #f"data directory does not exist"
+        #)
+
 
     # check if output directory is passed in
     if args.output_dir is None:
@@ -423,23 +349,23 @@ def main():
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
         #group_by_length=args.group_by_length,
-        per_device_train_batch_size=args.per_device_train_batch_size,
+        #per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        #gradient_accumulation_steps=args.gradient_accumulation_steps,
         eval_accumulation_steps=args.eval_accumulation_steps,
-        evaluation_strategy=args.evaluation_strategy,
+        #evaluation_strategy=args.evaluation_strategy,
         #num_train_epochs=args.num_train_epochs,
-        max_steps=args.max_steps,
+        #max_steps=args.max_steps,
         fp16=args.fp16,
-        gradient_checkpointing=args.gradient_checkpointing,
-        save_steps=args.save_steps,
-        eval_steps=args.eval_steps,
-        logging_steps=args.logging_steps,
-        learning_rate=args.learning_rate,
-        lr_scheduler_type=args.lr_scheduler_type,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        save_total_limit=args.save_total_limit,
+        #gradient_checkpointing=args.gradient_checkpointing,
+        #save_steps=args.save_steps,
+        #eval_steps=args.eval_steps,
+        #logging_steps=args.logging_steps,
+        #learning_rate=args.learning_rate,
+        #lr_scheduler_type=args.lr_scheduler_type,
+        #weight_decay=args.weight_decay,
+        #warmup_steps=args.warmup_steps,
+        #save_total_limit=args.save_total_limit,
         predict_with_generate=args.predict_with_generate, ##
         generation_max_length=args.generation_max_length,
         load_best_model_at_end=args.load_best_model_at_end,
@@ -477,76 +403,44 @@ def main():
     if is_main_process(training_args.local_rank):
         transformers.utils.logging.set_verbosity_info()
     logger.info("Training/evaluation parameters %s", training_args)
-
-    # detecting last checkpoint and eventually continue from last checkpoint
-    last_checkpoint = None
-    if os.path.isdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
-        last_checkpoint = get_last_checkpoint(args.output_dir)
-
-        if last_checkpoint is None and len(os.listdir(args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
-        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
-            logger.info(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
     
 
-
-    # Load dataset
-
-    # Load Datasets and Models #
-
     # load dataset
-    print('loading dataset from {}'.format(args.data_dir))
 
-    # data files
-    data_files = {
-        'train': args.data_dir+'/final_train.csv', # final_train.csv
-        'validation': args.data_dir+'/final_dev_short.csv', # final_train.csv
-        'test': args.data_dir+'/final_test_short.csv', # final_test.csv
-        }
+    ## use hindi or smaller dataset ##
+    common_voice = DatasetDict()
+    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
+    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
 
-    raw_datasets = load_dataset('csv', data_files=data_files)
-
-    # map to new audio path
-    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+    # remove columns
+    common_voice = common_voice.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"])
 
 
     #raw_datasets.cleanup_cache_files()
 
     # check audio column, text column names
-    if args.audio_column not in raw_datasets["train"].column_names:
+    if args.audio_column not in common_voice["test"].column_names:
         raise ValueError(
             f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
             " Make sure to set `--audio_column` to the correct audio column - one of"
-            f" {', '.join(raw_datasets['train'].column_names)}."
+            f" {', '.join(common_voice['test'].column_names)}."
         )
 
-    if args.text_column not in raw_datasets["train"].column_names:
+    if args.text_column not in common_voice["test"].column_names:
         raise ValueError(
             f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
             "Make sure to set `--text_column` to the correct text column - one of "
-            f"{', '.join(raw_datasets['train'].column_names)}."
+            f"{', '.join(common_voice['test'].column_names)}."
         )
 
-    if args.max_train_samples is not None:
-        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
-
-    if args.max_eval_samples is not None:
-        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
     if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+        common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
 
 
 
 
     # Load pretrained model, tokenizer, and feature extractor
-    #
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     config = AutoConfig.from_pretrained(
@@ -571,8 +465,10 @@ def main():
         #revision=model_args.model_revision,
         #use_auth_token=True if model_args.use_auth_token else None,
     )
+    # load from checkpoint for eval
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        args.model_name_or_path,
+        #args.model_name_or_path,
+        args.checkpoint,
         config=config,
         #cache_dir=args.cache_dir,
         #revision=args.model_revision,
@@ -585,7 +481,7 @@ def main():
 
     if args.freeze_encoder:
         model.freeze_encoder()
-        model.model.encoder.gradient_checkpointing = False
+        #model.model.encoder.gradient_checkpointing = False
 
     if args.language is not None:
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
@@ -595,8 +491,8 @@ def main():
     # resample speech dataset if necessary
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
     #if dataset_sampling_rate != feature_extractor.sampling_rate:
-    raw_datasets = raw_datasets.cast_column(
-        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    common_voice = common_voice.cast_column(
+        "audio", datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
     )
 
     # 7. Preprocessing the datasets.
@@ -626,9 +522,9 @@ def main():
         return batch
 
     #with training_args.main_process_first(desc="dataset map pre-processing"):
-    vectorized_datasets = raw_datasets.map(
+    vectorized_datasets = common_voice.map(
         prepare_dataset,
-        remove_columns=next(iter(raw_datasets.values())).column_names,
+        remove_columns=next(iter(common_voice.values())).column_names,
         num_proc=args.preprocessing_num_workers,
         keep_in_memory=True, # no cache
         desc="preprocess train dataset",
@@ -684,7 +580,11 @@ def main():
         config.save_pretrained(args.output_dir)
 
 
-    processor = AutoProcessor.from_pretrained(args.output_dir)
+    processor = AutoProcessor.from_pretrained(
+        args.model_name_or_path,
+        language=args.model_lang,
+        task=args.task,
+    )
 
 
     # data collator
