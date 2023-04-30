@@ -483,9 +483,9 @@ def main():
         model.freeze_encoder()
         #model.model.encoder.gradient_checkpointing = False
 
-    if args.language is not None:
+    if args.model_lang is not None:
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
+        tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
 
     # resample speech dataset if necessary
