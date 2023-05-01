@@ -127,7 +127,7 @@ def main():
     argp.add_argument(
         '--data_dir',
         type=str,
-        default="mozilla-foundation/common_voice_13_0",
+        default="mozilla-foundation/common_voice_11_0",
         help="Path to dataset or dataset string"
     )
     argp.add_argument(
@@ -409,7 +409,7 @@ def main():
 
     ## use hindi or smaller dataset ##
     common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
+    #common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
     common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
 
     # remove columns
@@ -527,7 +527,7 @@ def main():
         remove_columns=next(iter(common_voice.values())).column_names,
         num_proc=args.preprocessing_num_workers,
         keep_in_memory=True, # no cache
-        desc="preprocess train dataset",
+        desc="preprocess dataset",
     )
 
     # filter data that is shorter than min_input_length or longer than

@@ -8,5 +8,5 @@ python whisper_cv.py --model_name_or_path openai/whisper-small --do_train --do_e
 # eval
 
 python whisper_cv_eval.py --model_name_or_path openai/whisper-small --checkpoint "checkpoint path" --predict_with_generate --fp16
-# --max_test_samples 100 --save_steps 100 --eval_steps 100 --logging_steps 100 --per_device_eval_batch_size 4 --eval_accumulation_steps 4
+# --max_test_samples 100 --save_steps 100 --eval_steps 100 --logging_steps 100 --per_device_eval_batch_size 4 --eval_accumulation_steps 4 --preprocessing_num_workers 1
 
