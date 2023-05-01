@@ -477,7 +477,7 @@ for epoch in range(num_train_epochs):
             print('step : {}, cer : {}'.format(step, cer_result))
             print(val_loss/len(eval_dataloader))
             print('saving')
-            model.save_pretrained('whipser_small_cv11')
+            model.save_pretrained('whisper_small_cv11')
 
             model.train()
             val_loss = 0
