@@ -456,9 +456,9 @@ for epoch in range(num_train_epochs):
     model.train()
     for batch in train_dataloader:
 
-        inputs = batch['input_values'].to(device)
+        inputs = batch['input_features'].to(device)
         labels = batch['labels'].to(device)
-        outputs = model(input_values=inputs, labels=labels)
+        outputs = model(input_features=inputs, labels=labels)
         loss = outputs.loss 
         loss.backward()
         optimizer.step()
@@ -473,9 +473,9 @@ for epoch in range(num_train_epochs):
             #model.active_adapters = Stack(tgt_lang, "xnli")
             for batch in eval_dataloader:
                 with torch.no_grad():
-                    inputs = batch['input_values'].to(device)
+                    inputs = batch['input_features'].to(device)
                     labels = batch['labels'].to(device)
-                    outputs = model(input_values=inputs, labels=labels)
+                    outputs = model(input_features=inputs, labels=labels)
                     val_loss += outputs.loss.item()
 
                 pred_logits = outputs.logits
