@@ -134,7 +134,7 @@ def main():
     argp.add_argument(
         '--data_dir',
         type=str,
-        default="mozilla-foundation/common_voice_13_0",
+        default="mozilla-foundation/common_voice_11_0",
         help="Path to dataset or dataset string"
     )
     argp.add_argument(
@@ -276,7 +276,7 @@ def main():
     argp.add_argument(
         '--per_device_train_batch_size',
         type=int,
-        default=16 #32
+        default=8 #32
     )
     argp.add_argument(
         '--per_device_eval_batch_size',
@@ -316,27 +316,27 @@ def main():
     argp.add_argument(
         '--max_train_steps',
         type=int,
-        default=50000 
+        default=10000 
     )
     argp.add_argument(
         '--save_steps',
         type=int,
-        default=1000
+        default=500
     )
     argp.add_argument(
         '--eval_steps',
         type=int,
-        default=1000
+        default=500
     )
     argp.add_argument(
         '--logging_steps',
         type=int,
-        default=1000
+        default=500
     )
     argp.add_argument(
         '--warmup_steps',
         type=int,
-        default=500
+        default=100
     )
     argp.add_argument(
         '--learning_rate',
@@ -640,7 +640,7 @@ def main():
             remove_columns=next(iter(common_voice.values())).column_names,
             num_proc=args.preprocessing_num_workers,
             keep_in_memory=True, # no cache
-            desc="preprocess train dataset",
+            desc="preprocess dataset",
         )
 
         # filter data that is shorter than min_input_length or longer than
@@ -741,7 +741,7 @@ def main():
     writer = SummaryWriter()
 
     # check if checkpoint exists
-    if len(os.listdir(args.output_dir)) > 0 and not args.overwrite_output_dir: # output_dir not empty
+    if os.path.isdir(args.output_dir) and len(os.listdir(args.output_dir)) > 0 and not args.overwrite_output_dir: # output_dir not empty
 
         print('loading from checkpoint')
         # load model from checkpoint
@@ -773,6 +773,7 @@ def main():
         model.train()
 
         for step, batch in enumerate(train_dataloader):
+
 
             # forward
             outputs = model(**batch)

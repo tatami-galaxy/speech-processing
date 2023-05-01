@@ -1,0 +1,7 @@
+- !GMPruningModifier
+    params: ['blocks.1.conv']
+    init_sparsity: 0.05
+    final_sparsity: 0.8
+    start_epoch: 5.0
+    end_epoch: 20
+    update_frequency: 1.0
