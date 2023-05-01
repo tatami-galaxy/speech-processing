@@ -434,8 +434,10 @@ def main():
 
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    #ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    #accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
+    #accelerator = Accelerator()
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
 
 
     # 2. Setup logging
@@ -695,26 +697,32 @@ def main():
         weight_decay=args.weight_decay,
     )
 
-    # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader
-    )
-
-    # Scheduler and math around the number of training steps.
+    # scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
 
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
 
-    lr_scheduler = get_scheduler(
+    # scheduler
+    scheduler = get_scheduler(
         name=args.lr_scheduler_type,
         optimizer=optimizer,
         num_warmup_steps=args.warmup_steps,
         num_training_steps=args.max_train_steps,
     )
 
+    # setting device
+    device = accelerator.device
+    model.to(device)
+
+    # Prepare everything with our `accelerator`.
+    model, optimizer, train_dataloader, eval_dataloader, scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader, scheduler
+    )
+
+
     # register the LR scheduler and optimizer
-    accelerator.register_for_checkpointing(optimizer, lr_scheduler)
+    accelerator.register_for_checkpointing(optimizer, scheduler)
 
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
@@ -770,39 +778,44 @@ def main():
     completed_steps = 0
     starting_epoch = 0
     for epoch in range(starting_epoch, args.num_train_epochs):
+
         model.train()
 
         for step, batch in enumerate(train_dataloader):
 
+            with accelerator.accumulate(model):
 
-            # forward
-            outputs = model(**batch)
+                # forward
+                outputs = model(**batch)
 
 
-            # divide loss by gradient accumulation steps since gradients
-            # are accumulated for multiple backward passes in PyTorch
-            loss = outputs.loss / args.gradient_accumulation_steps
-            accelerator.backward(loss)
+                # divide loss by gradient accumulation steps since gradients
+                # are accumulated for multiple backward passes in PyTorch
+                loss = outputs.loss 
+                accelerator.backward(loss)
 
-            # update step
-            if (step + 1) % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+                # update step
+                #if (step + 1) % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
 
-                scale = (
-                    accelerator.scaler._scale.item()
-                    if hasattr(accelerator, "scaler") and accelerator.scaler is not None
-                    else 1
-                )
+                    #scale = (
+                        #accelerator.scaler._scale.item()
+                        #if hasattr(accelerator, "scaler") and accelerator.scaler is not None
+                        #else 1
+                    #)
 
                 # update parameters
                 optimizer.step()
-                optimizer.zero_grad()
 
-                if not accelerator.optimizer_step_was_skipped:
-                    lr_scheduler.step()
-                elif accelerator.is_local_main_process:
-                    progress_bar.write(
-                        f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
-                    )
+                    #if not accelerator.optimizer_step_was_skipped:
+                        #lr_scheduler.step()
+                    #elif accelerator.is_local_main_process:
+                        #progress_bar.write(
+                            #f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
+                        #)
+
+                scheduler.step()
+
+                optimizer.zero_grad()
 
                 progress_bar.update(1)
                 completed_steps += 1
@@ -810,6 +823,7 @@ def main():
             
             # log all results
             if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
+
                 loss.detach()
 
                 if accelerator.state.num_processes > 1:
@@ -884,6 +898,7 @@ def main():
             # save state
             if (step + 1) % (args.gradient_accumulation_steps * args.save_steps) == 0:
                 if (epoch < args.num_train_epochs - 1) or args.output_dir is not None:
+                    print('saving model')
                     accelerator.wait_for_everyone()
                     unwrapped_model = accelerator.unwrap_model(model)
                     unwrapped_model.save_pretrained(
@@ -891,6 +906,7 @@ def main():
                     )
 
                 # save state
+                print('saving state')
                 accelerator.save_state(args.output_dir)
 
 
