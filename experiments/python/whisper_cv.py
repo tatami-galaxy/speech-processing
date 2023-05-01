@@ -289,11 +289,6 @@ def main():
         default=1
     )
     argp.add_argument(
-        '--eval_accumulation_steps',
-        type=int,
-        default=None
-    )
-    argp.add_argument(
         '--evaluation_strategy',
         type=str,
         default="steps"
