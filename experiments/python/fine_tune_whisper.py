@@ -451,7 +451,6 @@ step = 1
 for epoch in range(num_train_epochs):
 
     val_loss = 0
-    cer = 0
     # Training
     model.train()
     for batch in train_dataloader:
@@ -487,15 +486,16 @@ for epoch in range(num_train_epochs):
                 # we do not want to group tokens when computing the metrics
                 label_str = processor.batch_decode(label_ids, group_tokens=False)
 
-                cer.add_batch(predictions=pred_str, references=label_str)
+                metric.add_batch(predictions=pred_str, references=label_str)
 
-            cer_result = cer.compute()
+            cer_result = metric.compute()
             print('step : {}, cer : {}'.format(step, cer_result))
             print(val_loss/len(eval_dataloader))
             print('saving')
             model.save_pretrained('whipser_small_cv11')
 
             model.train()
+            val_loss = 0
 
                   
         step += 1
