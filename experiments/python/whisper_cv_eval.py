@@ -467,8 +467,8 @@ def main():
     )
     # load from checkpoint for eval
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
-        #args.model_name_or_path,
-        args.checkpoint,
+        args.model_name_or_path,
+        #args.checkpoint,
         config=config,
         #cache_dir=args.cache_dir,
         #revision=args.model_revision,
