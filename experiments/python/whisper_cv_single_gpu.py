@@ -39,6 +39,7 @@ train_batch_size = 4
 eval_batch_size = 4
 learning_rate = 1e-5
 num_training_steps = 2000
+eval_steps = 500
 
 
 
@@ -185,7 +186,7 @@ def main():
             progress_bar.update(1)
 
 
-            if (step + 1) % 500 == 0:
+            if (step + 1) % eval_steps == 0:
                 model.eval()
                 val_loss = 0
                 for batch in eval_dataloader:
@@ -210,7 +211,7 @@ def main():
                 print('step : {}, cer : {}'.format(step, cer_result))
                 print(val_loss/len(eval_dataloader))
                 print('saving')
-                model.save_pretrained(root+'/models/whisper/'+'whisper_small_cv11'+'_'+step)
+                model.save_pretrained(root+'/models/whisper/'+'whisper_small_cv11'+'_'+str(step))
 
                 model.train()
                 val_loss = 0
