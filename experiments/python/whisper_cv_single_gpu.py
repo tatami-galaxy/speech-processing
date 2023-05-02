@@ -38,7 +38,7 @@ while root.split('/')[-1] != 'speech-processing':
 train_batch_size = 4
 eval_batch_size = 4
 learning_rate = 1e-5
-num_training_steps = 2000
+num_training_steps = 1500
 eval_steps = 500
 
 
@@ -211,18 +211,21 @@ def main():
                 print('step : {}, cer : {}'.format(step, cer_result))
                 print(val_loss/len(eval_dataloader))
                 print('saving')
-                model.save_pretrained(root+'/models/whisper/'+'whisper_small_cv11'+'_'+str(step))
+                model.save_pretrained(root+'/models/whisper/'+'whisper_small_cv11'+'_'+str(step+1))
 
                 model.train()
                 val_loss = 0
 
             step += 1
+            if step >= num_training_steps : break
+            else: continue
+
+        break
 
             
 
 
 if __name__ == "__main__":
-
 
     main()
 
