@@ -38,7 +38,7 @@ while root.split('/')[-1] != 'speech-processing':
 train_batch_size = 4
 eval_batch_size = 4
 learning_rate = 1e-5
-num_training_steps = 1500
+num_training_steps = 2000
 eval_steps = 500
 
 
