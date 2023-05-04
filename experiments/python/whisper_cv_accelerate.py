@@ -286,6 +286,7 @@ def main():
     while True:
         model.train()
         total_loss = 0
+        step = 0
 
         # if resumed from checkpoint
         # we need to skip steps until we reach the resumed step
@@ -294,12 +295,13 @@ def main():
             with accelerator.accumulate(model):
                 outputs = model(**batch)
                 loss = outputs.loss
-                total_loss += loss.detach().float() # for tensorboard 
+                total_loss += loss.detach().item() # for tensorboard 
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
+            step += 1
             global_step += 1
             progress_bar.update(1)
 
@@ -327,14 +329,14 @@ def main():
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(step, cer_result))
                 accelerator.print(val_loss/len(eval_dataloader))
-                accelerator.log(
-                {
+                accelerator.log({
                     "cer": cer_result,
-                    "train_loss": total_loss.item() / len(train_dataloader),
-                    "epoch": epoch,
+                    "train_loss": total_loss / len(train_dataloader),
+                    #"step": global_step,
+                    "val_loss": val_loss / len(eval_dataloader)
                 },
-                step=epoch,
-            )
+                step=global_step,
+                )
 
                # accelerator.print('saving')
                 #model.save_pretrained(args.output_dir+'/'+'checkpoint-'+str(step+1))
