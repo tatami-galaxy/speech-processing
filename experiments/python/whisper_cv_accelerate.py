@@ -326,7 +326,8 @@ def main():
 
 
     # Training
-    progress_bar = tqdm(args.train_steps, disable=not accelerator.is_main_process)
+    # tqdm will change with checkpointing
+    progress_bar = tqdm(range(args.train_steps), disable=not accelerator.is_main_process)
     while True:
         model.train()
 
