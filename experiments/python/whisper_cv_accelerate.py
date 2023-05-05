@@ -215,6 +215,16 @@ def main():
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
+    # we need to initialize the trackers we use, and also store our configuration
+    track_config = {
+        "lr": args.lr,
+        "train_steps": args.train_steps,
+        "seed": args.seed,
+        "train_batch_size": args.train_batch_size,
+    }
+    if args.with_tracking:
+        #run = os.path.split(__file__)[-1].split(".")[0]
+        accelerator.init_trackers('runs', track_config)
 
 
     # extractor, tokenizer, processor
