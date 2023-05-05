@@ -572,12 +572,13 @@ def main():
     
     # remove punctuations
     def remove_special_characters(batch):
-        if chars_to_ignore_regex is not None:
-            batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
-        else:
-            batch[args.text_column] = batch[args.text_column].lower() + " "
+        batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
 
+    raw_datasets = raw_datasets.map(
+        remove_special_characters,
+        desc="remove special characters from datasets",
+    )
 
 
 

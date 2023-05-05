@@ -29,7 +29,7 @@ import evaluate
 from transformers import WhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_scheduler
+from transformers import AdamW, get_scheduler, set_seed
 import random
 import argparse
 from torch.utils.tensorboard import SummaryWriter
@@ -40,14 +40,6 @@ from accelerate import Accelerator, DistributedType
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
-
-
-# set seed
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
 
 
 
@@ -87,19 +79,21 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    # Required parameters
+    parser.add_argument(
+        "--seed",
+        default=42,
+        type=int,
+    )
     parser.add_argument(
         "--model_name_or_path",
         default="openai/whisper-small",
         type=str,
-        required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
         "--data_dir",
         default="mozilla-foundation/common_voice_11_0",
         type=str,
-        required=True,
         help="Dataset",
     )
     parser.add_argument(
@@ -112,7 +106,6 @@ def main():
         "--output_dir",
         default=root+'/models/whisper/'+'whisper_small_cv11',
         type=str,
-        required=True,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
@@ -125,25 +118,21 @@ def main():
         "--model_lang",
         default='Hindi',
         type=str,
-        required=True,
     )
     parser.add_argument(
         "--data_lang",
         default='hi',
         type=str,
-        required=True,
     )
     parser.add_argument(
         "--train_batch_size",
         default=4,
         type=int,
-        required=True,
     )
     parser.add_argument(
         "--eval_batch_size",
         default=4,
         type=int,
-        required=True,
     )
     parser.add_argument(
         "--train_steps",
@@ -162,7 +151,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=None,
+        default=100,
         type=int,
     )
     parser.add_argument(
@@ -182,7 +171,7 @@ def main():
     args = parser.parse_args()
 
     # set seed
-    set_seed(args)
+    set_seed(args.seed)
 
     # check if data path exists
     #if args.data_dir is None:
