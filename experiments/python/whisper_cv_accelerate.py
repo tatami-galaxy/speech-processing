@@ -11,6 +11,7 @@
 """
 
 import math
+import os
 from os.path import dirname, abspath
 import numpy as np
 from tqdm.auto import tqdm, trange
@@ -115,6 +116,12 @@ def main():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
+        "--resume_from_checkpoint",
+        default=None,
+        type=str,
+        help="checkpoint directory to load model from",
+    )
+    parser.add_argument(
         "--model_lang",
         default='Hindi',
         type=str,
@@ -176,6 +183,33 @@ def main():
 
     # set seed
     set_seed(args)
+
+    # check if data path exists
+    #if args.data_dir is None:
+        #raise ValueError(
+            #f"pass in dataset directory"
+        #)
+    ##args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
+    #if not os.path.isdir(args.data_dir):
+        #raise ValueError(
+            #f"data directory does not exist"
+        #)
+
+    # check if output directory is passed in
+    #if args.output_dir is None:
+        #model_str = args.model_name_or_path.split('/')[-1]
+        #data_str = args.data_dir.split('/')[-1]
+        #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+    #print('output directory set to : {}'.format(args.output_dir))
+    ##if not os.path.isdir(args.output_dir):
+        ##os.mkdir(args.output_dir)
+
+    # check if model path is None
+    #if args.model_name_or_path is None:
+        #raise ValueError(
+            #f"pass in model_name_or_path"
+        #)
+    
 
     # initialize accelerator
     accelerator = Accelerator(
@@ -274,8 +308,8 @@ def main():
     )
 
     # prepare everything for accelerator
-    # any instruction using your training dataloader length
-    # (for instance if you need the number of total training steps
+    # any instruction using your training dataloader length,
+    # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
@@ -285,7 +319,21 @@ def main():
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
-    # checkpointing -> load from checkpoint #
+    # load from checkpoint
+    # check if checkpoint directory passed in
+    if args.resume_from_checkpoint is not None:
+        accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
+        accelerator.load_state(args.resume_from_checkpoint)
+        #path = os.path.basename(args.resume_from_checkpoint)
+        #training_difference = os.path.splitext(path)[0]
+
+        #if "epoch" in training_difference:
+            #starting_epoch = int(training_difference.replace("epoch_", "")) + 1
+            #resume_step = None
+        #else:
+            #resume_step = int(training_difference.replace("step_", ""))
+            #starting_epoch = resume_step // len(train_dataloader)
+            #resume_step -= starting_epoch * len(train_dataloader)
 
 
     # Training
@@ -295,6 +343,10 @@ def main():
 
         # if resumed from checkpoint
         # we need to skip steps until we reach the resumed step
+        #if args.resume_from_checkpoint and epoch == starting_epoch and resume_step is not None:
+            # We need to skip steps until we reach the resumed step
+            #train_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
+            #overall_step += resume_step
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
@@ -306,10 +358,7 @@ def main():
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            global_step += 1
             progress_bar.update(1)
-
-            # checkpoint #
 
 
             if (global_step + 1) % args.eval_steps == 0:
@@ -331,7 +380,7 @@ def main():
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
-                accelerator.print('step : {}, cer : {}'.format(step, cer_result))
+                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print(val_loss/len(eval_dataloader))
                 accelerator.log({
                     "cer": cer_result,
@@ -339,18 +388,27 @@ def main():
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
-                step=global_step,
+                step=global_step + 1,
                 )
 
-               # accelerator.print('saving')
-                #model.save_pretrained(args.output_dir+'/'+'checkpoint-'+str(step+1))
+                # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
+                # saved to folders named `checkpoint-{global_step}`
+                # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
+                # if mixed precision was used, will also save a "scalar.bin" file
+                output_dir = f"checkpoint-{global_step}"
+                if args.output_dir is not None:
+                    output_dir = os.path.join(args.output_dir, output_dir)
+                    accelerator.save_state(output_dir)
 
                 model.train()
                 total_loss = 0
 
-            if step >= num_training_steps : break
+            global_step += 1
+
+            if global_step >= args.train_steps : break
             else: continue
 
+        accelerator.end_training()
         break
 
             
