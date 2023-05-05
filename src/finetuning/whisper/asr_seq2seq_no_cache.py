@@ -62,6 +62,10 @@ from transformers.utils.versions import require_version
 
 #require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
 
+# punctuations to remove from tranascripts
+chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
+
+
 def path_remap(x, args):
 
     # get audio path
@@ -526,12 +530,12 @@ def main():
 
     # data files
     data_files = {
-        'train': args.data_dir+'/final_train_v2_wo_hkust.csv', # final_train.csv
-        'validation': args.data_dir+'/final_dev_short.csv', # final_train.csv
-        'test': args.data_dir+'/final_test_v2_wo_hkust.csv', # final_test.csv
-        }
+        'train': args.data_dir+'/far_field_train_final.csv', # final_train.csv
+        'validation': args.data_dir+'/far_field_dev_final_short.csv', # final_train.csv
+        'test': args.data_dir+'/far_field_test_final.csv', # final_test.csv
+    }
 
-    raw_datasets = load_dataset('csv', data_files=data_files, keep_in_memory=True)
+    raw_datasets = load_dataset('csv', data_files=data_files, keep_in_memory=True)  # column_names=['audio', 'transcript', 'duration']
 
 
     # map to new audio path
@@ -564,6 +568,15 @@ def main():
 
     if args.max_test_samples is not None:
         raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples), keep_in_memory=True)
+
+    
+    # remove punctuations
+    def remove_special_characters(batch):
+        if chars_to_ignore_regex is not None:
+            batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
+        else:
+            batch[args.text_column] = batch[args.text_column].lower() + " "
+        return batch
 
 
 
@@ -707,7 +720,7 @@ def main():
         tokenizer.save_pretrained(args.output_dir)
         config.save_pretrained(args.output_dir)
 
-
+    # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
 
 

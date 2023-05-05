@@ -282,9 +282,8 @@ def main():
     )
 
     ##
-    global_step = 0
-    total_loss = 0
-    step = 0
+    global_step = 0  # tracks total steps
+    total_loss = 0  # total loss before each eval
 
     # checkpointing -> load from checkpoint #
 
@@ -307,7 +306,6 @@ def main():
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            step += 1
             global_step += 1
             progress_bar.update(1)
 
@@ -337,7 +335,7 @@ def main():
                 accelerator.print(val_loss/len(eval_dataloader))
                 accelerator.log({
                     "cer": cer_result,
-                    "train_loss": total_loss / len(train_dataloader), ###
+                    "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -349,9 +347,7 @@ def main():
 
                 model.train()
                 total_loss = 0
-                step = 0
 
-            step += 1
             if step >= num_training_steps : break
             else: continue
 

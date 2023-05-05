@@ -701,6 +701,7 @@ def main():
         config.save_pretrained(args.output_dir)
 
 
+    # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
 
 
