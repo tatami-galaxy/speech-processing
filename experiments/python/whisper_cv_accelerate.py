@@ -151,7 +151,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=10,
+        default=200,
         type=int,
     )
     parser.add_argument(
@@ -385,7 +385,7 @@ def main():
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
-                accelerator.print(val_loss/len(eval_dataloader))
+                accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
                     # might be incorrect
