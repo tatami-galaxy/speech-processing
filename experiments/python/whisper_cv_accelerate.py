@@ -327,7 +327,7 @@ def main():
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
         accelerator.load_state(args.resume_from_checkpoint)
         #path = os.path.basename(args.resume_from_checkpoint)
-        #training_difference = os.path.splitext(path)[0]
+        steps_completed = args.resume_from_checkpoint.split('/')[-1].split('-')[-1]
 
         #if "epoch" in training_difference:
             #starting_epoch = int(training_difference.replace("epoch_", "")) + 1
