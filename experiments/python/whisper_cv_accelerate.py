@@ -102,6 +102,12 @@ def main():
         help="Dataset",
     )
     parser.add_argument(
+        "--sampling_rate",
+        default=16000,
+        type=int,
+        help="sampling rate",
+    )
+    parser.add_argument(
         "--output_dir",
         default=root+'/models/whisper/'+'whisper_small_cv11',
         type=str,
@@ -212,7 +218,7 @@ def main():
     )
 
     # resample to 16kHz
-    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16000))
+    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # function to vectorize dataset
@@ -277,6 +283,8 @@ def main():
 
     ##
     global_step = 0
+    total_loss = 0
+    step = 0
 
     # checkpointing -> load from checkpoint #
 
@@ -285,8 +293,6 @@ def main():
     progress_bar = tqdm(args.train_steps, disable=not accelerator.is_main_process)
     while True:
         model.train()
-        total_loss = 0
-        step = 0
 
         # if resumed from checkpoint
         # we need to skip steps until we reach the resumed step
@@ -331,7 +337,7 @@ def main():
                 accelerator.print(val_loss/len(eval_dataloader))
                 accelerator.log({
                     "cer": cer_result,
-                    "train_loss": total_loss / len(train_dataloader),
+                    "train_loss": total_loss / len(train_dataloader), ###
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -343,6 +349,7 @@ def main():
 
                 model.train()
                 total_loss = 0
+                step = 0
 
             step += 1
             if step >= num_training_steps : break
