@@ -151,7 +151,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=100,
+        default=10,
         type=int,
     )
     parser.add_argument(
@@ -233,15 +233,16 @@ def main():
     common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
     common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
 
-    # remove unused columns
-    common_voice = common_voice.remove_columns(
-        [
-            "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
-        ]
-    )
+    with accelerator.main_process_first():
+        # remove unused columns
+        common_voice = common_voice.remove_columns(
+            [
+                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
+            ]
+        )
 
-    # resample to 16kHz
-    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
+        # resample to 16kHz
+        common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # function to vectorize dataset
@@ -256,8 +257,9 @@ def main():
         batch["labels"] = tokenizer(batch["sentence"]).input_ids
         return batch
     
-    # vectorize dataset
-    common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+    with accelerator.main_process_first():
+        # vectorize dataset
+        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
 
 
 
@@ -361,8 +363,9 @@ def main():
 
                     # compute metric
                     pred_logits = outputs.logits
+                    pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
+                    #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
                     references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(predictions)
                     # we do not want to group tokens when computing the metrics
