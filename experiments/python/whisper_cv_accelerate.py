@@ -161,8 +161,8 @@ def main():
     )
     parser.add_argument(
         "--mixed_precision",
-        default=1e-5,
-        type=float,
+        default='fp16',
+        type=str,
     )
 
 
