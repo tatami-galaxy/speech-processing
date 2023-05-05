@@ -236,6 +236,8 @@ def main():
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
 
+    ## save config ##
+
 
     # dataset
     common_voice = DatasetDict()
@@ -386,6 +388,7 @@ def main():
                 accelerator.print(val_loss/len(eval_dataloader))
                 accelerator.log({
                     "cer": cer_result,
+                    # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
@@ -397,7 +400,7 @@ def main():
                 # saved to folders named `checkpoint-{global_step}`
                 # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
                 # if mixed precision was used, will also save a "scalar.bin" file
-                output_dir = f"checkpoint-{global_step}"
+                output_dir = f"checkpoint-{global_step + 1}"
                 if args.output_dir is not None:
                     output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
