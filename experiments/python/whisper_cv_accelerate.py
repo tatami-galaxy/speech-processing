@@ -115,6 +115,11 @@ def main():
         help="checkpoint directory to load model from",
     )
     parser.add_argument(
+        "--skip_steps",
+        action="store_true",
+        help="whether to skip steps already ccompleted while loading from checkpoint"
+    )
+    parser.add_argument(
         "--model_lang",
         default='Hindi',
         type=str,
@@ -268,9 +273,9 @@ def main():
         batch["labels"] = tokenizer(batch["sentence"]).input_ids
         return batch
     
-    #with accelerator.main_process_first():
+    with accelerator.main_process_first():
         # vectorize dataset
-        #common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
 
 
 
@@ -326,32 +331,24 @@ def main():
     if args.resume_from_checkpoint is not None:
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
         accelerator.load_state(args.resume_from_checkpoint)
-        #path = os.path.basename(args.resume_from_checkpoint)
-        steps_completed = args.resume_from_checkpoint.split('/')[-1].split('-')[-1]
-        print(steps_completed)
-        quit()
-
-        #if "epoch" in training_difference:
-            #starting_epoch = int(training_difference.replace("epoch_", "")) + 1
-            #resume_step = None
-        #else:
-            #resume_step = int(training_difference.replace("step_", ""))
-            #starting_epoch = resume_step // len(train_dataloader)
-            #resume_step -= starting_epoch * len(train_dataloader)
 
 
     # Training
-    # tqdm will change with checkpointing
-    progress_bar = tqdm(range(args.train_steps), disable=not accelerator.is_main_process)
-    while True:
-        model.train()
 
+    # main progress bar
+    progress_bar = tqdm(range(args.train_steps), disable=not accelerator.is_main_process)
+    # how much to skip
+    if args.resume_from_checkpoint is not None and args.skip_steps:
+        steps_completed = args.resume_from_checkpoint.split('/')[-1].split('-')[-1]
+
+    while True:
+        
+        model.train()
         # if resumed from checkpoint
-        # we need to skip steps until we reach the resumed step
-        #if args.resume_from_checkpoint and epoch == starting_epoch and resume_step is not None:
-            # We need to skip steps until we reach the resumed step
-            #train_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
-            #overall_step += resume_step
+        # we need to skip steps until we reach the current step
+        if args.resume_from_checkpoint is not None and args.skip_steps:
+            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed)
+            global_step = steps_completed
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
