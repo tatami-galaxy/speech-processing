@@ -342,10 +342,11 @@ def main():
         steps_completed = args.resume_from_checkpoint.split('/')[-1].split('-')[-1]
 
     while True:
-        
+
         model.train()
         # if resumed from checkpoint
         # we need to skip steps until we reach the current step
+        #### library error ? ####
         if args.resume_from_checkpoint is not None and args.skip_steps:
             train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed)
             global_step = steps_completed
