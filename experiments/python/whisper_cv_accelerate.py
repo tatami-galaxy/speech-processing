@@ -268,9 +268,9 @@ def main():
         batch["labels"] = tokenizer(batch["sentence"]).input_ids
         return batch
     
-    with accelerator.main_process_first():
+    #with accelerator.main_process_first():
         # vectorize dataset
-        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+        #common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
 
 
 
@@ -328,6 +328,8 @@ def main():
         accelerator.load_state(args.resume_from_checkpoint)
         #path = os.path.basename(args.resume_from_checkpoint)
         steps_completed = args.resume_from_checkpoint.split('/')[-1].split('-')[-1]
+        print(steps_completed)
+        quit()
 
         #if "epoch" in training_difference:
             #starting_epoch = int(training_difference.replace("epoch_", "")) + 1
