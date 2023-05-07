@@ -331,25 +331,23 @@ def main():
     if args.resume_from_checkpoint is not None:
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
         accelerator.load_state(args.resume_from_checkpoint)
+        # if resumed from checkpoint
+        # we need to skip steps until we reach the current step
+        if args.skip_steps:
+            # ../checkpoint-123 -> int(123)
+            steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed)
+            global_step = steps_completed
 
 
     # Training
 
     # main progress bar
-    progress_bar = tqdm(range(args.train_steps), disable=not accelerator.is_main_process)
-    # how much to skip
-    if args.resume_from_checkpoint is not None and args.skip_steps:
-        # ../checkpoint-123 -> int(123)
-        steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
 
     while True:
 
         model.train()
-        # if resumed from checkpoint
-        # we need to skip steps until we reach the current step
-        if args.resume_from_checkpoint is not None and args.skip_steps:
-            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed)
-            global_step = steps_completed
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
