@@ -169,6 +169,7 @@ def train(args, accelerator):
     total_loss = 0  # total loss before each eval
 
     # load from checkpoint
+    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
     if args.resume_from_checkpoint is not None:
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
