@@ -245,6 +245,13 @@ def train(args, accelerator):
                 if args.output_dir is not None:
                     output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
+                    # save config
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    #model.config.save_pretrained(output_dir)
+                    unwrapped_model.config.save_pretrained(
+                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
 
                 model.train()
                 total_loss = 0
