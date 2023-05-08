@@ -210,14 +210,15 @@ def train(args, accelerator):
                     outputs = teacher(**batch)
                     # teacher logits
                     t_logits = outputs.logits
-                    # distillation loss
-                    d_loss = nn.functional.kl_div(
-                        input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
-                        target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
-                        reduction="batchmean",
-                    ) * (args.temperature**2)
-                    # net loss after weightage
-                    loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
+                # distillation loss
+                # has to be outside no_grad()
+                d_loss = nn.functional.kl_div(
+                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
+                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (args.temperature**2)
+                # net loss after weightage
+                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
 
                 total_loss += loss.detach().item() # for tensorboard
                 total_s_loss += s_loss.detach().item()
