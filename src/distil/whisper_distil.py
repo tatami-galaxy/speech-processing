@@ -10,29 +10,28 @@
 
 """
 
-import os
+from functools import partial
+import os, re
 from os.path import dirname, abspath
 import numpy as np
 from tqdm.auto import tqdm, trange
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset
 import transformers, datasets
-from transformers import WhisperFeatureExtractor
-from transformers import WhisperTokenizer
-from transformers import WhisperProcessor
-from transformers import get_linear_schedule_with_warmup
-from datasets import Audio
+from transformers import AutoConfig
+from transformers import AutoFeatureExtractor
+from transformers import AutoTokenizer
+from transformers import AutoProcessor
 import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import WhisperForConditionalGeneration
-from torch import nn
+from transformers import AutoModelForSpeechSeq2Seq
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_scheduler, set_seed
-import random
+from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
 import argparse
-from torch.utils.tensorboard import SummaryWriter
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator
+
+chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
 
 # get root directory
@@ -41,20 +40,46 @@ while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
 
+def path_remap(x, args):
+
+    # get audio path
+    #path_list = x['audio'].split('/')
+    path = x['audio']
+
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
+
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
+
 
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
+    """
+    Data collator that will dynamically pad the inputs received.
+    Args:
+        processor ([`WhisperProcessor`])
+            The processor used for processing the data.
+        decoder_start_token_id (`int`)
+            The begin-of-sentence of the decoder.
+    """
+
     processor: Any
+    decoder_start_token_id: int
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lengths and need different padding methods
-        # first treat the audio inputs by simply returning torch tensors
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
+        # split inputs and labels since they have to be of different lengths and need
+        # different padding methods
+        model_input_name = self.processor.model_input_names[0]
+        input_features = [{model_input_name: feature[model_input_name]} for feature in features]
+        label_features = [{"input_ids": feature["labels"]} for feature in features]
+
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
-        # get the tokenized label sequences
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
-        # pad the labels to max length
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
 
         # replace padding with -100 to ignore loss correctly
@@ -62,79 +87,208 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
         # if bos token is appended in previous tokenization step,
         # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
+        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
             labels = labels[:, 1:]
 
         batch["labels"] = labels
 
         return batch
+
     
 
 
 def train(args, accelerator):
-    # extractor, tokenizer, processor
-    feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
-    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
 
-    # model
-    model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
-    model.config.forced_decoder_ids = None
-    model.config.suppress_tokens = []
+    # load dataset
+    print('loading dataset from {}'.format(args.data_dir))
 
-    ## save config ##
+    # data files
+    data_files = {
+        'train': args.data_dir+'/final_train.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_short.csv', # final_train.csv
+        'test': args.data_dir+'/final_test_short.csv', # final_test.csv
+        }
+
+    raw_datasets = load_dataset('csv', data_files=data_files)
+
+    # map to new audio path
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
 
-    # dataset
-    common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
-    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
+    #raw_datasets.cleanup_cache_files()
 
-    with accelerator.main_process_first():
-        # remove unused columns
-        common_voice = common_voice.remove_columns(
-            [
-                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
-            ]
+    # check audio column, text column names
+    if args.audio_column not in raw_datasets["train"].column_names:
+        raise ValueError(
+            f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
+            " Make sure to set `--audio_column` to the correct audio column - one of"
+            f" {', '.join(raw_datasets['train'].column_names)}."
         )
 
-        # resample to 16kHz
-        common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
+    if args.text_column not in raw_datasets["train"].column_names:
+        raise ValueError(
+            f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
+            "Make sure to set `--text_column` to the correct text column - one of "
+            f"{', '.join(raw_datasets['train'].column_names)}."
+        )
 
+    if args.max_train_samples is not None:
+        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
 
-    # function to vectorize dataset
-    def prepare_dataset(batch):
-        # load and resample audio data from 48 to 16kHz
-        audio = batch["audio"]
+    if args.max_eval_samples is not None:
+        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
-        # compute log-Mel input features from input audio array 
-        batch["input_features"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
+    if args.max_test_samples is not None:
+        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
-        # encode target text to label ids 
-        batch["labels"] = tokenizer(batch["sentence"]).input_ids
+    # resample speech dataset if necessary
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
+
+    # remove punctuations
+    def remove_special_characters(batch):
+        batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
-    
-    with accelerator.main_process_first():
-        # vectorize dataset
-        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
 
+    raw_datasets = raw_datasets.map(
+        remove_special_characters,
+        desc="remove special characters from datasets",
+    )
+
+
+    # model, tokenizer
+
+    config = AutoConfig.from_pretrained(
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
+    )
+
+    config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
+
+    feature_extractor = AutoFeatureExtractor.from_pretrained(
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name_or_path,
+        #cache_dir=args.cache_dir,
+        #use_fast=model_args.use_fast_tokenizer,
+        #revision=model_args.model_revision,
+        #use_auth_token=True if model_args.use_auth_token else None,
+    )
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        args.model_name_or_path,
+        config=config,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
+    )
+
+    if model.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
+
+    if args.freeze_encoder:
+        model.freeze_encoder()
+        model.model.encoder.gradient_checkpointing = False
+
+    if args.language is not None:
+        # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
+
+
+    # resample speech dataset if necessary
+    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
+    #if dataset_sampling_rate != feature_extractor.sampling_rate:
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
+
+    # preprocess dataset
+    max_input_length = args.max_duration * feature_extractor.sampling_rate
+    min_input_length = args.min_duration * feature_extractor.sampling_rate
+    audio_column_name = args.audio_column
+    num_workers = args.preprocessing_num_workers
+    text_column_name = args.text_column
+    model_input_name = feature_extractor.model_input_names[0]
+
+    def prepare_dataset(batch):
+        # process audio
+        sample = batch[audio_column_name]
+        inputs = feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
+        # process audio length
+        batch[model_input_name] = inputs.get(model_input_name)[0]
+        batch["input_length"] = len(sample["array"])
+
+        # process targets
+        #input_str = batch[text_column_name].lower() if do_lower_case else batch[text_column_name]
+        input_str = batch[text_column_name]
+        batch["labels"] = tokenizer(input_str).input_ids
+        return batch
+
+    vectorized_datasets = raw_datasets.map(
+        prepare_dataset,
+        remove_columns=next(iter(raw_datasets.values())).column_names,
+        num_proc=args.preprocessing_num_workers,
+        keep_in_memory=True,  # no cache
+        desc="preprocess train dataset",
+    )
+
+    # filter data that is shorter than min_input_length or longer than
+    # max_input_length
+    def is_audio_in_length_range(length):
+        return length > min_input_length and length < max_input_length
+
+    with accelerator.main_process_first():
+        vectorized_datasets = vectorized_datasets.filter(
+            is_audio_in_length_range,
+            num_proc=num_workers,
+            input_columns=["input_length"],
+            keep_in_memory=True
+        )
 
 
     # cer metric
-    metric = evaluate.load("cer")
+    #metric = evaluate.load("cer")
+    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+
+    # create a single speech processor
+    if accelerator.is_local_main_process:
+        # save feature extractor, tokenizer and config
+        feature_extractor.save_pretrained(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
+        config.save_pretrained(args.output_dir)
+
+    # since tokenizer saved in args.output_dir
+    processor = AutoProcessor.from_pretrained(args.output_dir)
+
 
     # data collator
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
+        processor=processor,
+        decoder_start_token_id=model.config.decoder_start_token_id,
+    )
+
 
     # data loaders
     train_dataloader = DataLoader(
-        common_voice["train"],
+        raw_datasets["train"],
         shuffle=True,
         collate_fn=data_collator,
         batch_size=args.train_batch_size,
     )
     eval_dataloader = DataLoader(
-        common_voice["test"],
+        raw_datasets["validation"],
+        collate_fn=data_collator,
+        batch_size=args.eval_batch_size,
+    )
+    test_dataloader = DataLoader(
+        raw_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
@@ -268,13 +422,13 @@ def main():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="openai/whisper-tiny",
+        default=None,  # openai/whisper-small
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
         "--data_dir",
-        default="mozilla-foundation/common_voice_11_0",
+        default=None,  # mozilla-foundation/common_voice_11_0"
         type=str,
         help="Dataset",
     )
@@ -286,7 +440,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_tiny_cv11',
+        default=None,  # root+'/models/whisper/'+'whisper_small_cv11'
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
@@ -302,33 +456,28 @@ def main():
         help="whether to skip steps already ccompleted while loading from checkpoint"
     )
     parser.add_argument(
-        "--model_lang",
-        default='Hindi',
-        type=str,
-    )
-    parser.add_argument(
-        "--data_lang",
-        default='hi',
+        "--lang",
+        default='zh',
         type=str,
     )
     parser.add_argument(
         "--train_batch_size",
-        default=4,
+        default=32,
         type=int,
     )
     parser.add_argument(
         "--eval_batch_size",
-        default=4,
+        default=8,
         type=int,
     )
     parser.add_argument(
         "--train_steps",
-        default=2000,
+        default=50000,
         type=int,
     )
     parser.add_argument(
         "--warmup_steps",
-        default=0,
+        default=500,
         type=int,
     )
     parser.add_argument(
@@ -338,7 +487,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=200,
+        default=1000,
         type=int,
     )
     parser.add_argument(
@@ -361,30 +510,25 @@ def main():
     set_seed(args.seed)
 
     # check if data path exists
-    #if args.data_dir is None:
-        #raise ValueError(
-            #f"pass in dataset directory"
-        #)
-    ##args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
-    #if not os.path.isdir(args.data_dir):
-        #raise ValueError(
-            #f"data directory does not exist"
-        #)
-
+    if args.data_dir is None:
+        raise ValueError(
+            f"pass in dataset directory"
+        )
+    if not os.path.isdir(args.data_dir):
+        raise ValueError(
+            f"data directory does not exist"
+        )
     # check if output directory is passed in
-    #if args.output_dir is None:
-        #model_str = args.model_name_or_path.split('/')[-1]
-        #data_str = args.data_dir.split('/')[-1]
-        #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
-    #print('output directory set to : {}'.format(args.output_dir))
-    ##if not os.path.isdir(args.output_dir):
-        ##os.mkdir(args.output_dir)
-
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        data_str = args.data_dir.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_distil'
+    print('output directory set to : {}'.format(args.output_dir))
     # check if model path is None
-    #if args.model_name_or_path is None:
-        #raise ValueError(
-            #f"pass in model_name_or_path"
-        #)
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model_name_or_path"
+        )
     
 
     # initialize accelerator
