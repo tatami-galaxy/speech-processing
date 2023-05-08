@@ -239,6 +239,7 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
+                    ## check cer calculation ##
                     pred_logits = outputs.logits
                     pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
@@ -411,6 +412,12 @@ def main():
 
     # set seed
     set_seed(args.seed)
+
+    # check if teacher path exists
+    if args.teacher_name_or_path is None:
+        raise ValueError(
+            f"pass in teacher"
+        )
 
     # check if data path exists
     #if args.data_dir is None:

@@ -213,6 +213,7 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
+                    ## check cer calculation ##
                     pred_logits = outputs.logits
                     pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
