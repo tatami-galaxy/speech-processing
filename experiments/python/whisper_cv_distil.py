@@ -13,7 +13,7 @@
 import os
 from os.path import dirname, abspath
 import numpy as np
-from tqdm.auto import tqdm, trange
+from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict
 import transformers, datasets
 from transformers import WhisperFeatureExtractor
@@ -29,7 +29,6 @@ from transformers import WhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_scheduler, set_seed
-import random
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator, DistributedType
@@ -81,6 +80,11 @@ def train(args, accelerator):
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
+
+    # teacher
+    teacher = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
+    teacher.config.forced_decoder_ids = None
+    teacher.config.suppress_tokens = []
 
     ## save config ##
 
@@ -166,6 +170,8 @@ def train(args, accelerator):
     ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
+    total_s_loss = 0  # total student loss before each eval
+    total_d_loss = 0  # total distil loss before each eval
 
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
@@ -193,9 +199,29 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
+                # student
                 outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
+                # stduent logits
+                s_logits = outputs.logits
+                # student loss
+                s_loss = outputs.loss
+                # teacher
+                with torch.no_grad():
+                    outputs = teacher(**batch)
+                    # teacher logits
+                    t_logits = outputs.logits
+                    # distillation loss
+                    d_loss = nn.functional.kl_div(
+                        input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
+                        target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                        reduction="batchmean",
+                    ) * (args.temperature**2)
+                    # net loss after weightage
+                    loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
+
+                total_loss += loss.detach().item() # for tensorboard
+                total_s_loss += s_loss.detach().item()
+                total_d_loss += d_loss.detach().item()
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -230,6 +256,8 @@ def train(args, accelerator):
                     "cer": cer_result,
                     # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -271,6 +299,30 @@ def main():
         default="openai/whisper-tiny",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--teacher_name_or_path",
+        default=None,
+        type=str,
+        help="Path to trained teacher model",
+    )
+    parser.add_argument(
+        "--alpha_ce",
+        default=0.5,
+        type=float,
+        help="Cross entropy loss linear weight (student loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--alpha_distil",
+        default=0.5,
+        type=float,
+        help="Distillation loss linear weight (distil loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--temperature",
+        default=2.0,
+        type=float,
+        help="Distillation temperature. Only for distillation."
     )
     parser.add_argument(
         "--data_dir",
