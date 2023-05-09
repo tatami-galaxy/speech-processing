@@ -22,6 +22,7 @@ from transformers import AutoFeatureExtractor
 from transformers import AutoTokenizer
 from transformers import AutoProcessor
 import torch
+from torch import nn
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
@@ -112,7 +113,8 @@ def train(args, accelerator):
     raw_datasets = load_dataset('csv', data_files=data_files)
 
     # map to new audio path
-    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -132,41 +134,50 @@ def train(args, accelerator):
             f"{', '.join(raw_datasets['train'].column_names)}."
         )
 
-    if args.max_train_samples is not None:
-        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+    with accelerator.main_process_first():
+        if args.max_train_samples is not None:
+            raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
 
-    if args.max_eval_samples is not None:
-        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+        if args.max_eval_samples is not None:
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
-    if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+        if args.max_test_samples is not None:
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
-    # resample speech dataset if necessary
-    raw_datasets = raw_datasets.cast_column(
-        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-    )
+        # resample speech dataset if necessary
+        raw_datasets = raw_datasets.cast_column(
+            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+        )
 
     # remove punctuations
     def remove_special_characters(batch):
         batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
-
-    raw_datasets = raw_datasets.map(
-        remove_special_characters,
-        desc="remove special characters from datasets",
-    )
+    
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.map(
+            remove_special_characters,
+            desc="remove special characters from datasets",
+        )
 
 
     # model, tokenizer
 
-    config = AutoConfig.from_pretrained(
+    model_config = AutoConfig.from_pretrained(
         args.model_name_or_path,
         #cache_dir=args.cache_dir,
         #revision=args.model_revision,
         #use_auth_token=True if args.use_auth_token else None,
     )
+    teacher_config = AutoConfig.from_pretrained(
+        args.teacher_name_or_path,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
+    )
 
-    config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
+    model_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
+    teacher_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         args.model_name_or_path,
@@ -183,13 +194,22 @@ def train(args, accelerator):
     )
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         args.model_name_or_path,
-        config=config,
+        config=model_config,
+        #cache_dir=args.cache_dir,
+        #revision=args.model_revision,
+        #use_auth_token=True if args.use_auth_token else None,
+    )
+    teacher = AutoModelForSpeechSeq2Seq.from_pretrained(
+        args.teacher_name_or_path,
+        config=teacher_config,
         #cache_dir=args.cache_dir,
         #revision=args.model_revision,
         #use_auth_token=True if args.use_auth_token else None,
     )
 
     if model.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    if teacher.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
 
@@ -205,9 +225,10 @@ def train(args, accelerator):
     # resample speech dataset if necessary
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
     #if dataset_sampling_rate != feature_extractor.sampling_rate:
-    raw_datasets = raw_datasets.cast_column(
-        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-    )
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.cast_column(
+            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+        )
 
     # preprocess dataset
     max_input_length = args.max_duration * feature_extractor.sampling_rate
@@ -230,14 +251,15 @@ def train(args, accelerator):
         input_str = batch[text_column_name]
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
-
-    vectorized_datasets = raw_datasets.map(
-        prepare_dataset,
-        remove_columns=next(iter(raw_datasets.values())).column_names,
-        num_proc=args.preprocessing_num_workers,
-        keep_in_memory=True,  # no cache
-        desc="preprocess train dataset",
-    )
+    
+    with accelerator.main_process_first():
+        vectorized_datasets = raw_datasets.map(
+            prepare_dataset,
+            remove_columns=next(iter(raw_datasets.values())).column_names,
+            num_proc=args.preprocessing_num_workers,
+            keep_in_memory=True,  # no cache
+            desc="preprocess train dataset",
+        )
 
     # filter data that is shorter than min_input_length or longer than
     # max_input_length
@@ -262,7 +284,7 @@ def train(args, accelerator):
         # save feature extractor, tokenizer and config
         feature_extractor.save_pretrained(args.output_dir)
         tokenizer.save_pretrained(args.output_dir)
-        config.save_pretrained(args.output_dir)
+        model_config.save_pretrained(args.output_dir)
 
     # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
@@ -313,13 +335,14 @@ def train(args, accelerator):
     # any instruction using your training dataloader length,
     # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
-    ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
+    total_s_loss = 0  # total student loss before each eval
+    total_d_loss = 0  # total distil loss before each eval
 
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
@@ -347,9 +370,30 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
+                # student
                 outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
+                # stduent logits
+                s_logits = outputs.logits
+                # student loss
+                s_loss = outputs.loss
+                # teacher
+                with torch.no_grad():
+                    outputs = teacher(**batch)
+                    # teacher logits
+                    t_logits = outputs.logits
+                # distillation loss
+                # has to be outside no_grad()
+                d_loss = nn.functional.kl_div(
+                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
+                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (args.temperature**2)
+                # net loss after weightage
+                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
+
+                total_loss += loss.detach().item() # for tensorboard
+                total_s_loss += s_loss.detach().item()
+                total_d_loss += d_loss.detach().item()
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -367,6 +411,7 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
+                    ## check cer calculation ##
                     pred_logits = outputs.logits
                     pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
@@ -384,6 +429,8 @@ def train(args, accelerator):
                     "cer": cer_result,
                     # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -398,6 +445,13 @@ def train(args, accelerator):
                 if args.output_dir is not None:
                     output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
+                    # save config
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    #model.config.save_pretrained(output_dir)
+                    unwrapped_model.config.save_pretrained(
+                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
 
                 model.train()
                 total_loss = 0
@@ -425,6 +479,30 @@ def main():
         default=None,  # openai/whisper-small
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--teacher_name_or_path",
+        default=None,
+        type=str,
+        help="Path to trained teacher model",
+    )
+    parser.add_argument(
+        "--alpha_ce",
+        default=0.5,
+        type=float,
+        help="Cross entropy loss linear weight (student loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--alpha_distil",
+        default=0.5,
+        type=float,
+        help="Distillation loss linear weight (distil loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--temperature",
+        default=2.0,
+        type=float,
+        help="Distillation temperature. Only for distillation."
     )
     parser.add_argument(
         "--data_dir",
@@ -518,17 +596,23 @@ def main():
         raise ValueError(
             f"data directory does not exist"
         )
-    # check if output directory is passed in
-    if args.output_dir is None:
-        model_str = args.model_name_or_path.split('/')[-1]
-        data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_distil'
-    print('output directory set to : {}'.format(args.output_dir))
     # check if model path is None
     if args.model_name_or_path is None:
         raise ValueError(
             f"pass in model_name_or_path"
         )
+    # check if model path is None
+    if args.teacher_name_or_path is None:
+        raise ValueError(
+            f"pass in teacher_name_or_path"
+        )
+    # check if output directory is passed in
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        teacher_str = args.teacher_name_or_path.split('/')[-1]
+        data_str = args.data_dir.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_distil_from_'+teacher_str
+    print('output directory set to : {}'.format(args.output_dir))
     
 
     # initialize accelerator
