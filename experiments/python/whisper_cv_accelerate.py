@@ -82,6 +82,18 @@ def train(args, accelerator):
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
 
+    if model.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
+
+    if args.freeze_encoder:
+        model.freeze_encoder()
+        model.model.encoder.gradient_checkpointing = False
+
+    if args.language is not None:
+        # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+        tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
+
     ## save config ##
 
 
@@ -221,7 +233,7 @@ def train(args, accelerator):
                     references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(predictions)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False)
+                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True)
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
@@ -279,6 +291,10 @@ def main():
         default="openai/whisper-tiny",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--freeze_encoder",
+        action="store_true",
     )
     parser.add_argument(
         "--data_dir",
