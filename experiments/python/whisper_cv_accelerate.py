@@ -80,7 +80,7 @@ def train(args, accelerator):
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     #model.config.forced_decoder_ids = None
-    model.config.forced_decoder_ids = WhisperProcessor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
 
     if model.config.decoder_start_token_id is None:
