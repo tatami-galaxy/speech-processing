@@ -193,7 +193,6 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
-                batch['threshold'] = 0.5
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.detach().item() # for tensorboard 
@@ -222,6 +221,9 @@ def train(args, accelerator):
                     predictions = processor.batch_decode(predictions)
                     # we do not want to group tokens when computing the metrics
                     references = processor.batch_decode(references, group_tokens=False)
+                    print('Predictions:', predictions)
+                    print('References:', references)
+                    exit()
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
