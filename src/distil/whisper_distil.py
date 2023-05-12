@@ -177,7 +177,10 @@ def train(args, accelerator):
     )
 
     model_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+
     teacher_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
+    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         args.model_name_or_path,
@@ -238,6 +241,7 @@ def train(args, accelerator):
     text_column_name = args.text_column
     model_input_name = feature_extractor.model_input_names[0]
 
+
     def prepare_dataset(batch):
         # process audio
         sample = batch[audio_column_name]
@@ -288,6 +292,8 @@ def train(args, accelerator):
 
     # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
 
 
     # data collator

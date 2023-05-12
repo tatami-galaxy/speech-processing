@@ -74,17 +74,33 @@ def train(args, accelerator):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = None
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
+
+    if model.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
+    if args.freeze_encoder:
+        model.freeze_encoder()
+        model.model.encoder.gradient_checkpointing = False
+
 
     # teacher
     teacher = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
     teacher.config.forced_decoder_ids = None
+    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     teacher.config.suppress_tokens = []
+
+    if teacher.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
 
     ## save config ##
 

@@ -75,6 +75,8 @@ def train(args, accelerator):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
 
     # model
@@ -91,8 +93,6 @@ def train(args, accelerator):
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-    # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-    tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
     ## save config ##
 
