@@ -195,6 +195,11 @@ def train(args, accelerator):
         #revision=model_args.model_revision,
         #use_auth_token=True if model_args.use_auth_token else None,
     )
+    if args.model_lang is not None:
+        # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
+
+
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         args.model_name_or_path,
         config=model_config,
@@ -220,9 +225,6 @@ def train(args, accelerator):
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-    if args.language is not None:
-        # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
 
 
     # resample speech dataset if necessary
@@ -423,9 +425,9 @@ def train(args, accelerator):
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
                     #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
                     references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions)
+                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False)
+                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
@@ -515,6 +517,34 @@ def main():
         default=None,  # mozilla-foundation/common_voice_11_0"
         type=str,
         help="Dataset",
+    )
+    parser.add_argument(
+        '--max_train_samples',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--max_eval_samples',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--max_test_samples',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--audio_column',
+        type=str,
+        default="audio",
+        help="The name of the dataset column containing the audio data. Defaults to audio for cv."
+    )
+
+    parser.add_argument(
+        '--text_column',
+        type=str,
+        default="transcript",
+        help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
     parser.add_argument(
         "--sampling_rate",

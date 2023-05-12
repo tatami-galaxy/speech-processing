@@ -326,6 +326,10 @@ def main():
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
+        "--freeze_encoder",
+        action="store_true",
+    )
+    parser.add_argument(
         "--teacher_name_or_path",
         default=None,
         type=str,
@@ -363,7 +367,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_tiny_cv11',
+        default=root+'/models/whisper/'+'whisper_tiny_cv11_distil',
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
