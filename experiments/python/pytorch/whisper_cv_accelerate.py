@@ -13,7 +13,7 @@
 import os
 from os.path import dirname, abspath
 import numpy as np
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 from datasets import load_dataset, DatasetDict
 import transformers, datasets
 from transformers import WhisperFeatureExtractor
@@ -29,6 +29,7 @@ from transformers import WhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_scheduler, set_seed
+import random
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator, DistributedType
@@ -80,26 +81,17 @@ def train(args, accelerator):
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
-    model.config.forced_decoder_ids = None
+    #model.config.forced_decoder_ids = None
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
+
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
-
-
-    # teacher
-    teacher = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
-    teacher.config.forced_decoder_ids = None
-    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
-    teacher.config.suppress_tokens = []
-
-    if teacher.config.decoder_start_token_id is None:
-        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
 
     ## save config ##
@@ -179,15 +171,13 @@ def train(args, accelerator):
     # any instruction using your training dataloader length,
     # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
-    model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
     ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
-    total_s_loss = 0  # total student loss before each eval
-    total_d_loss = 0  # total distil loss before each eval
 
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
@@ -215,30 +205,9 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
-                # student
                 outputs = model(**batch)
-                # stduent logits
-                s_logits = outputs.logits
-                # student loss
-                s_loss = outputs.loss
-                # teacher
-                with torch.no_grad():
-                    outputs = teacher(**batch)
-                    # teacher logits
-                    t_logits = outputs.logits
-                # distillation loss
-                # has to be outside no_grad()
-                d_loss = nn.functional.kl_div(
-                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
-                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
-                    reduction="batchmean",
-                ) * (args.temperature**2)
-                # net loss after weightage
-                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
-
-                total_loss += loss.detach().item() # for tensorboard
-                total_s_loss += s_loss.detach().item()
-                total_d_loss += d_loss.detach().item()
+                loss = outputs.loss
+                total_loss += loss.detach().item() # for tensorboard 
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -274,8 +243,6 @@ def train(args, accelerator):
                     "cer": cer_result,
                     # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -330,30 +297,6 @@ def main():
         action="store_true",
     )
     parser.add_argument(
-        "--teacher_name_or_path",
-        default=None,
-        type=str,
-        help="Path to trained teacher model",
-    )
-    parser.add_argument(
-        "--alpha_ce",
-        default=0.5,
-        type=float,
-        help="Cross entropy loss linear weight (student loss). Only for distillation."
-    )
-    parser.add_argument(
-        "--alpha_distil",
-        default=0.5,
-        type=float,
-        help="Distillation loss linear weight (distil loss). Only for distillation."
-    )
-    parser.add_argument(
-        "--temperature",
-        default=2.0,
-        type=float,
-        help="Distillation temperature. Only for distillation."
-    )
-    parser.add_argument(
         "--data_dir",
         default="mozilla-foundation/common_voice_11_0",
         type=str,
@@ -367,7 +310,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_tiny_cv11_distil',
+        default=root+'/models/whisper/'+'whisper_tiny_cv11',
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
@@ -384,7 +327,7 @@ def main():
     )
     parser.add_argument(
         "--model_lang",
-        default='Hindi',
+        default='hindi',
         type=str,
     )
     parser.add_argument(
@@ -440,12 +383,6 @@ def main():
 
     # set seed
     set_seed(args.seed)
-
-    # check if teacher path exists
-    if args.teacher_name_or_path is None:
-        raise ValueError(
-            f"pass in teacher"
-        )
 
     # check if data path exists
     #if args.data_dir is None:
