@@ -262,9 +262,9 @@ def train(args, accelerator):
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
                     #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
                     references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions)
+                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False)
+                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()

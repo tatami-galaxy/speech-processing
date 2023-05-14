@@ -10,11 +10,10 @@
 
 """
 
-import math
 import os
 from os.path import dirname, abspath
 import numpy as np
-from tqdm.auto import tqdm, trange
+from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict
 import transformers, datasets
 from transformers import WhisperFeatureExtractor
@@ -30,7 +29,6 @@ from transformers import WhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_scheduler, set_seed
-import random
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator, DistributedType
@@ -76,12 +74,33 @@ def train(args, accelerator):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
+    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = None
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
+
+    if model.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
+    if args.freeze_encoder:
+        model.freeze_encoder()
+        model.model.encoder.gradient_checkpointing = False
+
+
+    # teacher
+    teacher = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
+    teacher.config.forced_decoder_ids = None
+    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    teacher.config.suppress_tokens = []
+
+    if teacher.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+
 
     ## save config ##
 
@@ -160,13 +179,15 @@ def train(args, accelerator):
     # any instruction using your training dataloader length,
     # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
     ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
+    total_s_loss = 0  # total student loss before each eval
+    total_d_loss = 0  # total distil loss before each eval
 
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
@@ -194,9 +215,30 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
+                # student
                 outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
+                # stduent logits
+                s_logits = outputs.logits
+                # student loss
+                s_loss = outputs.loss
+                # teacher
+                with torch.no_grad():
+                    outputs = teacher(**batch)
+                    # teacher logits
+                    t_logits = outputs.logits
+                # distillation loss
+                # has to be outside no_grad()
+                d_loss = nn.functional.kl_div(
+                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
+                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (args.temperature**2)
+                # net loss after weightage
+                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
+
+                total_loss += loss.detach().item() # for tensorboard
+                total_s_loss += s_loss.detach().item()
+                total_d_loss += d_loss.detach().item()
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -214,14 +256,15 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
+                    ## check cer calculation ##
                     pred_logits = outputs.logits
                     pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
                     predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
                     #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
                     references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions)
+                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False)
+                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
@@ -231,6 +274,8 @@ def train(args, accelerator):
                     "cer": cer_result,
                     # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
@@ -245,6 +290,13 @@ def train(args, accelerator):
                 if args.output_dir is not None:
                     output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
+                    # save config
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    #model.config.save_pretrained(output_dir)
+                    unwrapped_model.config.save_pretrained(
+                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
 
                 model.train()
                 total_loss = 0
@@ -269,9 +321,37 @@ def main():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="openai/whisper-small",
+        default="openai/whisper-tiny",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--freeze_encoder",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--teacher_name_or_path",
+        default=None,
+        type=str,
+        help="Path to trained teacher model",
+    )
+    parser.add_argument(
+        "--alpha_ce",
+        default=0.5,
+        type=float,
+        help="Cross entropy loss linear weight (student loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--alpha_distil",
+        default=0.5,
+        type=float,
+        help="Distillation loss linear weight (distil loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--temperature",
+        default=2.0,
+        type=float,
+        help="Distillation temperature. Only for distillation."
     )
     parser.add_argument(
         "--data_dir",
@@ -287,7 +367,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_small_cv11',
+        default=root+'/models/whisper/'+'whisper_tiny_cv11_distil',
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
@@ -361,6 +441,12 @@ def main():
     # set seed
     set_seed(args.seed)
 
+    # check if teacher path exists
+    if args.teacher_name_or_path is None:
+        raise ValueError(
+            f"pass in teacher"
+        )
+
     # check if data path exists
     #if args.data_dir is None:
         #raise ValueError(
@@ -375,7 +461,7 @@ def main():
     # check if output directory is passed in
     #if args.output_dir is None:
         #model_str = args.model_name_or_path.split('/')[-1]
-        #data_str = args.data_dir.split('/')[-1]
+        #data_str = 'cv11'
         #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
     #print('output directory set to : {}'.format(args.output_dir))
     ##if not os.path.isdir(args.output_dir):
