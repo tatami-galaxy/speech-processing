@@ -13,7 +13,9 @@
 import os
 from os.path import dirname, abspath
 import numpy as np
-from tqdm.auto import tqdm, trange
+import jax
+import jax.numpy as jnp
+from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict
 import transformers, datasets
 from transformers import WhisperFeatureExtractor
@@ -25,14 +27,13 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import WhisperForConditionalGeneration
+from transformers import FlaxWhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_scheduler, set_seed
+from transformers import AdamW, set_seed
 import random
 import argparse
-from torch.utils.tensorboard import SummaryWriter
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator
 
 
 # get root directory
@@ -80,21 +81,22 @@ def train(args, accelerator):
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
 
     # model
-    model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
+    model = FlaxWhisperForConditionalGeneration.from_pretrained(
+        args.model_name_or_path,
+        seed=args.seed,
+        dtype=getattr(jnp, args.dtype)
+    )
     #model.config.forced_decoder_ids = None
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
-
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
-
 
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-
-    ## save config ##
+    # save config maybe?
 
 
     # dataset
@@ -129,6 +131,21 @@ def train(args, accelerator):
     with accelerator.main_process_first():
         # vectorize dataset
         common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+
+
+    # filter audio by duration 
+    
+    max_input_length = args.max_duration * feature_extractor.sampling_rate
+    min_input_length = args.min_duration * feature_extractor.sampling_rate
+
+    def is_audio_in_length_range(length):
+        return length > min_input_length and length < max_input_length
+
+    common_voice = common_voice.filter(
+        is_audio_in_length_range,
+        num_proc=args.num_workers,
+        input_columns=["input_length"],
+    )
 
 
 
@@ -309,6 +326,19 @@ def main():
         help="sampling rate",
     )
     parser.add_argument(
+        '--max_duration',
+        type=float,
+        default=20.0,
+        help="Filter audio files that are longer than max_duration."
+    )
+
+    parser.add_argument(
+        '--min_duration',
+        type=float,
+        default=1.0, # 0.0
+        help="Filter audio files that are shorter than min_duration."
+    )
+    parser.add_argument(
         "--output_dir",
         default=root+'/models/whisper/'+'whisper_tiny_cv11',
         type=str,
@@ -366,14 +396,21 @@ def main():
         type=int,
     )
     parser.add_argument(
+        '--num_workers',
+        type=int,
+        default=None, # None
+        help="The number of processes to use for the preprocessing."
+    )
+    parser.add_argument(
         "--lr",
         default=1e-5,
         type=float,
     )
     parser.add_argument(
-        "--mixed_precision",
-        default='fp16',
+        "--dtype",
+        default='float16',
         type=str,
+        help="Floating-point format in which the model weights should be initialized and trained. Choose one of [float32, float16, bfloat16]"
     )
 
 
