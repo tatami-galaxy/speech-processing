@@ -21,13 +21,13 @@ import transformers, datasets
 from transformers import WhisperFeatureExtractor
 from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
+from transformers import FlaxWhisperForConditionalGeneration
 from transformers import get_linear_schedule_with_warmup
 from datasets import Audio
 import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import FlaxWhisperForConditionalGeneration
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, set_seed
@@ -69,6 +69,22 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         batch["labels"] = labels
 
         return batch
+
+
+# in Flax, for seq2seq models we need to pass `decoder_input_ids`
+# as the Flax models don't accept `labels`, we need to prepare the decoder_input_ids here
+# `shift_tokens_right` function
+# copied from transformers.models.bart.modeling_flax_bart.shift_tokens_right
+def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_token_id: int) -> np.ndarray:
+    """
+    Shift input ids one token to the right.
+    """
+    shifted_input_ids = np.zeros_like(input_ids)
+    shifted_input_ids[:, 1:] = input_ids[:, :-1]
+    shifted_input_ids[:, 0] = decoder_start_token_id
+
+    shifted_input_ids = np.where(shifted_input_ids == -100, pad_token_id, shifted_input_ids)
+    return shifted_input_ids
     
 
 
@@ -104,19 +120,19 @@ def train(args, accelerator):
     common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
     common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
 
-    with accelerator.main_process_first():
-        # remove unused columns
-        common_voice = common_voice.remove_columns(
-            [
-                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
-            ]
-        )
+    # remove unused columns
+    common_voice = common_voice.remove_columns(
+        [
+            "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
+        ]
+    )
 
-        # resample to 16kHz
-        common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
+    # resample to 16kHz
+    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # function to vectorize dataset
+    # flax models need decoder_input_ids instead of labels
     def prepare_dataset(batch):
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
