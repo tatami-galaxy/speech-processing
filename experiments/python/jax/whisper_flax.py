@@ -12,28 +12,45 @@
 
 import os
 from os.path import dirname, abspath
+from pathlib import Path
+import logging
+import argparse
+from typing import Any, Dict, List, Union
+from dataclasses import dataclass
+
 import numpy as np
 import jax
 import jax.numpy as jnp
 from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict
-import transformers, datasets
-from transformers import WhisperFeatureExtractor
-from transformers import WhisperTokenizer
-from transformers import WhisperProcessor
-from transformers import FlaxWhisperForConditionalGeneration
-from transformers import get_linear_schedule_with_warmup
+import transformers
+from transformers import (
+    WhisperFeatureExtractor,
+    WhisperTokenizer,
+    WhisperProcessor,
+    FlaxWhisperForConditionalGeneration
+)
+from transformers import (
+    AdamW,
+    set_seed,
+    get_linear_schedule_with_warmup,
+    is_tensorboard_available,
+)
+from transformers.utils import send_example_telemetry
+
+import datasets
 from datasets import Audio
 import torch
-from dataclasses import dataclass
-from typing import Any, Dict, List, Union
 import evaluate
-from torch import nn
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, set_seed
-import random
-import argparse
-from accelerate import Accelerator
+
+
+logger = logging.getLogger(__name__)
+
+# sending telemetry
+# tracking the example usage helps us better allocate resources to maintain them
+# the information sent is the one passed as arguments along with your Python/PyTorch versions
+send_example_telemetry("run_summarization", framework="flax")
 
 
 # get root directory
@@ -88,10 +105,11 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
     
 
 
-def train(args, accelerator):
+def train(args):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
@@ -102,6 +120,7 @@ def train(args, accelerator):
         seed=args.seed,
         dtype=getattr(jnp, args.dtype)
     )
+
     #model.config.forced_decoder_ids = None
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
     model.config.suppress_tokens = []
@@ -127,12 +146,20 @@ def train(args, accelerator):
         ]
     )
 
+    # select small dataset for testing
+    if args.max_train_samples is not None:
+        common_voice["train"] = common_voice["train"].select(range(args.max_train_samples))
+
+    if args.max_test_samples is not None:
+        common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
+
     # resample to 16kHz
     common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # function to vectorize dataset
     # flax models need decoder_input_ids instead of labels
+    # we need fixed length inputs for jitted functions
     def prepare_dataset(batch):
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
@@ -141,16 +168,27 @@ def train(args, accelerator):
         batch["input_features"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
 
         # encode target text to label ids 
-        batch["labels"] = tokenizer(batch["sentence"]).input_ids
+        labels = tokenizer(batch["sentence"], return_tensors="np")
+        decoder_input_ids = shift_tokens_right(
+            labels["input_ids"], model.config.pad_token_id, model.config.decoder_start_token_id
+        )
+        batch["decoder_input_ids"] = np.asarray(decoder_input_ids)
+        # we need decoder_attention_mask so we can ignore pad tokens from loss
+        batch["decoder_attention_mask"] = labels["attention_mask"]
+
         return batch
     
-    with accelerator.main_process_first():
-        # vectorize dataset
-        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+
+    # vectorize dataset
+    common_voice = common_voice.map(
+        prepare_dataset,
+        remove_columns=common_voice.column_names["train"],
+        desc="vectorize dataset"
+    ) #, num_proc=2)
+
 
 
     # filter audio by duration 
-    
     max_input_length = args.max_duration * feature_extractor.sampling_rate
     min_input_length = args.min_duration * feature_extractor.sampling_rate
 
@@ -164,11 +202,28 @@ def train(args, accelerator):
     )
 
 
-
     # cer metric
     metric = evaluate.load("cer")
 
-    # data collator
+    # enable tensorboard only on the master node
+    has_tensorboard = is_tensorboard_available()
+    if has_tensorboard and jax.process_index() == 0:
+        try:
+            from flax.metrics.tensorboard import SummaryWriter
+            summary_writer = SummaryWriter(log_dir=Path(args.output_dir))
+        except ImportError as ie:
+            has_tensorboard = False
+            logger.warning(
+                f"Unable to display metrics through TensorBoard because some package are not installed: {ie}"
+            )
+    else:
+        logger.warning(
+            "Unable to display metrics through TensorBoard because the package is not installed: "
+            "Please run pip install tensorboard to enable."
+        )
+
+
+    # data collator or data loader?
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 
     # data loaders
@@ -356,7 +411,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_tiny_cv11',
+        default=None,
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
@@ -380,6 +435,16 @@ def main():
         "--data_lang",
         default='hi',
         type=str,
+    )
+    parser.add_argument(
+        '--max_train_samples',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--max_test_samples',
+        type=int,
+        default=None
     )
     parser.add_argument(
         "--train_batch_size",
@@ -438,63 +503,36 @@ def main():
     set_seed(args.seed)
 
     # check if data path exists
-    #if args.data_dir is None:
-        #raise ValueError(
-            #f"pass in dataset directory"
-        #)
-    ##args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
-    #if not os.path.isdir(args.data_dir):
-        #raise ValueError(
-            #f"data directory does not exist"
-        #)
-
+    if args.data_dir is None:
+        raise ValueError(
+            f"pass in dataset"
+        )
     # check if output directory is passed in
-    #if args.output_dir is None:
-        #model_str = args.model_name_or_path.split('/')[-1]
-        #data_str = 'cv11'
-        #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
-    #print('output directory set to : {}'.format(args.output_dir))
-    ##if not os.path.isdir(args.output_dir):
-        ##os.mkdir(args.output_dir)
-
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        data_str = args.data_dir.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_jax_'+data_str
+    print('output directory set to : {}'.format(args.output_dir))
     # check if model path is None
-    #if args.model_name_or_path is None:
-        #raise ValueError(
-            #f"pass in model_name_or_path"
-        #)
-    
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model_name_or_path"
+        )
 
-    # initialize accelerator
-    accelerator = Accelerator(
-        mixed_precision=args.mixed_precision,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        log_with="tensorboard",
-        logging_dir=args.output_dir
-    )
-    # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
-    # to INFO for the main process only.
-    if accelerator.is_main_process:
+    # setup logging, we only want one process per machine to log things on the screen.
+    logger.setLevel(logging.INFO if jax.process_index() == 0 else logging.ERROR)
+    if jax.process_index() == 0:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_info()
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
-    # we need to initialize the trackers we use, and also store our configuration
-    track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
-        "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
-    }
-    #run = os.path.split(__file__)[-1].split(".")[0]
-    accelerator.init_trackers('runs', track_config)
 
+    # set the verbosity to info of the Transformers logger (on main process only):
+    logger.info(f"Training parameters {args}")
+    
     # train function
-    train(args, accelerator)
-
-    # end logging
-    accelerator.end_training()
-
+    train(args)
 
             
 
