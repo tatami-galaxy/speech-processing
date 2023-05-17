@@ -69,17 +69,20 @@ while root.split('/')[-1] != 'speech-processing':
 
 
 @dataclass
-class DataCollatorSpeechSeq2SeqWithPadding:
+class FlaxDataCollatorForWhisperFinetuning:
     processor: Any
 
-    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lengths and need different padding methods
-        # first treat the audio inputs by simply returning torch tensors
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
-        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
+    def __call__(self, features: List[Dict[str, Union[List[int], np.ndarray]]]) -> Dict[str, np.ndarray]:
 
-        # get the tokenized label sequences
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
+        # pad_to_multiple_of for gpu
+        batch = self.processor.feature_extractor.pad(
+            features,
+            #max_length=self.max_length,
+            #padding=self.padding,
+            #pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors="np",
+        )
+
         # pad the labels to max length
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
 
@@ -198,6 +201,9 @@ def train(args):
         desc="vectorize dataset"
     ) #, num_proc=2)
 
+    print(common_voice)
+    quit()
+
 
 
     # filter audio by duration 
@@ -285,6 +291,7 @@ def train(args):
 
     # setup train state
     state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw, dropout_rng=dropout_rng)
+
 
     # label smoothed cross entropy
     def loss_fn(logits, labels, padding_mask, label_smoothing_factor=0.0):
@@ -376,39 +383,23 @@ def train(args):
     state = state.replicate()
 
 
-
-
     # data collator or data loader?
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+    data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
 
     # data loaders
     train_dataloader = DataLoader(
         common_voice["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=args.train_batch_size,
+        batch_size=train_batch_size,
     )
     eval_dataloader = DataLoader(
         common_voice["test"],
         collate_fn=data_collator,
-        batch_size=args.eval_batch_size,
+        batch_size=eval_batch_size,
     )
 
-    # optimizer
-    optimizer = AdamW(
-        list(model.parameters()),
-        lr=args.lr,
-    )
 
-    # calculate epochs
-    #args.num_train_epochs = args.train_steps // len(train_dataloader) + 1
-
-    # scheduler
-    lr_scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=args.warmup_steps,
-        num_training_steps=args.train_steps
-    )
 
     # prepare everything for accelerator
     # any instruction using your training dataloader length,
