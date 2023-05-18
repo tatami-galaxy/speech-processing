@@ -172,6 +172,19 @@ def train(args):
     common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
+    # filter audio by duration 
+    #max_input_length = args.max_duration * feature_extractor.sampling_rate
+    #min_input_length = args.min_duration * feature_extractor.sampling_rate
+
+    #def is_audio_in_length_range(length):
+        #return length > min_input_length and length < max_input_length
+
+    #common_voice = common_voice.filter(
+        #is_audio_in_length_range,
+        #num_proc=args.num_workers,
+        #input_columns=["input_length"],
+    #)
+
     # function to vectorize dataset
     # flax models need decoder_input_ids instead of labels
     # we need fixed length inputs for jitted functions
@@ -184,40 +197,26 @@ def train(args):
 
         # encode target text to label ids 
         labels = tokenizer(batch["sentence"], return_tensors="np")
+        # labels to compute loss
+        batch["labels"] = labels.input_ids
         decoder_input_ids = shift_tokens_right(
             labels["input_ids"], model.config.pad_token_id, model.config.decoder_start_token_id
         )
+        # decoder_input_ids to feed into the flax model
         batch["decoder_input_ids"] = np.asarray(decoder_input_ids)
         # we need decoder_attention_mask so we can ignore pad tokens from loss
         batch["decoder_attention_mask"] = labels["attention_mask"]
 
         return batch
-    
 
     # vectorize dataset
+    # input_features, decoder_input_ids, decoder_attention_mask, labels
     common_voice = common_voice.map(
         prepare_dataset,
         remove_columns=common_voice.column_names["train"],
         desc="vectorize dataset"
     ) #, num_proc=2)
 
-    print(common_voice)
-    quit()
-
-
-
-    # filter audio by duration 
-    max_input_length = args.max_duration * feature_extractor.sampling_rate
-    min_input_length = args.min_duration * feature_extractor.sampling_rate
-
-    def is_audio_in_length_range(length):
-        return length > min_input_length and length < max_input_length
-
-    common_voice = common_voice.filter(
-        is_audio_in_length_range,
-        num_proc=args.num_workers,
-        input_columns=["input_length"],
-    )
 
 
     # cer metric
@@ -318,6 +317,7 @@ def train(args):
     
 
     # Define gradient update step fn
+    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def train_step(state, batch, label_smoothing_factor=0.0):
         dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
 
