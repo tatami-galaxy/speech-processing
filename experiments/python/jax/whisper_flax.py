@@ -13,6 +13,7 @@
 import os
 from os.path import dirname, abspath
 from pathlib import Path
+from functools import partial
 import logging
 import argparse
 from typing import Any, Dict, List, Union
@@ -126,23 +127,30 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
 def train(args):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
-    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
+    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     # model
+    # FlaxWhisperForConditionalGeneration uses the FlaxWhisperPreTrainedModel forward method,
+    # overrides the __call__ special method
+    # FlaxWhisperForConditionalGeneration -> module_class = FlaxWhisperForConditionalGenerationModule
+    # FlaxWhisperForConditionalGeneration(FlaxWhisperPreTrainedModel)
+    # FlaxWhisperPreTrainedModel -> module = self.module_class
+    # FlaxWhisperPreTrainedModel -> __call__ -> self.module.apply
+    # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
     model = FlaxWhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         seed=args.seed,
         dtype=getattr(jnp, args.dtype)
     )
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     model.config.suppress_tokens = []
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
-
+    
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
@@ -289,6 +297,7 @@ def train(args):
     )
 
     # setup train state
+    # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
     state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw, dropout_rng=dropout_rng)
 
 
@@ -312,6 +321,7 @@ def train(args):
         # ignore padded tokens from loss
         loss = loss * padding_mask
         loss = loss.sum()
+        # what is num_labels?
         num_labels = padding_mask.sum()
         return loss, num_labels
     
@@ -327,6 +337,12 @@ def train(args):
             loss, num_labels = loss_fn(logits, labels, batch["decoder_attention_mask"], label_smoothing_factor)
             return loss, num_labels
 
+        # value_and_grad
+        # creates a function that evaluates both fun and the gradient of fun
+        # returns a function with the same arguments as fun that evaluates both fun 
+        # and the gradient of fun and returns them as a pair
+        # argnums -> which positional argument(s) to differentiate with respect to (default 0).
+        # if has_aux is True then a tuple of ((value, auxiliary_data), gradient) is returned.
         grad_fn = jax.value_and_grad(compute_loss, has_aux=True)
         (loss, num_labels), grad = grad_fn(state.params)
         num_labels = jax.lax.psum(num_labels, "batch")
@@ -362,25 +378,45 @@ def train(args):
 
     # Define generation function
     max_length = (
-        data_args.val_max_target_length if data_args.val_max_target_length is not None else model.config.max_length
+        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
     )
-    num_beams = data_args.num_beams if data_args.num_beams is not None else model.config.num_beams
+    num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
 
     def generate_step(params, batch):
         model.params = params
-        output_ids = model.generate(batch["input_ids"], attention_mask=batch["attention_mask"], **gen_kwargs)
+        output_ids = model.generate(
+            batch["input_ids"],
+            task=args.task,
+            language=args.model_lang,
+            is_multilingual=True,
+            **gen_kwargs
+        )
         return output_ids.sequences
 
-    # Create parallel version of the train and eval step
+    # create parallel version of the train and eval step
+    # applying pmap() to a function will compile the function with XLA (similarly to jit()),
+    # then execute it in parallel on XLA devices, such as multiple GPUs or multiple TPU cores.
+    # it eplicates the function and executes each replica on its own XLA device in parallel.
+    # donate_argnums -> specify which positional argument buffers are “donated” to the computation.
+    # it is safe to donate argument buffers if you no longer need them once the computation has finished.
+    # you should not reuse buffers that you donate to a computation,
+    # jax will raise an error if you try to.
+    # donate_argnums only work for positional arguments.
     p_train_step = jax.pmap(
-        partial(train_step, label_smoothing_factor=training_args.label_smoothing_factor), "batch", donate_argnums=(0,)
+        partial(train_step, label_smoothing_factor=args.label_smoothing_factor), "batch", donate_argnums=(0,)
     )
-    p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=training_args.label_smoothing_factor), "batch")
+    p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=args.label_smoothing_factor), "batch")
     p_generate_step = jax.pmap(generate_step, "batch")
 
-    # Replicate the train state on each device
+    # replicate the train state on each device
     state = state.replicate()
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(common_voice['train'])}")
+    logger.info(f"  Num steps = {args.train_steps}")
+    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
 
     # data collator or data loader?
@@ -578,6 +614,11 @@ def main():
         type=str,
     )
     parser.add_argument(
+        "--task",
+        default='transcribe',
+        type=str,
+    )
+    parser.add_argument(
         "--data_lang",
         default='hi',
         type=str,
@@ -653,6 +694,21 @@ def main():
         default='float16',
         type=str,
         help="Floating-point format in which the model weights should be initialized and trained. Choose one of [float32, float16, bfloat16]"
+    )
+    parser.add_argument(
+        '--generation_max_length',
+        type=int,
+        default=225
+    )
+    parser.add_argument(
+        '--label_smoothing_factor',
+        type=float,
+        default=0.0
+    )
+    parser.add_argument(
+        '--num_beams',
+        type=int,
+        default=1
     )
 
 
