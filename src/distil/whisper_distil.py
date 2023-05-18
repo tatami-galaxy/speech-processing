@@ -144,10 +144,6 @@ def train(args, accelerator):
         if args.max_test_samples is not None:
             raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
-        # resample speech dataset if necessary
-        raw_datasets = raw_datasets.cast_column(
-            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        )
 
     # remove punctuations
     def remove_special_characters(batch):
@@ -160,7 +156,7 @@ def train(args, accelerator):
             desc="remove special characters from datasets",
         )
 
-
+    print(vectorized_datasets)
     # model, tokenizer
 
     model_config = AutoConfig.from_pretrained(
@@ -177,10 +173,9 @@ def train(args, accelerator):
     )
 
     model_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
 
     teacher_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
-    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+
 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
         args.model_name_or_path,
@@ -197,7 +192,7 @@ def train(args, accelerator):
     )
     if args.model_lang is not None:
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-        tokenizer.set_prefix_tokens(language=args.language, task=args.task)
+        tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
 
 
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -224,7 +219,6 @@ def train(args, accelerator):
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
-
 
 
     # resample speech dataset if necessary
@@ -307,18 +301,18 @@ def train(args, accelerator):
 
     # data loaders
     train_dataloader = DataLoader(
-        raw_datasets["train"],
+        vectorized_datasets["train"],
         shuffle=True,
         collate_fn=data_collator,
         batch_size=args.train_batch_size,
     )
     eval_dataloader = DataLoader(
-        raw_datasets["validation"],
+        vectorized_datasets["validation"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
     test_dataloader = DataLoader(
-        raw_datasets["test"],
+        vectorized_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
@@ -495,6 +489,26 @@ def main():
         help="Path to trained teacher model",
     )
     parser.add_argument(
+        '--forced_decoder_ids',
+        type=List[List[int]],
+        default=None,
+        help="""A list of pairs of integers which indicates a mapping from generation indices to token indices 
+                that will be forced before sampling. For example, [[0, 123]] means the first generated token 
+                will always be a token of index 123."""
+    )
+    parser.add_argument(
+        '--suppress_tokens',
+        type=List[int],
+        default=None,
+        help="A list of tokens that will be suppressed at generation."
+    )
+    parser.add_argument(
+        '--freeze_encoder',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to freeze the transformer encoder of the model."
+    )
+    parser.add_argument(
         "--alpha_ce",
         default=0.5,
         type=float,
@@ -553,6 +567,25 @@ def main():
         help="sampling rate",
     )
     parser.add_argument(
+        '--max_duration',
+        type=float,
+        default=20.0,
+        help="Filter audio files that are longer than max_duration."
+    )
+
+    parser.add_argument(
+        '--min_duration',
+        type=float,
+        default=1.0, # 0.0
+        help="Filter audio files that are shorter than min_duration."
+    )
+    parser.add_argument(
+        '--preprocessing_num_workers',
+        type=int,
+        default=32, # None
+        help="The number of processes to use for the preprocessing."
+    )
+    parser.add_argument(
         "--output_dir",
         default=None,  # root+'/models/whisper/'+'whisper_small_cv11'
         type=str,
@@ -570,8 +603,8 @@ def main():
         help="whether to skip steps already ccompleted while loading from checkpoint"
     )
     parser.add_argument(
-        "--lang",
-        default='zh',
+        "--model_lang",
+        default='chinese',
         type=str,
     )
     parser.add_argument(
