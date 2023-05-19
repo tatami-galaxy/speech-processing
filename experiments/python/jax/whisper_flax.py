@@ -75,6 +75,9 @@ class FlaxDataCollatorForWhisperFinetuning:
 
     def __call__(self, features: List[Dict[str, Union[List[int], np.ndarray]]]) -> Dict[str, np.ndarray]:
 
+        print(features)
+        quit()
+
         # pad_to_multiple_of for gpu
         batch = self.processor.feature_extractor.pad(
             features,
@@ -412,14 +415,8 @@ def train(args):
     # replicate the train state on each device
     state = state.replicate()
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(common_voice['train'])}")
-    logger.info(f"  Num steps = {args.train_steps}")
-    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-
-    # data collator or data loader?
+    # data collator # fix 
     data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
 
     # data loaders
@@ -427,13 +424,25 @@ def train(args):
         common_voice["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=train_batch_size,
+        #batch_size=train_batch_size,
+        batch_size=args.per_device_train_batch_size
     )
+
+    next(iter(train_dataloader))
+
     eval_dataloader = DataLoader(
         common_voice["test"],
         collate_fn=data_collator,
         batch_size=eval_batch_size,
     )
+
+
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(common_voice['train'])}")
+    logger.info(f"  Num steps = {args.train_steps}")
+    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
+
 
 
 
