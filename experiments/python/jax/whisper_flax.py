@@ -16,7 +16,7 @@ from pathlib import Path
 from functools import partial
 import logging
 import argparse
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
 
@@ -72,33 +72,56 @@ while root.split('/')[-1] != 'speech-processing':
 @dataclass
 class FlaxDataCollatorForWhisperFinetuning:
     processor: Any
+    padding: Union[bool, str] = 'longest'
+    pad_to_multiple_of: Optional[int] = None
+    max_length: Optional[int] = None
 
+    # features -> input_features, decoder_input_ids, labels
     def __call__(self, features: List[Dict[str, Union[List[int], np.ndarray]]]) -> Dict[str, np.ndarray]:
 
-        print(features)
-        quit()
+        # split inputs and labels since they have to be of different lengths and need different padding methods
+        # first treat the audio inputs by simply returning torch tensors
+        input_features = [{"input_features": feature["input_features"]} for feature in features]
+        batch = self.processor.feature_extractor.pad(  # feature extractor pad
+            input_features,
+            padding=self.padding,
+            return_tensors="np")
 
-        # pad_to_multiple_of for gpu
-        batch = self.processor.feature_extractor.pad(
-            features,
-            #max_length=self.max_length,
-            #padding=self.padding,
-            #pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors="np",
-        )
-
+        # get the tokenized decoder_input_ids
+        decoder_features = [{"input_ids": feature["decoder_input_ids"][0]} for feature in features]
         # pad the labels to max length
-        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
-
+        decoder_input_batch = self.processor.tokenizer.pad(  # tokenizer pad since text
+            decoder_features,
+            padding=self.padding,
+            return_tensors="np")    
         # replace padding with -100 to ignore loss correctly
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
-
+        #decoder_inputs = decoder_input_batch["input_ids"].masked_fill(decoder_input_batch.attention_mask.ne(1), -100)
+        decoder_inputs = decoder_input_batch["input_ids"]
+        decoder_attention = decoder_input_batch["attention_mask"]
         # if bos token is appended in previous tokenization step,
         # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
-            labels = labels[:, 1:]
-
-        batch["labels"] = labels
+        if (decoder_inputs[:, 0] == self.processor.tokenizer.bos_token_id).all().item():
+            decoder_inputs = decoder_inputs[:, 1:]
+        batch["decoder_input_ids"] = decoder_inputs
+        batch["decoder_attention_mask"] = decoder_attention
+        
+        # get the tokenized labels
+        label_features = [{"input_ids": feature["labels"][0]} for feature in features]
+        # pad the labels to max length
+        label_batch = self.processor.tokenizer.pad(  # tokenizer pad since text
+            label_features,
+            padding=self.padding,
+            return_tensors="np")    
+        # replace padding with -100 to ignore loss correctly
+        #decoder_inputs = decoder_input_batch["input_ids"].masked_fill(decoder_input_batch.attention_mask.ne(1), -100)
+        label_inputs = label_batch["input_ids"]
+        label_attention = label_batch["attention_mask"]
+        # if bos token is appended in previous tokenization step,
+        # cut bos token here as it's append later anyways
+        if (label_inputs[:, 0] == self.processor.tokenizer.bos_token_id).all().item():
+            label_inputs = label_inputs[:, 1:]
+        batch["labels"] = label_inputs
+        batch["label_attention_mask"] = label_attention
 
         return batch
     
@@ -214,9 +237,8 @@ def train(args):
             labels["input_ids"], model.config.pad_token_id, model.config.decoder_start_token_id
         )
         # decoder_input_ids to feed into the flax model
+        # we will compute attention mask in data collator
         batch["decoder_input_ids"] = np.asarray(decoder_input_ids)
-        # we need decoder_attention_mask so we can ignore pad tokens from loss
-        batch["decoder_attention_mask"] = labels["attention_mask"]
 
         return batch
 
@@ -330,7 +352,7 @@ def train(args):
     
 
     # Define gradient update step fn
-    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
+    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels, label_attention_mask
     def train_step(state, batch, label_smoothing_factor=0.0):
         dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
 
@@ -424,12 +446,8 @@ def train(args):
         common_voice["train"],
         shuffle=True,
         collate_fn=data_collator,
-        #batch_size=train_batch_size,
-        batch_size=args.per_device_train_batch_size
+        batch_size=train_batch_size,
     )
-
-    next(iter(train_dataloader))
-
     eval_dataloader = DataLoader(
         common_voice["test"],
         collate_fn=data_collator,
@@ -443,16 +461,6 @@ def train(args):
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-
-
-
-    # prepare everything for accelerator
-    # any instruction using your training dataloader length,
-    # for instance if you need the number of total training steps
-    # to create a learning rate scheduler) should go after the call to prepare()
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
 
     ##
     global_step = 0  # tracks total steps
@@ -644,7 +652,7 @@ def main():
     )
     parser.add_argument(
         "--per_device_train_batch_size",
-        default=4,
+        default=4, # 4
         type=int,
     )
     parser.add_argument(
@@ -696,6 +704,11 @@ def main():
     parser.add_argument(
         "--adam_epsilon",
         default=1e-6,
+        type=float,
+    )
+    parser.add_argument(
+        "--weight_decay",
+        default=0.0,
         type=float,
     )
     parser.add_argument(
