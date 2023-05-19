@@ -461,12 +461,10 @@ def train(args):
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-
-    ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
-    # load from checkpoint
+    # load from checkpoint (flax -> orbax)
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
     if args.resume_from_checkpoint is not None:
