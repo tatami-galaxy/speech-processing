@@ -19,6 +19,7 @@ import argparse
 from typing import Any, Dict, List, Union, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
+import time
 
 import numpy as np
 import jax
@@ -28,6 +29,7 @@ from flax import jax_utils, traverse_util
 from flax.training import train_state
 from flax.training.common_utils import (
     onehot,
+    shard,
     shard_prng_key
 )
 
@@ -465,44 +467,45 @@ def train(args):
     total_loss = 0  # total loss before each eval
 
     # load from checkpoint (flax -> orbax)
-    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
-    # check if checkpoint directory passed in
-    if args.resume_from_checkpoint is not None:
-        accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
-        accelerator.load_state(args.resume_from_checkpoint)
-        # if resumed from checkpoint
-        # we need to skip steps until we reach the current step
-        if args.skip_steps:
-            # ../checkpoint-123 -> int(123)
-            steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
-            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-            global_step = steps_completed
+    # add loading from checkpoint code here #
 
 
     # Training
 
     # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
+    progress_bar = tqdm(range(global_step, args.train_steps), position=0)
 
     while True:
+        # training time
+        train_start = time.time()
+        # train metrics
+        train_metrics = []
 
         model.train()
 
         for batch in train_dataloader:
-            with accelerator.accumulate(model):
-                outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            batch = shard(batch)
+
+            state, train_metric = p_train_step(state, batch)
+            train_metrics.append(train_metric)
 
             progress_bar.update(1)
 
 
             if (global_step + 1) % args.eval_steps == 0:
+                train_time += time.time() - train_start
+
+                train_metric = unreplicate(train_metric)
+
+                progress_bar.write(
+                    f"Epoch... ({epoch + 1}/{num_epochs} | Loss: {train_metric['loss']}, Learning Rate:"
+                    f" {train_metric['learning_rate']})"
+                )
+
                 model.eval()
+
+
+
                 val_loss = 0
                 for batch in eval_dataloader:
                     with torch.no_grad():
