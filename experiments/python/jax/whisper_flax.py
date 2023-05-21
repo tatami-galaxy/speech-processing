@@ -49,8 +49,13 @@ from transformers import (
 from transformers.utils import send_example_telemetry
 
 import datasets
-from datasets import load_dataset, DatasetDict
-from datasets import Audio
+from datasets import (
+    load_dataset,
+    DatasetDict,
+    Dataset,
+    Audio
+)
+
 import torch
 import evaluate
 from torch.utils.data.dataloader import DataLoader
@@ -133,6 +138,32 @@ class TrainState(train_state.TrainState):
 
     def replicate(self):
         return jax_utils.replicate(self).replace(dropout_rng=shard_prng_key(self.dropout_rng))
+    
+
+def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False, drop_last=True):
+    """
+    Returns batches of size `batch_size` from `dataset`. If `drop_last` is set to `False`, the final batch may be incomplete,
+    and range in size from 1 to `batch_size`. Shuffle batches if `shuffle` is `True`.
+    """
+    if shuffle:
+        batch_idx = jax.random.permutation(rng, len(dataset))
+        batch_idx = np.asarray(batch_idx)
+    else:
+        batch_idx = np.arange(len(dataset))
+
+    if drop_last:
+        steps_per_epoch = len(dataset) // batch_size
+        batch_idx = batch_idx[: steps_per_epoch * batch_size]  # Skip incomplete batch.
+        batch_idx = batch_idx.reshape((steps_per_epoch, batch_size))
+    else:
+        steps_per_epoch = math.ceil(len(dataset) / batch_size)
+        batch_idx = np.array_split(batch_idx, steps_per_epoch)
+
+    for idx in batch_idx:
+        batch = dataset[idx]
+        batch = {k: np.array(v) for k, v in batch.items()}
+
+        yield batch
 
 
 # in Flax, for seq2seq models we need to pass `decoder_input_ids`
@@ -363,6 +394,9 @@ def train(args):
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
             loss, num_labels = loss_fn(logits, labels, batch["decoder_attention_mask"], label_smoothing_factor)
             return loss, num_labels
+        
+        print(batch)
+        quit()
 
         # value_and_grad
         # creates a function that evaluates both fun and the gradient of fun
@@ -439,31 +473,13 @@ def train(args):
     # replicate the train state on each device
     state = state.replicate()
 
-
-    # data collator # fix 
-    data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
-
-    # data loaders
-    train_dataloader = DataLoader(
-        common_voice["train"],
-        shuffle=True,
-        collate_fn=data_collator,
-        batch_size=train_batch_size,
-    )
-    eval_dataloader = DataLoader(
-        common_voice["test"],
-        collate_fn=data_collator,
-        batch_size=eval_batch_size,
-    )
-
-
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(common_voice['train'])}")
     logger.info(f"  Num steps = {args.train_steps}")
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-    ## check these ##
+
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
@@ -477,17 +493,31 @@ def train(args):
     progress_bar = tqdm(range(global_step, args.train_steps), position=0)
 
     while True:
+
         # training time
         train_start = time.time()
-        # train metrics
+        
+        # create sampling rng
+        rng, input_rng = jax.random.split(rng)
         train_metrics = []
 
-        model.train()
+        # Generate an epoch by shuffling sampling indices from the train dataset
+        train_loader = data_loader(input_rng, common_voice["train"], train_batch_size, shuffle=True)
+        steps_per_epoch = len(common_voice["train"]) // train_batch_size
 
-        for batch in train_dataloader:
+        for _ in range(steps_per_epoch):
+
+            batch = next(train_loader)
+            print(len(batch))
+            print(type(batch))
+            quit()
+
             batch = shard(batch)
 
-            state, train_metric = p_train_step(state, batch)
+            state, train_metric = p_train_step(state, batch) ##
+
+            quit()
+
             train_metrics.append(train_metric)
 
             progress_bar.update(1)

@@ -110,6 +110,13 @@ def train(args, accelerator):
             ]
         )
 
+        # select small dataset for testing
+        if args.max_train_samples is not None:
+            common_voice["train"] = common_voice["train"].select(range(args.max_train_samples))
+
+        if args.max_test_samples is not None:
+            common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
+
         # resample to 16kHz
         common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
@@ -334,6 +341,16 @@ def main():
         "--data_lang",
         default='hi',
         type=str,
+    )
+    parser.add_argument(
+        '--max_train_samples',
+        type=int,
+        default=None
+    )
+    parser.add_argument(
+        '--max_test_samples',
+        type=int,
+        default=None
     )
     parser.add_argument(
         "--train_batch_size",
