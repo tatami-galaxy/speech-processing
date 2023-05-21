@@ -19,13 +19,14 @@ import argparse
 from typing import Any, Dict, List, Union, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
-import time
+import time, math
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
 from flax import jax_utils, traverse_util
+from flax.jax_utils import unreplicate
 from flax.training import train_state
 from flax.training.common_utils import (
     onehot,
@@ -84,6 +85,8 @@ class FlaxDataCollatorForWhisperFinetuning:
     max_length: Optional[int] = None
 
     # features -> input_features, decoder_input_ids, labels
+    # whisper does not support masking of the input_features.
+    # by default the silence in the input log mel spectrogram are ignored.
     def __call__(self, features: List[Dict[str, Union[List[int], np.ndarray]]]) -> Dict[str, np.ndarray]:
 
         # split inputs and labels since they have to be of different lengths and need different padding methods
@@ -122,13 +125,11 @@ class FlaxDataCollatorForWhisperFinetuning:
         # replace padding with -100 to ignore loss correctly
         #decoder_inputs = decoder_input_batch["input_ids"].masked_fill(decoder_input_batch.attention_mask.ne(1), -100)
         label_inputs = label_batch["input_ids"]
-        label_attention = label_batch["attention_mask"]
         # if bos token is appended in previous tokenization step,
         # cut bos token here as it's append later anyways
         if (label_inputs[:, 0] == self.processor.tokenizer.bos_token_id).all().item():
             label_inputs = label_inputs[:, 1:]
         batch["labels"] = label_inputs
-        batch["label_attention_mask"] = label_attention
 
         return batch
     
@@ -139,31 +140,6 @@ class TrainState(train_state.TrainState):
     def replicate(self):
         return jax_utils.replicate(self).replace(dropout_rng=shard_prng_key(self.dropout_rng))
     
-
-def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False, drop_last=True):
-    """
-    Returns batches of size `batch_size` from `dataset`. If `drop_last` is set to `False`, the final batch may be incomplete,
-    and range in size from 1 to `batch_size`. Shuffle batches if `shuffle` is `True`.
-    """
-    if shuffle:
-        batch_idx = jax.random.permutation(rng, len(dataset))
-        batch_idx = np.asarray(batch_idx)
-    else:
-        batch_idx = np.arange(len(dataset))
-
-    if drop_last:
-        steps_per_epoch = len(dataset) // batch_size
-        batch_idx = batch_idx[: steps_per_epoch * batch_size]  # Skip incomplete batch.
-        batch_idx = batch_idx.reshape((steps_per_epoch, batch_size))
-    else:
-        steps_per_epoch = math.ceil(len(dataset) / batch_size)
-        batch_idx = np.array_split(batch_idx, steps_per_epoch)
-
-    for idx in batch_idx:
-        batch = dataset[idx]
-        batch = {k: np.array(v) for k, v in batch.items()}
-
-        yield batch
 
 
 # in Flax, for seq2seq models we need to pass `decoder_input_ids`
@@ -354,6 +330,22 @@ def train(args):
         mask=decay_mask_fn,
     )
 
+    # data collator
+    data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
+
+    # data loaders
+    train_loader = DataLoader(
+        common_voice["train"],
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=train_batch_size,
+    )
+    eval_loader = DataLoader(
+        common_voice["test"],
+        collate_fn=data_collator,
+        batch_size=eval_batch_size,
+    )
+
     # setup train state
     # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
     state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw, dropout_rng=dropout_rng)
@@ -394,9 +386,6 @@ def train(args):
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
             loss, num_labels = loss_fn(logits, labels, batch["decoder_attention_mask"], label_smoothing_factor)
             return loss, num_labels
-        
-        print(batch)
-        quit()
 
         # value_and_grad
         # creates a function that evaluates both fun and the gradient of fun
@@ -496,46 +485,22 @@ def train(args):
 
         # training time
         train_start = time.time()
-        
-        # create sampling rng
-        rng, input_rng = jax.random.split(rng)
+        # train metrics
         train_metrics = []
 
-        # Generate an epoch by shuffling sampling indices from the train dataset
-        train_loader = data_loader(input_rng, common_voice["train"], train_batch_size, shuffle=True)
-        steps_per_epoch = len(common_voice["train"]) // train_batch_size
-
-        for _ in range(steps_per_epoch):
-
-            batch = next(train_loader)
-            print(len(batch))
-            print(type(batch))
-            quit()
-
-            batch = shard(batch)
-
-            state, train_metric = p_train_step(state, batch) ##
-
-            quit()
-
+        for batch in train_loader:
+            # input_features, decoder_input_ids, decoder_attention_mask, labels
+            batch = shard(batch.data)
+            state, train_metric = p_train_step(state, batch) 
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
 
 
             if (global_step + 1) % args.eval_steps == 0:
+                
                 train_time += time.time() - train_start
-
                 train_metric = unreplicate(train_metric)
-
-                progress_bar.write(
-                    f"Epoch... ({epoch + 1}/{num_epochs} | Loss: {train_metric['loss']}, Learning Rate:"
-                    f" {train_metric['learning_rate']})"
-                )
-
-                model.eval()
-
-
 
                 val_loss = 0
                 for batch in eval_dataloader:
