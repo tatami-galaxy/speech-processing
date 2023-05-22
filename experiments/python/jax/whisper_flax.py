@@ -376,8 +376,8 @@ def train(args):
         return loss, num_labels
     
 
-    # Define gradient update step fn
-    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels, label_attention_mask
+    # define gradient update step fn
+    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def train_step(state, batch, label_smoothing_factor=0.0):
         dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
 
@@ -410,7 +410,7 @@ def train(args):
         return new_state, metrics
 
 
-    # Define eval fn
+    # define eval fn
     def eval_step(params, batch, label_smoothing_factor=0.0):
         labels = batch.pop("labels")
         logits = model(**batch, params=params, train=False)[0]
@@ -426,7 +426,7 @@ def train(args):
         return metrics
     
 
-    # Define generation function
+    # define generation function
     max_length = (
         args.generation_max_length if args.generation_max_length is not None else model.config.max_length
     )
@@ -483,9 +483,7 @@ def train(args):
 
     while True:
 
-        # training time
         train_start = time.time()
-        # train metrics
         train_metrics = []
 
         for batch in train_loader:
@@ -496,17 +494,22 @@ def train(args):
 
             progress_bar.update(1)
 
-
             if (global_step + 1) % args.eval_steps == 0:
                 
                 train_time += time.time() - train_start
+                eval_metrics = []
+
                 train_metric = unreplicate(train_metric)
+                progress_bar.write(
+                    f"Step ({global_step + 1} | Loss: {train_metric['loss']}, Learning Rate:"
+                    f" {train_metric['learning_rate']})"
+                )
 
                 val_loss = 0
-                for batch in eval_dataloader:
-                    with torch.no_grad():
-                        outputs = model(**batch)
-                        val_loss += outputs.loss.item()
+                for batch in eval_loader:
+                    batch = shard(batch.data)
+                    metrics = p_eval_step(state.params, batch)
+                    eval_metrics.append(metrics)
 
                     # compute metric
                     ## check cer calculation ##
@@ -519,6 +522,9 @@ def train(args):
                     # we do not want to group tokens when computing the metrics
                     references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     metric.add_batch(predictions=predictions, references=references)
+
+                    # append metrics after CER calculation
+                    eval_metrics.append(metrics)
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
