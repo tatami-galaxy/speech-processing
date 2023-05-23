@@ -37,6 +37,7 @@ from flax.training.common_utils import (
 
 import transformers
 from transformers import (
+    GenerationConfig,
     WhisperFeatureExtractor,
     WhisperTokenizer,
     WhisperProcessor,
@@ -75,6 +76,9 @@ send_example_telemetry("run_summarization", framework="flax")
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
+
+# constants
+LANG_TO_ID = {"hindi" : "<|hi|>"}
 
 
 
@@ -168,6 +172,7 @@ def train(args):
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
+    
 
     # model
     # FlaxWhisperForConditionalGeneration uses the FlaxWhisperPreTrainedModel forward method,
@@ -185,8 +190,7 @@ def train(args):
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     model.config.suppress_tokens = []
     if model.config.decoder_start_token_id is None:
-        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
-    
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")  
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
@@ -437,22 +441,28 @@ def train(args):
     )
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
+    # generation config
+    generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
+    gen_dict = generation_config.to_dict()
+    # add attributes to genration_config
+    # generation_config does not have "langauge", but generate() tries to use it
+    # can be empty dict here since being set in generate_step
+    gen_dict["language"] = LANG_TO_ID[args.model_lang]
+    # reload with new attributes
+    generation_config = GenerationConfig.from_dict(gen_dict)
 
     # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def generate_step(params, batch):
-        print(model.generation_config)
-        quit()
         model.params = params
         output_ids = model.generate(
             batch["input_features"],
+            generation_config=generation_config,
             task=args.task,
-            language=args.model_lang,
+            language=LANG_TO_ID[args.model_lang],  # set lang here
             is_multilingual=True,
             **gen_kwargs
-        )
-        
-        print(output_ids.sequences)
-        quit()
+        )   
+        return output_ids.sequences
 
     # create parallel version of the train and eval step
     # applying pmap() to a function will compile the function with XLA (similarly to jit()),
@@ -496,6 +506,7 @@ def train(args):
         train_start = time.time()
         train_metrics = []
 
+        # train
         for batch in train_loader:
             # input_features, decoder_input_ids, decoder_attention_mask, labels
             batch = shard(batch.data)
@@ -504,6 +515,9 @@ def train(args):
 
             progress_bar.update(1)
 
+            # eval
+            # eval_loss with eval_step
+            # cer with generate_step
             #if (global_step + 1) % args.eval_steps == 0:
             if True:
                 
@@ -522,7 +536,7 @@ def train(args):
                     batch = shard(batch.data)
                     metrics = p_eval_step(state.params, batch) # dict {'loss' : loss}
 
-                    p_generate_step(state.params, batch)
+                    p_generate_step(state.params, batch) ##
 
                     # compute metric
                     ## check cer calculation ##
