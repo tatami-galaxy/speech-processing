@@ -438,16 +438,21 @@ def train(args):
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
 
+    # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def generate_step(params, batch):
+        print(model.generation_config)
+        quit()
         model.params = params
         output_ids = model.generate(
-            batch["input_ids"],
+            batch["input_features"],
             task=args.task,
             language=args.model_lang,
             is_multilingual=True,
             **gen_kwargs
         )
-        return output_ids.sequences
+        
+        print(output_ids.sequences)
+        quit()
 
     # create parallel version of the train and eval step
     # applying pmap() to a function will compile the function with XLA (similarly to jit()),
@@ -515,7 +520,9 @@ def train(args):
                 eval_bar = tqdm(range(eval_steps), position=1)
                 for batch in eval_loader:
                     batch = shard(batch.data)
-                    metrics = p_eval_step(state.params, batch)
+                    metrics = p_eval_step(state.params, batch) # dict {'loss' : loss}
+
+                    p_generate_step(state.params, batch)
 
                     # compute metric
                     ## check cer calculation ##
@@ -533,9 +540,12 @@ def train(args):
                     eval_metrics.append(metrics)
                     eval_bar.update(1)
 
-                # get eval metrics
-                eval_metrics = get_metrics(eval_metrics)
-                eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)
+                # get metrics
+                train_metrics = get_metrics(train_metrics)  # dict
+                train_metrics = jax.tree_util.tree_map(jnp.mean, train_metrics)  # dict
+                print(train_metrics)
+                eval_metrics = get_metrics(eval_metrics)  # dict
+                eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
                 print(eval_metrics)
                 quit()
 
