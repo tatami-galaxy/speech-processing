@@ -31,7 +31,8 @@ from flax.training import train_state
 from flax.training.common_utils import (
     onehot,
     shard,
-    shard_prng_key
+    shard_prng_key,
+    get_metrics
 )
 
 import transformers
@@ -290,6 +291,10 @@ def train(args):
     train_batch_size = int(args.per_device_train_batch_size) * jax.device_count()
     eval_batch_size = int(args.per_device_eval_batch_size) * jax.device_count()
 
+    # train steps given in args
+    # eval steps
+    eval_steps = math.ceil(len(common_voice["test"]) / eval_batch_size)
+
     # create learning rate schedule
     warmup_fn = optax.linear_schedule(
         init_value=0.0, end_value=args.learning_rate, transition_steps=args.warmup_steps
@@ -470,7 +475,7 @@ def train(args):
 
 
     global_step = 0  # tracks total steps
-    total_loss = 0  # total loss before each eval
+    train_time = 0
 
     # load from checkpoint (flax -> orbax)
     # add loading from checkpoint code here #
@@ -494,7 +499,8 @@ def train(args):
 
             progress_bar.update(1)
 
-            if (global_step + 1) % args.eval_steps == 0:
+            #if (global_step + 1) % args.eval_steps == 0:
+            if True:
                 
                 train_time += time.time() - train_start
                 eval_metrics = []
@@ -505,26 +511,34 @@ def train(args):
                     f" {train_metric['learning_rate']})"
                 )
 
-                val_loss = 0
+                # eval progress bar
+                eval_bar = tqdm(range(eval_steps), position=1)
                 for batch in eval_loader:
                     batch = shard(batch.data)
                     metrics = p_eval_step(state.params, batch)
-                    eval_metrics.append(metrics)
 
                     # compute metric
                     ## check cer calculation ##
-                    pred_logits = outputs.logits
-                    pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    metric.add_batch(predictions=predictions, references=references)
+                    #pred_logits = outputs.logits
+                    #pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
+                    #predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
+                    ##predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
+                    #references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
+                    #predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    ## we do not want to group tokens when computing the metrics
+                    #references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    #metric.add_batch(predictions=predictions, references=references)
 
                     # append metrics after CER calculation
                     eval_metrics.append(metrics)
+                    eval_bar.update(1)
+
+                # get eval metrics
+                eval_metrics = get_metrics(eval_metrics)
+                eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)
+                print(eval_metrics)
+                quit()
+
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
