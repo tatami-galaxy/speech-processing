@@ -269,6 +269,22 @@ def train(args):
     # cer metric
     metric = evaluate.load("cer")
 
+    def compute_metrics(preds, labels):
+        print(len(preds))
+        print(preds[0].shape)
+        print(preds[0])
+        print(len(labels))
+        print(labels[0].shape)
+        print(labels[0])
+
+        predictions = processor.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        references = processor.batch_decode(labels, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        print(predictions)
+        print(references)
+
+        quit()
+
+
     # enable tensorboard only on the master node
     has_tensorboard = is_tensorboard_available()
     if has_tensorboard and jax.process_index() == 0:
@@ -523,6 +539,8 @@ def train(args):
                 
                 train_time += time.time() - train_start
                 eval_metrics = []
+                eval_preds = []
+                eval_labels = []
 
                 train_metric = unreplicate(train_metric)
                 progress_bar.write(
@@ -535,8 +553,15 @@ def train(args):
                 for batch in eval_loader:
                     batch = shard(batch.data)
                     metrics = p_eval_step(state.params, batch) # dict {'loss' : loss}
+                    eval_metrics.append(metrics)
 
-                    p_generate_step(state.params, batch) ##
+                    generated_ids = p_generate_step(state.params, batch)
+                    preds = jax.device_get(generated_ids.reshape(-1, gen_kwargs["max_length"]))  # ndarray
+                    # labels padded to batch seq length, pred padded to max gen length
+                    eval_preds.extend(preds)  # b, gen_len
+                    eval_labels.extend(batch["labels"][0])  # b, seq_len  
+
+                    eval_bar.update(1)
 
                     # compute metric
                     ## check cer calculation ##
@@ -550,18 +575,16 @@ def train(args):
                     #references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     #metric.add_batch(predictions=predictions, references=references)
 
-                    # append metrics after CER calculation
-                    eval_metrics.append(metrics)
-                    eval_bar.update(1)
+                # eval metrics
 
                 # get metrics
                 train_metrics = get_metrics(train_metrics)  # dict
                 train_metrics = jax.tree_util.tree_map(jnp.mean, train_metrics)  # dict
-                print(train_metrics)
+
                 eval_metrics = get_metrics(eval_metrics)  # dict
                 eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
-                print(eval_metrics)
-                quit()
+                
+                compute_metrics(eval_preds, eval_labels)
 
 
                 cer_result = metric.compute()
