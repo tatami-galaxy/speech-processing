@@ -169,6 +169,9 @@ def train(args):
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
+    print(tokenizer.encoder.keys())
+    quit()
+
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
@@ -187,13 +190,21 @@ def train(args):
         seed=args.seed,
         dtype=getattr(jnp, args.dtype)
     )
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
-    model.config.suppress_tokens = []
+    #model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
+    #model.config.suppress_tokens = []
+
+    #model.config.suppress_tokens.extend(tokenizer.encode('a', add_special_tokens=False))
+    #print("model config supress tokens")
+    #print(model.config.suppress_tokens)
+
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")  
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
+
+    #print('config supress tokens :')
+    #print(model.config.suppress_tokens)
 
     # save config maybe?
 
@@ -279,8 +290,10 @@ def train(args):
 
         predictions = processor.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         references = processor.batch_decode(labels, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        print(predictions)
-        print(references)
+        print(predictions[1])
+        print(references[1])
+        print(len(predictions[1]))
+        print(len(references[1]))
 
         quit()
 
@@ -464,8 +477,16 @@ def train(args):
     # generation_config does not have "langauge", but generate() tries to use it
     # can be empty dict here since being set in generate_step
     gen_dict["language"] = LANG_TO_ID[args.model_lang]
+
+    gen_dict['suppress_tokens'].extend(tokenizer.encode('a', add_special_tokens=False))
+    # Box of his karnaya hero bana horar, Laila Majnu, Pertan Peach
+    # Box of his karnaya hero bana horar, Lailam Ajnu, Pertan Peach
+
     # reload with new attributes
     generation_config = GenerationConfig.from_dict(gen_dict)
+
+    print("generation config suppress tokens")
+    print(generation_config.suppress_tokens)
 
     # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def generate_step(params, batch):
