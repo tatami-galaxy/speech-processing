@@ -559,13 +559,12 @@ def train(args):
             # eval
             # eval_loss with eval_step
             # cer with generate_step
-            #if (global_step + 1) % args.eval_steps == 0:
-            if True:
-                
+            if (global_step + 1) % args.eval_steps == 0:
                 train_time += time.time() - train_start
                 eval_metrics = []
                 eval_preds = []
                 eval_labels = []
+                result_dict = {}
 
                 train_metric = unreplicate(train_metric)
                 progress_bar.write(
@@ -588,50 +587,30 @@ def train(args):
 
                     eval_bar.update(1)
 
-                # get metrics
+                # train metrics (loss)
                 train_metrics = get_metrics(train_metrics)  # dict
                 train_metrics = jax.tree_util.tree_map(jnp.mean, train_metrics)  # dict
-
+                # eval metrics (loss)
                 eval_metrics = get_metrics(eval_metrics)  # dict
                 eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
-                print(eval_metrics)
-
+                # cer
                 cer_result = compute_metrics(eval_preds, eval_labels)
                 eval_metrics.update(cer_result)
+                
+                # collect results together
+                result_dict['train_time'] = train_time
+                result_dict['train_loss'] = train_metrics['loss']
+                result_dict['eval_loss'] = eval_metrics['loss']
+                result_dict['cer'] = eval_metrics['cer']
 
+                # write to terminal and tensorboard
+                for key, val in result_dict.items():
+                    print('{} : {}'.format(key, val))
+                if has_tensorboard and jax.process_index() == 0:
+                    for key, val in result_dict.items():
+                        summary_writer.scalar(key, val, global_step + 1)
 
-
-                cer_result = metric.compute()
-                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
-                accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
-                accelerator.log({
-                    "cer": cer_result,
-                    # might be incorrect
-                    "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    #"step": global_step,
-                    "val_loss": val_loss / len(eval_dataloader)
-                },
-                step=global_step + 1,
-                )
-
-                # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
-                # saved to folders named `checkpoint-{global_step}`
-                # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
-                # if mixed precision was used, will also save a "scalar.bin" file
-                output_dir = f"checkpoint-{global_step + 1}"
-                if args.output_dir is not None:
-                    output_dir = os.path.join(args.output_dir, output_dir)
-                    accelerator.save_state(output_dir)
-                    # save config
-                    accelerator.wait_for_everyone()
-                    unwrapped_model = accelerator.unwrap_model(model)
-                    #model.config.save_pretrained(output_dir)
-                    unwrapped_model.config.save_pretrained(
-                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-                    )
-
-                model.train()
-                total_loss = 0
+                # save the model, optimizer, lr_scheduler, and seed states 
 
             global_step += 1
 
