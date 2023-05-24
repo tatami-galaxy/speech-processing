@@ -2,7 +2,7 @@
 transformers
 datasets
 evaluate
-accelerate
+#accelerate
 jiwer
 librosa
 soundfile
