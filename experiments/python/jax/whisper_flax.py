@@ -44,9 +44,7 @@ from transformers import (
     FlaxWhisperForConditionalGeneration,
 )
 from transformers import (
-    AdamW,
     set_seed,
-    get_linear_schedule_with_warmup,
     is_tensorboard_available,
 )
 from transformers.utils import send_example_telemetry
@@ -55,11 +53,9 @@ import datasets
 from datasets import (
     load_dataset,
     DatasetDict,
-    Dataset,
     Audio
 )
 
-import torch
 import evaluate
 from torch.utils.data.dataloader import DataLoader
 

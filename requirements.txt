@@ -1,9 +1,12 @@
-#pytorch
+torch
+torchvision
+torchaudio
 transformers
 datasets
 evaluate
-#accelerate
+accelerate
 jiwer
 librosa
 soundfile
 tensorboard
+gdown
