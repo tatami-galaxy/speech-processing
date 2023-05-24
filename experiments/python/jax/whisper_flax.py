@@ -41,7 +41,7 @@ from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
     WhisperProcessor,
-    FlaxWhisperForConditionalGeneration
+    FlaxWhisperForConditionalGeneration,
 )
 from transformers import (
     AdamW,
@@ -79,7 +79,6 @@ while root.split('/')[-1] != 'speech-processing':
 
 # constants
 LANG_TO_ID = {"hindi" : "<|hi|>"}
-
 
 
 @dataclass
@@ -161,16 +160,12 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
 
     shifted_input_ids = np.where(shifted_input_ids == -100, pad_token_id, shifted_input_ids)
     return shifted_input_ids
-    
 
 
 def train(args):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
-
-    print(tokenizer.encoder.keys())
-    quit()
 
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
@@ -276,27 +271,26 @@ def train(args):
     ) #, num_proc=2)
 
 
-
     # cer metric
-    metric = evaluate.load("cer")
+    cer = evaluate.load("cer")
 
     def compute_metrics(preds, labels):
-        print(len(preds))
-        print(preds[0].shape)
-        print(preds[0])
-        print(len(labels))
-        print(labels[0].shape)
-        print(labels[0])
-
-        predictions = processor.batch_decode(preds, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        references = processor.batch_decode(labels, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        print(predictions[1])
-        print(references[1])
-        print(len(predictions[1]))
-        print(len(references[1]))
-
-        quit()
-
+        result = {}
+        predictions = processor.batch_decode(
+            preds,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+        references = processor.batch_decode(
+            labels,
+            group_tokens=False,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+        # compute cer
+        result["cer"] = cer.compute(predictions=predictions, references=references)
+        return result
+        
 
     # enable tensorboard only on the master node
     has_tensorboard = is_tensorboard_available()
@@ -464,29 +458,39 @@ def train(args):
         return metrics
     
 
-    # define generation function
+    # generation functions
+
+    def make_generation_config(supress_en=False):
+
+        generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
+        gen_dict = generation_config.to_dict()
+        # add attributes to genration_config
+        # generation_config does not have "langauge", but generate() tries to use it
+        # can be empty dict here since being set in generate_step
+        gen_dict["language"] = LANG_TO_ID[args.model_lang]
+        if supress_en:
+            # en tokens to suppress from multilingual vocab
+            en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
+            suppress_en_list = []
+            for key in en_tokenizer.encoder.keys():
+                if key in tokenizer.encoder.keys() and key.isalpha():
+                    suppress_en_list.append(key)
+            # supress english tokens
+            gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
+
+        # reload with new attributes
+        generation_config = GenerationConfig.from_dict(gen_dict)
+
+        return generation_config
+
+
     max_length = (
         args.generation_max_length if args.generation_max_length is not None else model.config.max_length
     )
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
     # generation config
-    generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
-    gen_dict = generation_config.to_dict()
-    # add attributes to genration_config
-    # generation_config does not have "langauge", but generate() tries to use it
-    # can be empty dict here since being set in generate_step
-    gen_dict["language"] = LANG_TO_ID[args.model_lang]
-
-    gen_dict['suppress_tokens'].extend(tokenizer.encode('a', add_special_tokens=False))
-    # Box of his karnaya hero bana horar, Laila Majnu, Pertan Peach
-    # Box of his karnaya hero bana horar, Lailam Ajnu, Pertan Peach
-
-    # reload with new attributes
-    generation_config = GenerationConfig.from_dict(gen_dict)
-
-    print("generation config suppress tokens")
-    print(generation_config.suppress_tokens)
+    generation_config = make_generation_config(supress_en=False)
 
     # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     def generate_step(params, batch):
@@ -584,28 +588,17 @@ def train(args):
 
                     eval_bar.update(1)
 
-                    # compute metric
-                    ## check cer calculation ##
-                    #pred_logits = outputs.logits
-                    #pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    #predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    ##predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    #references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    #predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    ## we do not want to group tokens when computing the metrics
-                    #references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    #metric.add_batch(predictions=predictions, references=references)
-
-                # eval metrics
-
                 # get metrics
                 train_metrics = get_metrics(train_metrics)  # dict
                 train_metrics = jax.tree_util.tree_map(jnp.mean, train_metrics)  # dict
 
                 eval_metrics = get_metrics(eval_metrics)  # dict
                 eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
-                
-                compute_metrics(eval_preds, eval_labels)
+                print(eval_metrics)
+
+                cer_result = compute_metrics(eval_preds, eval_labels)
+                eval_metrics.update(cer_result)
+
 
 
                 cer_result = metric.compute()
