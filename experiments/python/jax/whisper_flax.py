@@ -538,10 +538,10 @@ def train(args):
     # main progress bar
     progress_bar = tqdm(range(global_step, args.train_steps), position=0)
 
-    while True:
+    train_start = time.time()
+    train_metrics = []
 
-        train_start = time.time()
-        train_metrics = []
+    while True:
 
         # train
         for batch in train_loader:
@@ -609,6 +609,7 @@ def train(args):
                 # save the model, optimizer, lr_scheduler, and seed states 
 
             global_step += 1
+            train_metrics = []
 
             if global_step >= args.train_steps : return
 
