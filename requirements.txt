@@ -10,3 +10,4 @@ librosa
 soundfile
 tensorboard
 gdown
+flax
