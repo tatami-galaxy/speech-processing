@@ -2,7 +2,6 @@ Speech Recognition with sparse models
 
 ## Installation
 
-1. jax 
 build jax from https://jax.readthedocs.io/en/latest/developer.html
 
 or
@@ -19,7 +18,7 @@ from jax.lib import xla_bridge
 print(xla_bridge.get_backend().platform)
 ```
 
-2. clone this repo and install dependencies
+clone this repo and install dependencies
 
 ```
 git clone https://github.com/tatami-galaxy/speech-processing.git
