@@ -2,13 +2,7 @@ Speech Recognition with sparse models
 
 ## Installation
 
-build jax from https://jax.readthedocs.io/en/latest/developer.html
-
-or
-
-```
-pip install --upgrade "jax[cuda11_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-```
+install or build jax from https://github.com/google/jax#installation
 
 
 check installation : 
