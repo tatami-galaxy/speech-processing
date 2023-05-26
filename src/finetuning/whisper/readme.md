@@ -30,3 +30,6 @@ export HF_DATASETS_CACHE="/media/ujan/52850d32-e9c9-47e3-8370-07c2aad12eb1/datas
 
 python asr_seq2seq.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/wav2vec2-xls-r-300m --data_dir /home/ujan/Downloads/aishell1 --do_eval ---predict_with_generate --fp16
 
+
+# eval whisper
+python asr_seq2seq.py --model_name_or_path /home/dysl-ai/Documents/ASR/speech-processing/models/checkpoint-12000/ --data_dir /home/dysl-ai/Documents/ASR/speech-processing/src/finetuning/whisper/chinese_movies_dataset --do_eval --predict_with_generate --fp16 --per_device_eval_batch_size 4
