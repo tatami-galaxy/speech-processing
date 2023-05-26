@@ -1,4 +1,11 @@
-Speech Recognition with sparse models
+Speech Recognition with Sparse Models
+
+## Setup Environment
+
+```
+apt update && apt upgrade
+apt install tmux vim
+```
 
 ## Installation
 
