@@ -10,7 +10,6 @@
 
 """
 
-import os
 from os.path import dirname, abspath
 from pathlib import Path
 from functools import partial
@@ -76,6 +75,8 @@ while root.split('/')[-1] != 'speech-processing':
 # constants
 LANG_TO_ID = {"hindi" : "<|hi|>"}
 
+## rewrite dataloader without torch
+## separate requirememnt files for jax, pytorch
 
 @dataclass
 class FlaxDataCollatorForWhisperFinetuning:
