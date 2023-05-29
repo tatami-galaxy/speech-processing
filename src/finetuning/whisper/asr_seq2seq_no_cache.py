@@ -186,7 +186,7 @@ def main():
     argp.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=32, # None
+        default=32, # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     argp.add_argument(

@@ -346,6 +346,14 @@ def train(args, accelerator):
     total_s_loss = 0  # total student loss before each eval
     total_d_loss = 0  # total distil loss before each eval
 
+    accelerator.log({
+        "train_batch_size": args.train_batch_size,
+        "eval_batch_size": args.eval_batch_size,
+        "gpus": accelerator.state.num_processes
+        },
+        step=global_step + 1,
+    )
+
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
@@ -582,7 +590,7 @@ def main():
     parser.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=32, # None
+        default=None, # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
@@ -609,7 +617,7 @@ def main():
     )
     parser.add_argument(
         "--train_batch_size",
-        default=32,
+        default=32, # 16
         type=int,
     )
     parser.add_argument(

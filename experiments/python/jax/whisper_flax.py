@@ -26,7 +26,11 @@ import jax.numpy as jnp
 import optax
 from flax import jax_utils, traverse_util
 from flax.jax_utils import unreplicate
-from flax.training import train_state
+import orbax
+from flax.training import (
+    train_state,
+    orbax_utils
+)
 from flax.training.common_utils import (
     onehot,
     shard,
@@ -520,6 +524,12 @@ def train(args):
     # replicate the train state on each device
     state = state.replicate()
 
+    # checkpointing
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
+    checkpoint_manager = orbax.checkpoint.CheckpointManager(
+        args.output_dir, orbax_checkpointer, options)
+
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(common_voice['train'])}")
     logger.info(f"  Num steps = {args.train_steps}")
@@ -529,9 +539,6 @@ def train(args):
 
     global_step = 0  # tracks total steps
     train_time = 0
-
-    # load from checkpoint (flax -> orbax)
-    # add loading from checkpoint code here #
 
 
     # Training
@@ -608,6 +615,8 @@ def train(args):
                         summary_writer.scalar(key, val, global_step + 1)
 
                 # save the model, optimizer, lr_scheduler, and seed states 
+                ckpt = {'model': state, 'config': model.config}
+
 
             global_step += 1
             train_metrics = []
@@ -736,9 +745,14 @@ def main():
         type=int,
     )
     parser.add_argument(
+        "--max_to_keep",
+        default=3,
+        type=int,
+    )
+    parser.add_argument(
         '--num_workers',
         type=int,
-        default=None, # None
+        default=None, # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
