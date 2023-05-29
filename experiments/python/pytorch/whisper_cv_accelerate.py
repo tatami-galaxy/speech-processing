@@ -25,7 +25,7 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import WhisperForConditionalGeneration
+from transformers import WhisperForConditionalGeneration, GenerationConfig
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_scheduler, set_seed
@@ -200,6 +200,39 @@ def train(args, accelerator):
             train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
             global_step = steps_completed
 
+    
+    def make_generation_config(supress_en=False):
+
+        generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
+        gen_dict = generation_config.to_dict()
+        # add attributes to genration_config
+        # generation_config does not have "langauge", but generate() tries to use it
+        # can be empty dict here since being set in generate_step
+        gen_dict["language"] = args.model_lang
+        if supress_en:
+            # en tokens to suppress from multilingual vocab
+            en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
+            suppress_en_list = []
+            for key in en_tokenizer.encoder.keys():
+                if key in tokenizer.encoder.keys() and key.isalpha():
+                    suppress_en_list.append(key)
+            # supress english tokens
+            gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
+
+        # reload with new attributes
+        generation_config = GenerationConfig.from_dict(gen_dict)
+
+        return generation_config
+
+
+    max_length = (
+        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
+    )
+    num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
+    gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
+    # generation config
+    generation_config = make_generation_config()
+
 
     # Training
 
@@ -222,7 +255,6 @@ def train(args, accelerator):
 
             progress_bar.update(1)
 
-
             if (global_step + 1) % args.eval_steps == 0:
                 model.eval()
                 val_loss = 0
@@ -232,16 +264,17 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
-                    ## check cer calculation ##
-                    pred_logits = outputs.logits
-                    pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
+                    ## generate and calculate cer ##
+
+                    #pred_logits = outputs.logits
+                    #pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
+                    #predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
                     #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    #references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
+                    #predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    metric.add_batch(predictions=predictions, references=references)
+                    #references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    #metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
@@ -392,7 +425,16 @@ def main():
         default='fp16',
         type=str,
     )
-
+    parser.add_argument(
+        '--generation_max_length',
+        type=int,
+        default=225
+    )
+    parser.add_argument(
+            '--num_beams',
+            type=int,
+            default=1
+        )
 
 
     # parse args

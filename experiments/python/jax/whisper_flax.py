@@ -10,6 +10,7 @@
 
 """
 
+import os
 from os.path import dirname, abspath
 from pathlib import Path
 from functools import partial
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Union, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
 import time, math
+import shutil
 
 import numpy as np
 import jax
@@ -524,15 +526,6 @@ def train(args):
     # replicate the train state on each device
     state = state.replicate()
 
-    # init checkpointer
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
-    checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        args.output_dir, orbax_checkpointer, options)
-    # load from previous checkpoint
-    
-
-
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(common_voice['train'])}")
     logger.info(f"  Num steps = {args.train_steps}")
@@ -541,6 +534,30 @@ def train(args):
 
     global_step = 0  # tracks total steps
     train_time = 0
+
+    # init checkpointer
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
+    # checkpoint manager
+    checkpoint_manager = orbax.checkpoint.CheckpointManager(
+        args.output_dir,
+        orbax_checkpointer,
+        options
+    )    
+    # load from previous checkpoint
+    if not args.overwrite_output_dir:
+        if os.path.isdir(args.output_dir):
+            print('checkpoints found. restoring latest')
+            # get latest checkpoint
+            step = checkpoint_manager.latest_step()
+            checkpoint_manager.restore(step)
+            global_step = step
+        else:
+            raise ValueError(
+                f"no checkpoint found. set overwrite_output_dir to train from scratch"
+            )
+    # else output_dir cleared in main
+    else: print("training from scratch")
 
     # write fixed hyoerparameters to tensorboard
     if has_tensorboard and jax.process_index() == 0:
@@ -624,7 +641,7 @@ def train(args):
                 # save the model, optimizer, lr_scheduler, and seed states 
                 ckpt = {'model': state, 'config': model.config}
                 save_args = orbax_utils.save_args_from_target(ckpt)
-                checkpoint_manager.save(global_step, ckpt, save_kwargs={'save_args': save_args})
+                checkpoint_manager.save(global_step + 1, ckpt, save_kwargs={'save_args': save_args})
 
 
             global_step += 1
@@ -688,10 +705,9 @@ def main():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
+        "--overwrite_output_dir",
+        action="store_true",
+        help="whether to overwrite output dir and train from scratch"
     )
     parser.add_argument(
         "--skip_steps",
@@ -830,6 +846,13 @@ def main():
         data_str = args.data_dir.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_jax_'+data_str
     print('output directory set to : {}'.format(args.output_dir))
+
+    # if overwrite_output_dir
+    # remove any existing checkpoints from the last run
+    if args.overwrite_output_dir:
+        if os.path.exists(args.output_dir):
+            shutil.rmtree(args.output_dir)  
+
     # check if model path is None
     if args.model_name_or_path is None:
         raise ValueError(
