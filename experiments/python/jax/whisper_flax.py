@@ -524,11 +524,14 @@ def train(args):
     # replicate the train state on each device
     state = state.replicate()
 
-    # checkpointing
+    # init checkpointer
     orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
     options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
     checkpoint_manager = orbax.checkpoint.CheckpointManager(
         args.output_dir, orbax_checkpointer, options)
+    # load from previous checkpoint
+    
+
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(common_voice['train'])}")
@@ -536,9 +539,13 @@ def train(args):
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-
     global_step = 0  # tracks total steps
     train_time = 0
+
+    # write fixed hyoerparameters to tensorboard
+    if has_tensorboard and jax.process_index() == 0:
+        summary_writer.scalar("train_batch_size", train_batch_size, global_step + 1)
+        summary_writer.scalar("eval_batch_size", eval_batch_size, global_step + 1)
 
 
     # Training
@@ -616,6 +623,8 @@ def train(args):
 
                 # save the model, optimizer, lr_scheduler, and seed states 
                 ckpt = {'model': state, 'config': model.config}
+                save_args = orbax_utils.save_args_from_target(ckpt)
+                checkpoint_manager.save(global_step, ckpt, save_kwargs={'save_args': save_args})
 
 
             global_step += 1
@@ -746,7 +755,7 @@ def main():
     )
     parser.add_argument(
         "--max_to_keep",
-        default=3,
+        default=5,
         type=int,
     )
     parser.add_argument(
