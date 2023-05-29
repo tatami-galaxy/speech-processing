@@ -10,6 +10,7 @@
 
 """
 
+import os
 from os.path import dirname, abspath
 from pathlib import Path
 from functools import partial
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Union, Optional
 from dataclasses import dataclass
 from tqdm.auto import tqdm
 import time, math
+import shutil
 
 import numpy as np
 import jax
@@ -26,7 +28,11 @@ import jax.numpy as jnp
 import optax
 from flax import jax_utils, traverse_util
 from flax.jax_utils import unreplicate
-from flax.training import train_state
+import orbax
+from flax.training import (
+    train_state,
+    orbax_utils
+)
 from flax.training.common_utils import (
     onehot,
     shard,
@@ -50,13 +56,13 @@ from transformers.utils import send_example_telemetry
 
 import datasets
 from datasets import (
+    Dataset,
     load_dataset,
     DatasetDict,
     Audio
 )
 
 import evaluate
-from torch.utils.data.dataloader import DataLoader
 
 
 logger = logging.getLogger(__name__)
@@ -78,61 +84,6 @@ LANG_TO_ID = {"hindi" : "<|hi|>"}
 ## rewrite dataloader without torch
 ## separate requirememnt files for jax, pytorch
 
-@dataclass
-class FlaxDataCollatorForWhisperFinetuning:
-    processor: Any
-    padding: Union[bool, str] = 'longest'
-    pad_to_multiple_of: Optional[int] = None
-    max_length: Optional[int] = None
-
-    # features -> input_features, decoder_input_ids, labels
-    # whisper does not support masking of the input_features.
-    # by default the silence in the input log mel spectrogram are ignored.
-    def __call__(self, features: List[Dict[str, Union[List[int], np.ndarray]]]) -> Dict[str, np.ndarray]:
-
-        # split inputs and labels since they have to be of different lengths and need different padding methods
-        # first treat the audio inputs by simply returning torch tensors
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
-        batch = self.processor.feature_extractor.pad(  # feature extractor pad
-            input_features,
-            padding=self.padding,
-            return_tensors="np")
-
-        # get the tokenized decoder_input_ids
-        decoder_features = [{"input_ids": feature["decoder_input_ids"][0]} for feature in features]
-        # pad the labels to max length
-        decoder_input_batch = self.processor.tokenizer.pad(  # tokenizer pad since text
-            decoder_features,
-            padding=self.padding,
-            return_tensors="np")    
-        # replace padding with -100 to ignore loss correctly
-        #decoder_inputs = decoder_input_batch["input_ids"].masked_fill(decoder_input_batch.attention_mask.ne(1), -100)
-        decoder_inputs = decoder_input_batch["input_ids"]
-        decoder_attention = decoder_input_batch["attention_mask"]
-        # if bos token is appended in previous tokenization step,
-        # cut bos token here as it's append later anyways
-        if (decoder_inputs[:, 0] == self.processor.tokenizer.bos_token_id).all().item():
-            decoder_inputs = decoder_inputs[:, 1:]
-        batch["decoder_input_ids"] = decoder_inputs
-        batch["decoder_attention_mask"] = decoder_attention
-        
-        # get the tokenized labels
-        label_features = [{"input_ids": feature["labels"][0]} for feature in features]
-        # pad the labels to max length
-        label_batch = self.processor.tokenizer.pad(  # tokenizer pad since text
-            label_features,
-            padding=self.padding,
-            return_tensors="np")    
-        # replace padding with -100 to ignore loss correctly
-        #decoder_inputs = decoder_input_batch["input_ids"].masked_fill(decoder_input_batch.attention_mask.ne(1), -100)
-        label_inputs = label_batch["input_ids"]
-        # if bos token is appended in previous tokenization step,
-        # cut bos token here as it's append later anyways
-        if (label_inputs[:, 0] == self.processor.tokenizer.bos_token_id).all().item():
-            label_inputs = label_inputs[:, 1:]
-        batch["labels"] = label_inputs
-
-        return batch
     
 
 class TrainState(train_state.TrainState):
@@ -140,6 +91,32 @@ class TrainState(train_state.TrainState):
 
     def replicate(self):
         return jax_utils.replicate(self).replace(dropout_rng=shard_prng_key(self.dropout_rng))
+    
+
+def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False, drop_last=True):
+    """
+    Returns batches of size `batch_size` from `dataset`. If `drop_last` is set to `False`, the final batch may be incomplete,
+    and range in size from 1 to `batch_size`. Shuffle batches if `shuffle` is `True`.
+    """
+    if shuffle:
+        batch_idx = jax.random.permutation(rng, len(dataset))
+        batch_idx = np.asarray(batch_idx)
+    else:
+        batch_idx = np.arange(len(dataset))
+
+    if drop_last:
+        steps_per_epoch = len(dataset) // batch_size
+        batch_idx = batch_idx[: steps_per_epoch * batch_size]  # Skip incomplete batch.
+        batch_idx = batch_idx.reshape((steps_per_epoch, batch_size))
+    else:
+        steps_per_epoch = math.ceil(len(dataset) / batch_size)
+        batch_idx = np.array_split(batch_idx, steps_per_epoch)
+
+    for idx in batch_idx:
+        batch = dataset[idx]
+        batch = {k: np.array(v) for k, v in batch.items()}
+
+        yield batch
     
 
 
@@ -177,6 +154,7 @@ def train(args):
     # FlaxWhisperPreTrainedModel -> module = self.module_class
     # FlaxWhisperPreTrainedModel -> __call__ -> self.module.apply
     # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
+    # input_shape: typing.Tuple[int] = (b, 80, 3000)
     model = FlaxWhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         seed=args.seed,
@@ -194,6 +172,7 @@ def train(args):
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
+
 
     #print('config supress tokens :')
     #print(model.config.suppress_tokens)
@@ -236,26 +215,41 @@ def train(args):
         #input_columns=["input_length"],
     #)
 
+    # tokenizer and generation max length
+    max_length = (
+        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
+    )
+
     # function to vectorize dataset
     # flax models need decoder_input_ids instead of labels
     # we need fixed length inputs for jitted functions
+    # https://github.com/huggingface/transformers/blob/v4.29.1/src/transformers/models/whisper/feature_extraction_whisper.py#L254
+    #if return_attention_mask:
+        # rescale from sample (48000) to feature (3000)
     def prepare_dataset(batch):
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
 
         # compute log-Mel input features from input audio array 
+        # 80 x 3000
         batch["input_features"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
 
         # encode target text to label ids 
-        labels = tokenizer(batch["sentence"], return_tensors="np")
+        labels = tokenizer(
+            batch["sentence"],
+            padding="max_length",
+            max_length=max_length,
+            return_tensors="np")
         # labels to compute loss
-        batch["labels"] = labels.input_ids
+        # 1 x generation length / max length
+        batch["labels"] = labels.input_ids.flatten()
+        print()
         decoder_input_ids = shift_tokens_right(
             labels["input_ids"], model.config.pad_token_id, model.config.decoder_start_token_id
         )
         # decoder_input_ids to feed into the flax model
         # we will compute attention mask in data collator
-        batch["decoder_input_ids"] = np.asarray(decoder_input_ids)
+        batch["decoder_input_ids"] = np.asarray(decoder_input_ids).flatten()
 
         return batch
 
@@ -266,6 +260,10 @@ def train(args):
         remove_columns=common_voice.column_names["train"],
         desc="vectorize dataset"
     ) #, num_proc=2)
+
+    # train and test datasets
+    train_dataset = common_voice["train"]
+    test_dataset = common_voice["test"]
 
 
     # cer metric
@@ -360,20 +358,20 @@ def train(args):
     )
 
     # data collator
-    data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
+    #data_collator = FlaxDataCollatorForWhisperFinetuning(processor=processor)
 
     # data loaders
-    train_loader = DataLoader(
-        common_voice["train"],
-        shuffle=True,
-        collate_fn=data_collator,
-        batch_size=train_batch_size,
-    )
-    eval_loader = DataLoader(
-        common_voice["test"],
-        collate_fn=data_collator,
-        batch_size=eval_batch_size,
-    )
+    #train_loader = DataLoader(
+        #common_voice["train"],
+        #shuffle=True,
+        #collate_fn=data_collator,
+        #batch_size=train_batch_size,
+    #)
+    #eval_loader = DataLoader(
+        #common_voice["test"],
+        #collate_fn=data_collator,
+        #batch_size=eval_batch_size,
+    #)
 
     # setup train state
     # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
@@ -481,9 +479,7 @@ def train(args):
         return generation_config
 
 
-    max_length = (
-        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
-    )
+    # max_length definer after tokenizer
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
     # generation config
@@ -526,12 +522,37 @@ def train(args):
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
-
     global_step = 0  # tracks total steps
     train_time = 0
 
-    # load from checkpoint (flax -> orbax)
-    # add loading from checkpoint code here #
+    # init checkpointer
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
+    # checkpoint manager
+    checkpoint_manager = orbax.checkpoint.CheckpointManager(
+        args.output_dir,
+        orbax_checkpointer,
+        options
+    )    
+    # load from previous checkpoint
+    if not args.overwrite_output_dir:
+        if os.path.isdir(args.output_dir):
+            print('checkpoints found. restoring latest')
+            # get latest checkpoint
+            step = checkpoint_manager.latest_step()
+            checkpoint_manager.restore(step)
+            global_step = step
+        else:
+            raise ValueError(
+                f"no checkpoint found. set overwrite_output_dir to train from scratch"
+            )
+    # else output_dir cleared in main
+    else: print("training from scratch")
+
+    # write fixed hyoerparameters to tensorboard
+    if has_tensorboard and jax.process_index() == 0:
+        summary_writer.scalar("train_batch_size", train_batch_size, global_step + 1)
+        summary_writer.scalar("eval_batch_size", eval_batch_size, global_step + 1)
 
 
     # Training
@@ -545,7 +566,17 @@ def train(args):
     while True:
 
         # train
+        # create sampling rng
+        rng, input_rng = jax.random.split(rng)
+        train_loader = data_loader(input_rng, train_dataset, train_batch_size, shuffle=True)
+
         for batch in train_loader:
+            print(batch)
+            print(batch['input_features'].shape)
+            print(batch['labels'].shape)
+            print(batch['decoder_input_ids'].shape)
+            ## attention mask? ##
+            quit()
             # input_features, decoder_input_ids, decoder_attention_mask, labels
             batch = shard(batch.data)
             state, train_metric = p_train_step(state, batch) 
@@ -608,6 +639,10 @@ def train(args):
                         summary_writer.scalar(key, val, global_step + 1)
 
                 # save the model, optimizer, lr_scheduler, and seed states 
+                ckpt = {'model': state, 'config': model.config}
+                save_args = orbax_utils.save_args_from_target(ckpt)
+                checkpoint_manager.save(global_step + 1, ckpt, save_kwargs={'save_args': save_args})
+
 
             global_step += 1
             train_metrics = []
@@ -670,10 +705,9 @@ def main():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
+        "--overwrite_output_dir",
+        action="store_true",
+        help="whether to overwrite output dir and train from scratch"
     )
     parser.add_argument(
         "--skip_steps",
@@ -736,9 +770,14 @@ def main():
         type=int,
     )
     parser.add_argument(
+        "--max_to_keep",
+        default=5,
+        type=int,
+    )
+    parser.add_argument(
         '--num_workers',
         type=int,
-        default=None, # None
+        default=None, # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
@@ -807,6 +846,13 @@ def main():
         data_str = args.data_dir.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_jax_'+data_str
     print('output directory set to : {}'.format(args.output_dir))
+
+    # if overwrite_output_dir
+    # remove any existing checkpoints from the last run
+    if args.overwrite_output_dir:
+        if os.path.exists(args.output_dir):
+            shutil.rmtree(args.output_dir)  
+
     # check if model path is None
     if args.model_name_or_path is None:
         raise ValueError(
