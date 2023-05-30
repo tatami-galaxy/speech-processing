@@ -269,6 +269,7 @@ def train(args):
 
     # cer metric
     cer = evaluate.load("cer")
+    # add wer for hindi
 
     def compute_metrics(preds, labels):
         result = {}
@@ -626,6 +627,7 @@ def train(args):
                 # cer
                 cer_result = compute_metrics(eval_preds, eval_labels)
                 eval_metrics.update(cer_result)
+                # add wer for hindi
                 
                 # collect results together
                 result_dict['train_time'] = train_time

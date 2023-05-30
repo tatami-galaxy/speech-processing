@@ -205,6 +205,7 @@ def train(args, accelerator):
 
     # cer metric
     metric = evaluate.load("cer")
+    # add wer for hindi
 
     # data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(
@@ -356,6 +357,7 @@ def train(args, accelerator):
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
+                # add wer for hindi
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
