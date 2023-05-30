@@ -40,9 +40,9 @@ def main():
 
     # packages
     if args.torch:
-        req = torch_req.extend(req)
+        req[:0] = torch_req
     elif args.jax:
-        req = req.extned(jax_req)
+        req.extned(jax_req)
 
     # install packages
     for package in req:
