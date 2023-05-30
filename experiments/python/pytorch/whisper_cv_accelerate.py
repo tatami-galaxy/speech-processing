@@ -12,8 +12,7 @@
 
 import os
 from os.path import dirname, abspath
-import numpy as np
-from tqdm.auto import tqdm, trange
+from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict
 import transformers, datasets
 from transformers import WhisperFeatureExtractor
@@ -29,7 +28,6 @@ from transformers import WhisperForConditionalGeneration, GenerationConfig
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_scheduler, set_seed
-import random
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator, DistributedType
