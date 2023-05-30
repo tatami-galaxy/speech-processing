@@ -333,7 +333,7 @@ def train(args, accelerator):
                     # compute metric
                     ## generate and calculate cer ##
 
-                    output_ids = model.generate(
+                    output_ids = model.module.generate(
                         batch["input_features"],
                         generation_config=generation_config,
                         task=args.task,
