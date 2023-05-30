@@ -331,8 +331,8 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
-                    ## generate and calculate cer ##
-
+                    # generate and calculate cer 
+                    # unwrap model?
                     output_ids = model.module.generate(
                         batch["input_features"],
                         generation_config=generation_config,
