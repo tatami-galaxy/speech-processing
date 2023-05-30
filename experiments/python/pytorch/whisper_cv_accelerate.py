@@ -479,7 +479,7 @@ def main():
     )
     parser.add_argument(
         "--train_steps",
-        default=2000,
+        default=3000,
         type=int,
     )
     parser.add_argument(
