@@ -128,11 +128,12 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
     """
     Shift input ids one token to the right.
     """
+
     shifted_input_ids = np.zeros_like(input_ids)
     shifted_input_ids[:, 1:] = input_ids[:, :-1]
     shifted_input_ids[:, 0] = decoder_start_token_id
-
     shifted_input_ids = np.where(shifted_input_ids == -100, pad_token_id, shifted_input_ids)
+
     return shifted_input_ids
 
 
@@ -240,16 +241,20 @@ def train(args):
             padding="max_length",
             max_length=max_length,
             return_tensors="np")
+
         # labels to compute loss
-        # 1 x generation length / max length
-        batch["labels"] = labels.input_ids.flatten()
-        print()
+        # 1 x generation length or max length
+        batch["labels"] = labels["input_ids"].flatten()
         decoder_input_ids = shift_tokens_right(
             labels["input_ids"], model.config.pad_token_id, model.config.decoder_start_token_id
         )
         # decoder_input_ids to feed into the flax model
-        # we will compute attention mask in data collator
         batch["decoder_input_ids"] = np.asarray(decoder_input_ids).flatten()
+
+        # we need decoder_attention_mask so we can ignore pad tokens from loss
+        # completely masks decoder_input_ids
+        # leaves first pad token (after input ids) unmasked in labels
+        batch["decoder_attention_mask"] = labels["attention_mask"].flatten()
 
         return batch
 
@@ -313,8 +318,8 @@ def train(args):
     train_batch_size = int(args.per_device_train_batch_size) * jax.device_count()
     eval_batch_size = int(args.per_device_eval_batch_size) * jax.device_count()
 
-    # train steps given in args
-    # eval steps
+    # eval steps in eval_dataset
+    # different from args.eval_steps
     eval_steps = math.ceil(len(common_voice["test"]) / eval_batch_size)
 
     # create learning rate schedule
@@ -411,6 +416,8 @@ def train(args):
         def compute_loss(params):
             labels = batch.pop("labels")
             logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            # decoder_attention_mask completely masks decoder_input_ids
+            # leaves first pad token (after input ids) unmasked in labels
             loss, num_labels = loss_fn(logits, labels, batch["decoder_attention_mask"], label_smoothing_factor)
             return loss, num_labels
 
@@ -479,7 +486,7 @@ def train(args):
         return generation_config
 
 
-    # max_length definer after tokenizer
+    # max_length defined after tokenizer
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
     gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
     # generation config
@@ -571,14 +578,11 @@ def train(args):
         train_loader = data_loader(input_rng, train_dataset, train_batch_size, shuffle=True)
 
         for batch in train_loader:
-            print(batch)
-            print(batch['input_features'].shape)
-            print(batch['labels'].shape)
-            print(batch['decoder_input_ids'].shape)
-            ## attention mask? ##
-            quit()
-            # input_features, decoder_input_ids, decoder_attention_mask, labels
-            batch = shard(batch.data)
+            # input_features : b x 80 x 3000
+            # decoder_input_ids : b x max_length
+            # decoder_attention_mask : b X max_length
+            # labels : b X max_length
+            batch = shard(batch)
             state, train_metric = p_train_step(state, batch) 
             train_metrics.append(train_metric)
 
@@ -600,10 +604,12 @@ def train(args):
                     f" {train_metric['learning_rate']})"
                 )
 
+                eval_loader = data_loader(input_rng, test_dataset, eval_batch_size, shuffle=True)
+
                 # eval progress bar
                 eval_bar = tqdm(range(eval_steps), position=1)
                 for batch in eval_loader:
-                    batch = shard(batch.data)
+                    batch = shard(batch)
                     metrics = p_eval_step(state.params, batch) # dict {'loss' : loss}
                     eval_metrics.append(metrics)
 

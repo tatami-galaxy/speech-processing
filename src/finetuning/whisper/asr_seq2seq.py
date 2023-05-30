@@ -750,7 +750,7 @@ def main():
 
     # Evaluation
 
-    if training_args.do_eval:
+    if args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(
             metric_key_prefix="eval",
