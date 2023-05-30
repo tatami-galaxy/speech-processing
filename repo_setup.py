@@ -42,11 +42,14 @@ def main():
     if args.torch:
         req[:0] = torch_req
     elif args.jax:
-        req.extned(jax_req)
+        req.extend(jax_req)
 
     # install packages
     for package in req:
         subprocess.run(["pip", "install", package]) 
+
+    # huggingface-cli login 
+    # accelerate config
 
 
 if __name__ == "__main__":
