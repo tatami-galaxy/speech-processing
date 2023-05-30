@@ -44,17 +44,33 @@ while root.split('/')[-1] != 'speech-processing':
 
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
+    """
+    Data collator that will dynamically pad the inputs received.
+    Args:
+        processor ([`WhisperProcessor`])
+            The processor used for processing the data.
+        decoder_start_token_id (`int`)
+            The begin-of-sentence of the decoder.
+        forward_attention_mask (`bool`)
+            Whether to return attention_mask.
+    """
+
     processor: Any
+    decoder_start_token_id: int
+    forward_attention_mask: bool
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lengths and need different padding methods
-        # first treat the audio inputs by simply returning torch tensors
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
+        # split inputs and labels since they have to be of different lengths and need
+        # different padding methods
+        model_input_name = self.processor.model_input_names[0]
+        input_features = [{model_input_name: feature[model_input_name]} for feature in features]
+        label_features = [{"input_ids": feature["labels"]} for feature in features]
+
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
-        # get the tokenized label sequences
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
-        # pad the labels to max length
+        if self.forward_attention_mask:
+            batch["attention_mask"] = torch.LongTensor([feature["attention_mask"] for feature in features])
+
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
 
         # replace padding with -100 to ignore loss correctly
@@ -62,7 +78,7 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
         # if bos token is appended in previous tokenization step,
         # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
+        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
             labels = labels[:, 1:]
 
         batch["labels"] = labels
@@ -74,15 +90,15 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 def train(args, accelerator):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
-    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
+    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     #model.config.forced_decoder_ids = None
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     model.config.suppress_tokens = []
 
     if model.config.decoder_start_token_id is None:
@@ -121,21 +137,71 @@ def train(args, accelerator):
         common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
+    # if SpecAugment is used for whisper models, return attention_mask to guide the mask along time axis
+    forward_attention_mask = (
+        getattr(model.config, "model_type", None) == "whisper"
+        and getattr(model.config, "apply_spec_augment", False)
+        and getattr(model.config, "mask_time_prob", 0) > 0
+    )
+    # other hyperparameters
+    max_input_length = args.max_duration_in_seconds * feature_extractor.sampling_rate
+    min_input_length = args.min_duration_in_seconds * feature_extractor.sampling_rate
+    #audio_column_name = args.audio_column_name
+    #num_workers = args.preprocessing_num_workers
+    #text_column_name = args.text_column_name
+    #do_lower_case = args.do_lower_case
+    model_input_name = feature_extractor.model_input_names[0]
+
     # function to vectorize dataset
-    def prepare_dataset(batch):
+    #def prepare_dataset(batch):
         # load and resample audio data from 48 to 16kHz
-        audio = batch["audio"]
+        #audio = batch["audio"]
 
         # compute log-Mel input features from input audio array 
-        batch["input_features"] = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
+        #features = feature_extractor(audio["array"], sampling_rate=audio["sampling_rate"], return_attention_mask=True)
+        #batch["input_features"] = features.input_features[0]
+        #batch["attention_mask"] = features.attention_mask[0]
 
         # encode target text to label ids 
-        batch["labels"] = tokenizer(batch["sentence"]).input_ids
+        #batch["labels"] = tokenizer(batch["sentence"]).input_ids
+
+        #return batch
+    
+    def prepare_dataset(batch):
+        # process audio
+        sample = batch["audio"]
+        inputs = feature_extractor(
+            sample["array"],
+            sampling_rate=sample["sampling_rate"],
+            return_attention_mask=forward_attention_mask
+        )
+        # process audio length
+        batch[model_input_name] = inputs.get(model_input_name)[0]
+        batch["input_length"] = len(sample["array"])
+        if forward_attention_mask:
+            batch["attention_mask"] = inputs.get("attention_mask")[0]
+
+        # process targets
+        input_str = batch["sentence"]  # do lower
+        batch["labels"] = tokenizer(input_str).input_ids
         return batch
+    
     
     with accelerator.main_process_first():
         # vectorize dataset
         common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+
+
+    # filter data that is shorter than min_input_length or longer than
+    # max_input_length
+    def is_audio_in_length_range(length):
+        return length > min_input_length and length < max_input_length
+
+    common_voice = common_voice.filter(
+        is_audio_in_length_range,
+        #num_proc=num_workers,
+        input_columns=["input_length"],
+    )
 
 
 
@@ -143,7 +209,11 @@ def train(args, accelerator):
     metric = evaluate.load("cer")
 
     # data collator
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
+        processor=processor,
+        decoder_start_token_id=model.config.decoder_start_token_id,
+        forward_attention_mask=forward_attention_mask,
+    )
 
     # data loaders
     train_dataloader = DataLoader(
@@ -182,7 +252,6 @@ def train(args, accelerator):
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
-    ##
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
@@ -229,7 +298,7 @@ def train(args, accelerator):
         args.generation_max_length if args.generation_max_length is not None else model.config.max_length
     )
     num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
-    gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
+    gen_kwargs = {"max_new_tokens": max_length, "num_beams": num_beams}
     # generation config
     generation_config = make_generation_config()
 
@@ -266,24 +335,34 @@ def train(args, accelerator):
                     # compute metric
                     ## generate and calculate cer ##
 
-                    #pred_logits = outputs.logits
-                    #pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    #predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    #references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    #predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    output_ids = model.generate(
+                        batch["input_features"],
+                        generation_config=generation_config,
+                        task=args.task,
+                        language=args.model_lang,
+                        is_multilingual=True,
+                        **gen_kwargs
+                    )
+
+                    output_ids = accelerator.gather_for_metrics((output_ids))
+                    label_ids = accelerator.gather_for_metrics((batch["labels"]))
+                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    #references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    #metric.add_batch(predictions=predictions, references=references)
+                    references = processor.batch_decode(
+                        label_ids,
+                        group_tokens=False,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    )
+                    metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
-                    # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
                 step=global_step + 1,
@@ -371,6 +450,11 @@ def main():
         type=str,
     )
     parser.add_argument(
+        "--task",
+        default='transcribe',
+        type=str,
+    )
+    parser.add_argument(
         "--data_lang",
         default='hi',
         type=str,
@@ -434,7 +518,17 @@ def main():
             '--num_beams',
             type=int,
             default=1
-        )
+    )
+    parser.add_argument(
+            '--max_duration_in_seconds',
+            type=float,
+            default=20.0
+    )
+    parser.add_argument(
+            '--min_duration_in_seconds',
+            type=float,
+            default=0.0
+    )
 
 
     # parse args
