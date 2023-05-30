@@ -2,12 +2,12 @@ import os
 import subprocess
 import argparse
 
-torch_req = ['torch', 'torchvision', 'torchaudio', 'accelerate']
-jax_req = ['gdown', 'flax']
-req = ['transformers', 'datasets', 'evaluate', 'jiwer', 'librosa', 'soundfile', 'tensorboard']
-
 
 def main():
+
+    torch_req = ['torch', 'torchvision', 'torchaudio', 'accelerate']
+    jax_req = ['gdown', 'flax']
+    req = ['transformers', 'datasets', 'evaluate', 'jiwer', 'librosa', 'soundfile', 'tensorboard']
 
     parser = argparse.ArgumentParser()
 
