@@ -16,7 +16,6 @@ from pathlib import Path
 from functools import partial
 import logging
 import argparse
-from dataclasses import dataclass
 from tqdm.auto import tqdm
 import time, math
 import shutil
@@ -250,6 +249,7 @@ def train(args):
         # we need decoder_attention_mask so we can ignore pad tokens from loss
         # completely masks decoder_input_ids
         # leaves first pad token (after input ids) unmasked in labels
+        # need different mask for labels?
         batch["decoder_attention_mask"] = labels["attention_mask"].flatten()
 
         return batch

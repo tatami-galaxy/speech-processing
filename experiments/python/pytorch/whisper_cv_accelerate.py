@@ -331,7 +331,7 @@ def train(args, accelerator):
 
             progress_bar.update(1)
 
-            if (global_step + 1) % args.eval_steps == 0:
+            if (global_step + 1) % args.eval_steps == 0:  ## eval is slow. how to speed up?
                 model.eval()
                 val_loss = 0
                 for batch in eval_dataloader:
