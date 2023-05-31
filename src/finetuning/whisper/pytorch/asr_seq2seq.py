@@ -19,22 +19,21 @@ Fine-tuning the library models for sequence to sequence speech recognition.
 # You can also adapt this script on your own sequence to sequence speech
 # recognition task. Pointers for this are left as comments.
 from functools import partial
-import json
 import logging
 import os
 from os.path import dirname, abspath
 import re
 import sys
-import warnings
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Union
 import argparse
 from argparse import ArgumentParser
 
 import datasets
 import evaluate
 import torch
-from datasets import DatasetDict, load_dataset
+from datasets import load_dataset
+import datasets
 
 import transformers
 from transformers import (
@@ -43,7 +42,6 @@ from transformers import (
     AutoModelForSpeechSeq2Seq,
     AutoProcessor,
     AutoTokenizer,
-    HfArgumentParser,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
     set_seed,
@@ -51,14 +49,16 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
-from sparseml.transformers.sparsification import Trainer, TrainingArguments
-
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 #check_min_version("4.27.0.dev0")
 
 #require_version("datasets>=1.18.0", "To fix: pip install -r examples/pytorch/speech-recognition/requirements.txt")
+
+# punctuations to remove from tranascripts
+chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
+
 
 def path_remap(x, args):
 
@@ -83,8 +83,6 @@ while root.split('/')[-1] != 'speech-processing':
 
 
 logger = logging.getLogger(__name__)
-
-
 
 
 
@@ -180,7 +178,7 @@ def main():
     argp.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=8, # None
+        default=os.cpu_count(), # None
         help="The number of processes to use for the preprocessing."
     )
     argp.add_argument(
@@ -297,7 +295,7 @@ def main():
     argp.add_argument(
         '--eval_accumulation_steps',
         type=int,
-        default=None
+        default=4
     )
     argp.add_argument(
         '--evaluation_strategy',
@@ -322,7 +320,7 @@ def main():
     argp.add_argument(
         '--max_steps',
         type=int,
-        default=50000 
+        default=50000
     )
     argp.add_argument(
         '--save_steps',
@@ -439,9 +437,7 @@ def main():
 
     # seq2seq training args
 
-
-
-    training_args = TrainingArguments(
+    training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
         #group_by_length=args.group_by_length,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -526,15 +522,16 @@ def main():
 
     # data files
     data_files = {
-        'train': args.data_dir+'/final_train_v2_wo_hkust.csv', # final_train.csv
-        'validation': args.data_dir+'/final_dev_v2.csv', # final_train.csv
-        'test': args.data_dir+'/final_test_v2_wo_hkust.csv', # final_test.csv
-        }
+        'train': args.data_dir+'/final_train_v2a_wo_aishell4_hkust.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_v2a_wo_aishell4_hkust.csv', # final_train.csv
+        'test': args.data_dir+'/final_test_v2a_wo_aishell4_hkust.csv', # final_test.csv
+    }
 
-    raw_datasets = load_dataset('csv', data_files=data_files)
+    raw_datasets = load_dataset('csv', data_files=data_files) # keep_in_memory=True  # column_names=['audio', 'transcript', 'duration']
+
 
     # map to new audio path
-    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False) # keep_in_memory=True)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -555,14 +552,24 @@ def main():
         )
 
     if args.max_train_samples is not None:
-        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples)) #, keep_in_memory=True)
 
     if args.max_eval_samples is not None:
-        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples)) #, keep_in_memory=True)
 
     if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples)) #, keep_in_memory=True)
 
+    
+    # remove punctuations
+    def remove_special_characters(batch):
+        batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
+        return batch
+
+    raw_datasets = raw_datasets.map(
+        remove_special_characters,
+        desc="remove special characters from datasets",
+    )
 
 
 
@@ -646,12 +653,13 @@ def main():
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
 
+    
     #with training_args.main_process_first(desc="dataset map pre-processing"):
     vectorized_datasets = raw_datasets.map(
         prepare_dataset,
         remove_columns=next(iter(raw_datasets.values())).column_names,
-        num_proc=args.preprocessing_num_workers,
-        keep_in_memory=True, # no cache
+        num_proc=num_workers,
+        #keep_in_memory=True,  # no cache
         desc="preprocess train dataset",
     )
 
@@ -664,7 +672,9 @@ def main():
         is_audio_in_length_range,
         num_proc=num_workers,
         input_columns=["input_length"],
+        #keep_in_memory=True
     )
+
 
     # for large datasets it is advised to run the preprocessing on a
     # single machine first with `args.preprocessing_only` since there will mostly likely
@@ -704,7 +714,7 @@ def main():
         tokenizer.save_pretrained(args.output_dir)
         config.save_pretrained(args.output_dir)
 
-
+    # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
 
 
@@ -714,12 +724,10 @@ def main():
         decoder_start_token_id=model.config.decoder_start_token_id,
     )
 
-    recipe_path = "recipe.yaml"
 
     # Initialize Trainer
-    trainer = Trainer(
+    trainer = Seq2SeqTrainer(
         model=model,
-        recipe=recipe_path,
         args=training_args,
         train_dataset=vectorized_datasets["train"] if args.do_train else None,
         eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
@@ -755,7 +763,7 @@ def main():
 
     # Evaluation
 
-    if training_args.do_eval:
+    if args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate(
             metric_key_prefix="eval",
@@ -773,5 +781,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()

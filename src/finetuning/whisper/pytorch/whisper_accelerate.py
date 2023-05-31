@@ -14,16 +14,15 @@ from functools import partial
 import os, re
 import datetime
 from os.path import dirname, abspath
-import numpy as np
-from tqdm.auto import tqdm, trange
+from tqdm.auto import tqdm
 from datasets import load_dataset
 import transformers, datasets
 from transformers import AutoConfig
 from transformers import AutoFeatureExtractor
 from transformers import AutoTokenizer
 from transformers import AutoProcessor
+from transformers import GenerationConfig
 import torch
-from torch import nn
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
@@ -110,7 +109,6 @@ def train(args, accelerator):
     data_files = {
         'train': args.data_dir+'/final_train_v2a_wo_aishell4_hkust.csv', # final_train.csv
         'validation': args.data_dir+'/final_dev_v2a_wo_aishell4_hkust.csv', # final_train.csv
-        'test': args.data_dir+'/final_test_v2a_wo_aishell4_hkust.csv', # final_test.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
@@ -144,8 +142,6 @@ def train(args, accelerator):
         if args.max_eval_samples is not None:
             raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
-        if args.max_test_samples is not None:
-            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
      # remove punctuations
@@ -168,16 +164,8 @@ def train(args, accelerator):
         #revision=args.model_revision,
         #use_auth_token=True if args.use_auth_token else None,
     )
-    teacher_config = AutoConfig.from_pretrained(
-        args.teacher_name_or_path,
-        #cache_dir=args.cache_dir,
-        #revision=args.model_revision,
-        #use_auth_token=True if args.use_auth_token else None,
-    )
 
     model_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
-
-    teacher_config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
 
 
     feature_extractor = AutoFeatureExtractor.from_pretrained(
@@ -205,17 +193,8 @@ def train(args, accelerator):
         #revision=args.model_revision,
         #use_auth_token=True if args.use_auth_token else None,
     )
-    teacher = AutoModelForSpeechSeq2Seq.from_pretrained(
-        args.teacher_name_or_path,
-        config=teacher_config,
-        #cache_dir=args.cache_dir,
-        #revision=args.model_revision,
-        #use_auth_token=True if args.use_auth_token else None,
-    )
 
     if model.config.decoder_start_token_id is None:
-        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
-    if teacher.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
 
@@ -297,7 +276,6 @@ def train(args, accelerator):
     # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
-    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
 
 
     # data collator
@@ -316,11 +294,6 @@ def train(args, accelerator):
     )
     eval_dataloader = DataLoader(
         vectorized_datasets["validation"],
-        collate_fn=data_collator,
-        batch_size=args.eval_batch_size,
-    )
-    test_dataloader = DataLoader(
-        vectorized_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
@@ -345,14 +318,13 @@ def train(args, accelerator):
     # any instruction using your training dataloader length,
     # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
-    model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, teacher, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
-    total_s_loss = 0  # total student loss before each eval
-    total_d_loss = 0  # total distil loss before each eval
+
 
     accelerator.log({
         "train_batch_size": args.train_batch_size,
@@ -377,6 +349,39 @@ def train(args, accelerator):
             global_step = steps_completed
 
 
+    def make_generation_config():
+
+        generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
+        gen_dict = generation_config.to_dict()
+        # add attributes to genration_config
+        # generation_config does not have "langauge", but generate() tries to use it
+        # can be empty dict here since being set in generate_step
+        gen_dict["language"] = args.model_lang
+        #if supress_en:
+            # en tokens to suppress from multilingual vocab
+            #en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
+            #suppress_en_list = []
+            #for key in en_tokenizer.encoder.keys():
+                #if key in tokenizer.encoder.keys() and key.isalpha():
+                    #suppress_en_list.append(key)
+            # supress english tokens
+            #gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
+        # add any other args here
+        # reload with new attributes
+        generation_config = GenerationConfig.from_dict(gen_dict)
+
+        return generation_config
+
+
+    max_length = (
+        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
+    )
+    num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
+    gen_kwargs = {"max_new_tokens": max_length, "num_beams": num_beams}
+    # generation config
+    generation_config = make_generation_config()
+
+
     # Training
 
     # main progress bar
@@ -388,30 +393,9 @@ def train(args, accelerator):
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
-                # student
                 outputs = model(**batch)
-                # stduent logits
-                s_logits = outputs.logits
-                # student loss
-                s_loss = outputs.loss
-                # teacher
-                with torch.no_grad():
-                    outputs = teacher(**batch)
-                    # teacher logits
-                    t_logits = outputs.logits
-                # distillation loss
-                # has to be outside no_grad()
-                d_loss = nn.functional.kl_div(
-                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
-                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
-                    reduction="batchmean",
-                ) * (args.temperature**2)
-                # net loss after weightage
-                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
-
-                total_loss += loss.detach().item() # for tensorboard
-                total_s_loss += s_loss.detach().item()
-                total_d_loss += d_loss.detach().item()
+                loss = outputs.loss
+                total_loss += loss.detach().item() # for tensorboard 
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -429,27 +413,37 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
-                    ## check cer calculation ##
-                    pred_logits = outputs.logits
-                    pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    # generate and calculate cer 
+                    # unwrap model?
+                    output_ids = model.module.generate(
+                        batch["input_features"],
+                        generation_config=generation_config,
+                        task=args.task,
+                        language=args.model_lang,
+                        is_multilingual=True,
+                        **gen_kwargs
+                    )
+
+                    output_ids = accelerator.gather_for_metrics((output_ids))
+                    label_ids = accelerator.gather_for_metrics((batch["labels"]))
+                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    references = processor.batch_decode(
+                        label_ids,
+                        group_tokens=False,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    )
                     metric.add_batch(predictions=predictions, references=references)
 
                 cer_result = metric.compute()
+                # add wer for hindi
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
-                    # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    #"step": global_step,
                     "val_loss": val_loss / len(eval_dataloader)
                 },
                 step=global_step + 1,
@@ -661,6 +655,16 @@ def run():
         "--mixed_precision",
         default='fp16',
         type=str,
+    )
+    parser.add_argument(
+        '--generation_max_length',
+        type=int,
+        default=225
+    )
+    parser.add_argument(
+        '--num_beams',
+        type=int,
+        default=1
     )
 
 

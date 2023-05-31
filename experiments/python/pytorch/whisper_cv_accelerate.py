@@ -254,6 +254,14 @@ def train(args, accelerator):
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
+    accelerator.log({
+        "train_batch_size": args.train_batch_size,
+        "eval_batch_size": args.eval_batch_size,
+        "gpus": accelerator.state.num_processes
+        },
+        step=global_step + 1,
+    )
+
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
@@ -286,7 +294,7 @@ def train(args, accelerator):
                     suppress_en_list.append(key)
             # supress english tokens
             gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
-
+        # add any other args here   
         # reload with new attributes
         generation_config = GenerationConfig.from_dict(gen_dict)
 
