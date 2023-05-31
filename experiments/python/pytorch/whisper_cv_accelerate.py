@@ -203,9 +203,9 @@ def train(args, accelerator):
 
 
 
-    # cer metric
-    metric = evaluate.load("cer")
-    # add wer for hindi
+    # cer and wer
+    cer_metric = evaluate.load("cer")
+    wer_metric = evaluate.load("wer")
 
     # data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(
@@ -263,7 +263,6 @@ def train(args, accelerator):
     )
 
     # load from checkpoint
-    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
     if args.resume_from_checkpoint is not None:
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
@@ -340,7 +339,7 @@ def train(args, accelerator):
                         val_loss += outputs.loss.item()
 
                     # compute metric
-                    # generate and calculate cer 
+                    # generate and calculate cer, wer
                     # unwrap model?
                     output_ids = model.module.generate(
                         batch["input_features"],
@@ -362,14 +361,17 @@ def train(args, accelerator):
                         skip_special_tokens=True,
                         clean_up_tokenization_spaces=True
                     )
-                    metric.add_batch(predictions=predictions, references=references)
+                    cer_metric.add_batch(predictions=predictions, references=references)
+                    wer_metric.add_batch(predictions=predictions, references=references)
 
-                cer_result = metric.compute()
+                cer_result = cer_metric.compute()
+                wer_result = wer_metric.compute()
                 # add wer for hindi
-                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
+                accelerator.print('step : {}, cer : {}, wer: {}'.format(global_step + 1, cer_result, wer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
+                    "wer": wer_result,
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     "val_loss": val_loss / len(eval_dataloader)
                 },
