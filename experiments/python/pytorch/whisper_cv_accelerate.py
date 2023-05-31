@@ -269,11 +269,12 @@ def train(args, accelerator):
         accelerator.load_state(args.resume_from_checkpoint)
         # if resumed from checkpoint
         # we need to skip steps until we reach the current step
-        if args.skip_steps:
             # ../checkpoint-123 -> int(123)
-            steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+        steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+        global_step = steps_completed
+        if args.skip_steps:
             train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-            global_step = steps_completed
+            
 
     
     def make_generation_config(supress_en=False):
@@ -452,7 +453,7 @@ def main():
     parser.add_argument(
         "--skip_steps",
         action="store_true",
-        help="whether to skip steps already ccompleted while loading from checkpoint"
+        help="whether to skip steps in dataloader (checkpoint)"
     )
     parser.add_argument(
         "--model_lang",
@@ -491,7 +492,7 @@ def main():
     )
     parser.add_argument(
         "--train_steps",
-        default=3000,
+        default=5000,
         type=int,
     )
     parser.add_argument(

@@ -756,7 +756,7 @@ def main():
     )
     parser.add_argument(
         "--train_steps",
-        default=3000,
+        default=5000,
         type=int,
     )
     parser.add_argument(
