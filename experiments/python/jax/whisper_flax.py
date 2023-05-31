@@ -269,7 +269,7 @@ def train(args):
 
     # cer metric
     cer = evaluate.load("cer")
-    # add wer for hindi
+    wer = evaluate.load("wer")
 
     def compute_metrics(preds, labels):
         result = {}
@@ -284,8 +284,9 @@ def train(args):
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True
         )
-        # compute cer
+        # compute cer, wer
         result["cer"] = cer.compute(predictions=predictions, references=references)
+        result["wer"] = wer.compute(predictions=predictions, references=references)
         return result
         
 
@@ -587,7 +588,7 @@ def train(args):
 
             # eval
             # eval_loss with eval_step
-            # cer with generate_step
+            # cer, wer with generate_step
             if (global_step + 1) % args.eval_steps == 0:
                 train_time += time.time() - train_start
                 eval_metrics = []
@@ -624,16 +625,16 @@ def train(args):
                 # eval metrics (loss)
                 eval_metrics = get_metrics(eval_metrics)  # dict
                 eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
-                # cer
-                cer_result = compute_metrics(eval_preds, eval_labels)
-                eval_metrics.update(cer_result)
-                # add wer for hindi
+                # cer, wer
+                result = compute_metrics(eval_preds, eval_labels)
+                eval_metrics.update(result)
                 
                 # collect results together
                 result_dict['train_time'] = train_time
                 result_dict['train_loss'] = train_metrics['loss']
                 result_dict['eval_loss'] = eval_metrics['loss']
                 result_dict['cer'] = eval_metrics['cer']
+                result_dict['wer'] = eval_metrics['wer']
 
                 # write to terminal and tensorboard
                 for key, val in result_dict.items():
