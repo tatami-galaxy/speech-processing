@@ -18,7 +18,6 @@ from pathlib import Path
 from functools import partial
 import logging
 import argparse
-from dataclasses import dataclass
 from tqdm.auto import tqdm
 import time, math
 import shutil
@@ -47,6 +46,7 @@ from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
     WhisperProcessor,
+    WhisperConfig,
     FlaxWhisperForConditionalGeneration,
 )
 from transformers import (
@@ -68,19 +68,31 @@ import evaluate
 
 logger = logging.getLogger(__name__)
 
-# sending telemetry
-# tracking the example usage helps us better allocate resources to maintain them
-# the information sent is the one passed as arguments along with your Python/PyTorch versions
-send_example_telemetry("run_summarization", framework="flax")
-
+# constants
+chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
+LANG_TO_ID = {"hindi" : "<|hi|>"}
 
 # get root directory
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
-# constants
-LANG_TO_ID = {"hindi" : "<|hi|>"}
+def path_remap(x, args):
+
+    # get audio path
+    #path_list = x['audio'].split('/')
+    path = x['audio']
+
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
+
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
+
 
     
 
@@ -136,14 +148,54 @@ def shift_tokens_right(input_ids: np.array, pad_token_id: int, decoder_start_tok
 
 
 def train(args):
-    # extractor, tokenizer, processor
+
+    # load dataset
+    print('loading dataset from {}'.format(args.data_dir))
+
+    # data files
+    data_files = {
+        'train': args.data_dir+'/final_train_v2a_wo_aishell4_hkust.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_v2a_wo_aishell4_hkust.csv', # final_train.csv
+        }
+
+    raw_datasets = load_dataset('csv', data_files=data_files)
+
+    # map to new audio path
+    raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+
+
+    #raw_datasets.cleanup_cache_files()
+
+    # check audio column, text column names
+    if args.audio_column not in raw_datasets["train"].column_names:
+        raise ValueError(
+            f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
+            " Make sure to set `--audio_column` to the correct audio column - one of"
+            f" {', '.join(raw_datasets['train'].column_names)}."
+        )
+
+    if args.text_column not in raw_datasets["train"].column_names:
+        raise ValueError(
+            f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
+            "Make sure to set `--text_column` to the correct text column - one of "
+            f"{', '.join(raw_datasets['train'].column_names)}."
+        )
+
+    if args.max_train_samples is not None:
+        raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+
+    if args.max_eval_samples is not None:
+        raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+
+
+
+    # extractor, tokenizer, model
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
-    
+    #processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task) 
 
     # model
     # FlaxWhisperForConditionalGeneration uses the FlaxWhisperPreTrainedModel forward method,
@@ -159,6 +211,7 @@ def train(args):
         seed=args.seed,
         dtype=getattr(jnp, args.dtype)
     )
+    model.config.update({"forced_decoder_ids": args.forced_decoder_ids, "suppress_tokens": args.suppress_tokens})
     #model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     #model.config.suppress_tokens = []
 
@@ -171,6 +224,11 @@ def train(args):
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
+
+    # resample speech dataset if necessary
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
 
 
     #print('config supress tokens :')
@@ -679,9 +737,21 @@ def main():
     )
     parser.add_argument(
         "--data_dir",
-        default="mozilla-foundation/common_voice_11_0",
+        default=None,
         type=str,
         help="Dataset",
+    )
+    parser.add_argument(
+        '--audio_column',
+        type=str,
+        default="audio",
+        help="The name of the dataset column containing the audio data. Defaults to audio for cv."
+    )
+    parser.add_argument(
+        '--text_column',
+        type=str,
+        default="transcript",
+        help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
     parser.add_argument(
         "--sampling_rate",

@@ -27,10 +27,9 @@ import evaluate
 from transformers import WhisperForConditionalGeneration, GenerationConfig
 from torch import nn
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_scheduler, set_seed
+from transformers import AdamW, set_seed
 import argparse
-from torch.utils.tensorboard import SummaryWriter
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator
 
 
 # get root directory
@@ -526,19 +525,19 @@ def main():
         default=225
     )
     parser.add_argument(
-            '--num_beams',
-            type=int,
-            default=1
+        '--num_beams',
+        type=int,
+        default=1
     )
     parser.add_argument(
-            '--max_duration_in_seconds',
-            type=float,
-            default=20.0
+        '--max_duration_in_seconds',
+        type=float,
+        default=20.0
     )
     parser.add_argument(
-            '--min_duration_in_seconds',
-            type=float,
-            default=0.0
+        '--min_duration_in_seconds',
+        type=float,
+        default=0.0
     )
 
 
