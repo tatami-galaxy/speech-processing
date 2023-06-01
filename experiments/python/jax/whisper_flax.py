@@ -408,6 +408,7 @@ def train(args):
 
     # define gradient update step fn
     # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
+    # cant print values inside a jit compiled function
     def train_step(state, batch, label_smoothing_factor=0.0):
         dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
 
@@ -444,6 +445,7 @@ def train(args):
 
     # define eval fn
     def eval_step(params, batch, label_smoothing_factor=0.0):
+
         labels = batch.pop("labels")
         logits = model(**batch, params=params, train=False)[0]
 
@@ -580,7 +582,10 @@ def train(args):
             # decoder_input_ids : b x max_length
             # decoder_attention_mask : b X max_length
             # labels : b X max_length
-            batch = shard(batch)
+
+            # check with multi gpu
+            # shard changes dim
+            batch = shard(batch) 
             state, train_metric = p_train_step(state, batch) 
             train_metrics.append(train_metric)
 
