@@ -267,7 +267,7 @@ def train(args):
     test_dataset = common_voice["test"]
 
 
-    # cer metric
+    # metrics
     cer = evaluate.load("cer")
     wer = evaluate.load("wer")
 
