@@ -838,7 +838,6 @@ def main():
     )
 
 
-
     # parse args
     args = parser.parse_args()
 
@@ -855,6 +854,10 @@ def main():
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_jax_'+data_str
+    elif args.output_dir == './':
+        raise ValueError(
+            f"pass in folder name other than current directory"
+        )
     print('output directory set to : {}'.format(args.output_dir))
 
     # if overwrite_output_dir
