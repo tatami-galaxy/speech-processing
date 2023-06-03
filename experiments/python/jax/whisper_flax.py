@@ -675,7 +675,7 @@ def main():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="openai/whisper-tiny",
+        default="openai/whisper-small",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
@@ -776,12 +776,12 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=200,
+        default=1000,
         type=int,
     )
     parser.add_argument(
         "--max_to_keep",
-        default=5,
+        default=3,
         type=int,
     )
     parser.add_argument(
