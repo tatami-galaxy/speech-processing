@@ -557,10 +557,10 @@ def train(args):
         print('loading state')
         state = state.replace(
             step=step,
-            params=restored['model']['params'],  # model or state, automate this
+            params=restored['state']['params'],  # model or state, automate this
             tx=adamw,
-            opt_state=restored['model']['opt_state'],
-            dropout_rng=restored['model']['dropout_rng']
+            opt_state=restored['state']['opt_state'],
+            dropout_rng=restored['state']['dropout_rng']
         )
     # else output_dir cleared in main
     else: print("training from scratch")
@@ -690,7 +690,7 @@ def main():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="openai/whisper-small",
+        default="openai/whisper-tiny",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
