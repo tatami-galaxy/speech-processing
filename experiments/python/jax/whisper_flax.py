@@ -649,7 +649,7 @@ def train(args):
                         summary_writer.scalar(key, val, global_step + 1)
 
                 # save the model, optimizer, lr_scheduler, and seed states 
-                ckpt = {'model': state, 'config': model.config}
+                ckpt = {'state': state, 'config': model.config}
                 save_args = orbax_utils.save_args_from_target(ckpt)
                 checkpoint_manager.save(global_step + 1, ckpt, save_kwargs={'save_args': save_args})
 
