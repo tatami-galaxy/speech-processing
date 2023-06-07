@@ -25,7 +25,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from flax import jax_utils, traverse_util
-from flax.jax_utils import unreplicate
+from flax.jax_utils import unreplicate, pad_shard_unpad
 import orbax
 from flax.training import (
     train_state,
@@ -520,8 +520,6 @@ def train(args):
     p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=args.label_smoothing_factor), "batch")
     p_generate_step = jax.pmap(generate_step, "batch")
 
-    # replicate the train state on each device
-    state = state.replicate()
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(common_voice['train'])}")
@@ -540,21 +538,35 @@ def train(args):
         args.output_dir,
         orbax_checkpointer,
         options
-    )    
+)     
     # load from previous checkpoint
     if not args.overwrite_output_dir:
+        # load from previous checkpoint
         if os.path.isdir(args.output_dir):
             print('checkpoints found. restoring latest')
             # get latest checkpoint
             step = checkpoint_manager.latest_step()
-            checkpoint_manager.restore(step)
+            restored = checkpoint_manager.restore(step)
+            #restored = checkpoint_manager.restore(step, restore_kwargs=restore_kwargs)
             global_step = step
         else:
             raise ValueError(
                 f"no checkpoint found. set overwrite_output_dir to train from scratch"
             )
+        # load state
+        print('loading state')
+        state = state.replace(
+            step=step,
+            params=restored['model']['params'],  # model or state, automate this
+            tx=adamw,
+            opt_state=restored['model']['opt_state'],
+            dropout_rng=restored['model']['dropout_rng']
+        )
     # else output_dir cleared in main
     else: print("training from scratch")
+
+    # replicate the train state on each device
+    state = jax_utils.replicate(state)
 
     # write fixed hyoerparameters to tensorboard
     if has_tensorboard and jax.process_index() == 0:
@@ -594,7 +606,8 @@ def train(args):
             # eval
             # eval_loss with eval_step
             # cer, wer with generate_step
-            if (global_step + 1) % args.eval_steps == 0:
+            #if (global_step + 1) % args.eval_steps == 0:
+            if True:
                 train_time += time.time() - train_start
                 eval_metrics = []
                 eval_preds = []
@@ -602,6 +615,7 @@ def train(args):
                 result_dict = {}
 
                 train_metric = unreplicate(train_metric)
+                
                 progress_bar.write(
                     f"Step ({global_step + 1} | Loss: {train_metric['loss']}, Learning Rate:"
                     f" {train_metric['learning_rate']})"
@@ -612,28 +626,29 @@ def train(args):
                 # eval progress bar
                 eval_bar = tqdm(range(eval_steps), position=1)
                 for batch in eval_loader:
-                    batch = shard(batch)
-                    metrics = p_eval_step(state.params, batch) # dict {'loss' : loss}
+                    labels = batch["labels"]
+                    metrics = pad_shard_unpad(p_eval_step, static_return=True)(
+                        state.params, batch, min_device_batch=args.per_device_eval_batch_size)
                     eval_metrics.append(metrics)
 
-                    generated_ids = p_generate_step(state.params, batch)
-                    preds = jax.device_get(generated_ids.reshape(-1, gen_kwargs["max_length"]))  # ndarray
-                    # labels padded to batch seq length, pred padded to max gen length
-                    eval_preds.extend(preds)  # b, gen_len
-                    eval_labels.extend(batch["labels"][0])  # b, seq_len  
-
+                    # generation
+                    generated_ids = pad_shard_unpad(p_generate_step)(state.params, batch)
+                    eval_preds.extend(jax.device_get(generated_ids.reshape(-1, gen_kwargs["max_length"])))
+                    eval_labels.extend(labels)
+    
                     eval_bar.update(1)
 
                 # train metrics (loss)
                 train_metrics = get_metrics(train_metrics)  # dict
                 train_metrics = jax.tree_util.tree_map(jnp.mean, train_metrics)  # dict
+                # normalize eval metrics
                 # eval metrics (loss)
                 eval_metrics = get_metrics(eval_metrics)  # dict
                 eval_metrics = jax.tree_util.tree_map(jnp.mean, eval_metrics)  # dict
                 # cer, wer
                 result = compute_metrics(eval_preds, eval_labels)
                 eval_metrics.update(result)
-                
+
                 # collect results together
                 result_dict['train_time'] = train_time
                 result_dict['train_loss'] = train_metrics['loss']
