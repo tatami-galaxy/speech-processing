@@ -144,7 +144,7 @@ def train(args, accelerator):
     max_input_length = args.max_duration_in_seconds * feature_extractor.sampling_rate
     min_input_length = args.min_duration_in_seconds * feature_extractor.sampling_rate
     #audio_column_name = args.audio_column_name
-    #num_workers = args.preprocessing_num_workers
+    #num_workers = args.num_workers
     #text_column_name = args.text_column_name
     #do_lower_case = args.do_lower_case
     model_input_name = feature_extractor.model_input_names[0]
@@ -186,7 +186,10 @@ def train(args, accelerator):
     
     with accelerator.main_process_first():
         # vectorize dataset
-        common_voice = common_voice.map(prepare_dataset, remove_columns=common_voice.column_names["train"]) #, num_proc=2)
+        common_voice = common_voice.map(
+            prepare_dataset,
+            remove_columns=common_voice.column_names["train"],
+            num_proc=args.num_workers)
 
 
     # filter data that is shorter than min_input_length or longer than
@@ -196,7 +199,7 @@ def train(args, accelerator):
 
     common_voice = common_voice.filter(
         is_audio_in_length_range,
-        #num_proc=num_workers,
+        num_proc=args.num_workers,
         input_columns=["input_length"],
     )
 
@@ -341,7 +344,7 @@ def train(args, accelerator):
                     # compute metric
                     # generate and calculate cer, wer
                     # unwrap model?
-                    output_ids = model.module.generate(
+                    output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
                         task=args.task,
@@ -349,9 +352,13 @@ def train(args, accelerator):
                         is_multilingual=True,
                         **gen_kwargs
                     )
+                    # pad_acrss_processes to get equal length for each processs
+                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
+                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
 
-                    output_ids = accelerator.gather_for_metrics((output_ids))
-                    label_ids = accelerator.gather_for_metrics((batch["labels"]))
+                    output_ids = accelerator.gather(output_ids).cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids).cpu().numpy()  # gather_for_metrics
+
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
@@ -510,6 +517,12 @@ def main():
         type=int,
     )
     parser.add_argument(
+        '--num_workers',
+        type=int,
+        default=os.cpu_count, # os.cpu_count
+        help="The number of processes to use for the preprocessing."
+    )
+    parser.add_argument(
         "--lr",
         default=1e-5,
         type=float,
@@ -579,7 +592,7 @@ def main():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        logging_dir=args.output_dir
+        logging_dir=args.output_dir  # project_dir 
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.

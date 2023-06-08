@@ -259,8 +259,9 @@ def train(args):
     common_voice = common_voice.map(
         prepare_dataset,
         remove_columns=common_voice.column_names["train"],
-        desc="vectorize dataset"
-    ) #, num_proc=2)
+        desc="vectorize dataset",
+        num_proc=args.num_workers,
+    ) 
 
     # train and test datasets
     train_dataset = common_voice["train"]
