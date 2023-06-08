@@ -343,7 +343,7 @@ def train(args, accelerator):
 
                     # compute metric
                     # generate and calculate cer, wer
-                    # unwrap model?
+                    ## slow ##
                     output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
@@ -519,7 +519,7 @@ def main():
     parser.add_argument(
         '--num_workers',
         type=int,
-        default=os.cpu_count, # os.cpu_count
+        default=os.cpu_count(), # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(

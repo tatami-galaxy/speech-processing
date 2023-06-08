@@ -803,7 +803,7 @@ def main():
     parser.add_argument(
         '--num_workers',
         type=int,
-        default=os.cpu_count, # os.cpu_count
+        default=os.cpu_count(), # os.cpu_count()
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
