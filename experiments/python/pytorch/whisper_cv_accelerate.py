@@ -315,7 +315,8 @@ def train(args, accelerator):
     # Training
 
     # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
+    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
     while True:
 
@@ -333,7 +334,9 @@ def train(args, accelerator):
 
             progress_bar.update(1)
 
-            if (global_step + 1) % args.eval_steps == 0:  ## eval is slow. how to speed up?
+            if (global_step + 1) % args.eval_steps == 0:
+                # eval progress bar
+                #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
                 model.eval()
                 val_loss = 0
                 for batch in eval_dataloader:
@@ -352,13 +355,15 @@ def train(args, accelerator):
                         is_multilingual=True,
                         **gen_kwargs
                     )
-                    # pad_acrss_processes to get equal length for each processs
+                    # pad_acrss_processes recursively pads the tensors 
+                    # in a nested list/tuple/dictionary of tensors from all devices 
+                    # to the same size so they can safely be gathered
                     output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
                     label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-
-                    output_ids = accelerator.gather(output_ids).cpu().numpy()  # gather_for_metrics
-                    label_ids = accelerator.gather(label_ids).cpu().numpy()  # gather_for_metrics
-
+                    # gather from all devices
+                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
+                    # decode ids
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
@@ -370,6 +375,11 @@ def train(args, accelerator):
                     )
                     cer_metric.add_batch(predictions=predictions, references=references)
                     wer_metric.add_batch(predictions=predictions, references=references)
+
+                    eval_bar.update(1)
+
+                eval_bar.refresh()
+                eval_bar.reset()
 
                 cer_result = cer_metric.compute()
                 wer_result = wer_metric.compute()
@@ -592,7 +602,7 @@ def main():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        logging_dir=args.output_dir  # project_dir 
+        project_dir=args.output_dir  # project_dir 
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
