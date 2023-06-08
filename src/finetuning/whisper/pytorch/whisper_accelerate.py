@@ -415,7 +415,8 @@ def train(args, accelerator):
                     # compute metric
                     # generate and calculate cer 
                     # unwrap model?
-                    output_ids = model.module.generate(
+                     ## slow ##
+                    output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
                         task=args.task,
@@ -424,8 +425,13 @@ def train(args, accelerator):
                         **gen_kwargs
                     )
 
-                    output_ids = accelerator.gather_for_metrics((output_ids))
-                    label_ids = accelerator.gather_for_metrics((batch["labels"]))
+                    # pad_acrss_processes to get equal length for each processs
+                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
+                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
+
+                    output_ids = accelerator.gather(output_ids).cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids).cpu().numpy()  # gather_for_metrics
+                    
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
