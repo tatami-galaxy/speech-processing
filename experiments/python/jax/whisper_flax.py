@@ -410,6 +410,12 @@ def train(args):
     # define gradient update step fn
     # batch -> input_features, decoder_input_ids, decoder_attention_mask, labels
     # cant print values inside a jit compiled function
+
+    # pmap -> replicate your model on devices, shard your data,
+    # and have each calculate their individual loss and gradients.
+    # pmean to average them across all devices and apply your gradient (psum)
+
+    # use pjit for model sharding
     def train_step(state, batch, label_smoothing_factor=0.0):
         dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
 
@@ -429,18 +435,18 @@ def train(args):
         # if has_aux is True then a tuple of ((value, auxiliary_data), gradient) is returned.
         grad_fn = jax.value_and_grad(compute_loss, has_aux=True)
         (loss, num_labels), grad = grad_fn(state.params)
-        num_labels = jax.lax.psum(num_labels, "batch")
+        num_labels = jax.lax.psum(num_labels, "batch")  # AllReduce
 
         # true loss = total loss / total samples
-        loss = jax.lax.psum(loss, "batch")
+        loss = jax.lax.psum(loss, "batch")  # AllReduce
         loss = jax.tree_util.tree_map(lambda x: x / num_labels, loss)
 
         # true grad = total grad / total samples
-        grad = jax.lax.psum(grad, "batch")
+        grad = jax.lax.psum(grad, "batch")  # AllReduce
         grad = jax.tree_util.tree_map(lambda x: x / num_labels, grad)
         new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
 
-        metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
+        metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step), "num_labels": num_labels}
         return new_state, metrics
 
 
@@ -451,10 +457,10 @@ def train(args):
         logits = model(**batch, params=params, train=False)[0]
 
         loss, num_labels = loss_fn(logits, labels, batch["decoder_attention_mask"], label_smoothing_factor)
-        num_labels = jax.lax.psum(num_labels, "batch")
+        num_labels = jax.lax.psum(num_labels, "batch") # AllReduce
 
         # true loss = total loss / total samples
-        loss = jax.lax.psum(loss, "batch")
+        loss = jax.lax.psum(loss, "batch")  # AllReduce
         loss = jax.tree_util.tree_map(lambda x: x / num_labels, loss)
 
         metrics = {"loss": loss}
@@ -600,6 +606,8 @@ def train(args):
             # shard changes dim
             batch = shard(batch) 
             state, train_metric = p_train_step(state, batch) 
+            print(train_metric)
+            quit()
             train_metrics.append(train_metric)
 
             progress_bar.update(1)

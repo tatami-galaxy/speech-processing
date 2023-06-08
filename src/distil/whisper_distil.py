@@ -404,7 +404,9 @@ def train(args, accelerator):
     # Training
 
     # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
+    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    # eval bar
+    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
     while True:
 
@@ -443,7 +445,6 @@ def train(args, accelerator):
 
             progress_bar.update(1)
 
-
             if (global_step + 1) % args.eval_steps == 0:
                 model.eval()
                 val_loss = 0
@@ -481,7 +482,11 @@ def train(args, accelerator):
                         clean_up_tokenization_spaces=True
                     )
                     metric.add_batch(predictions=predictions, references=references)
-                    accelerator.print("batch added")
+
+                    eval_bar.update(1)
+                    
+                eval_bar.refresh()
+                eval_bar.reset()
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))

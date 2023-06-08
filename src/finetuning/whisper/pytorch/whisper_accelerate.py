@@ -385,7 +385,9 @@ def train(args, accelerator):
     # Training
 
     # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
+    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    # eval bar
+    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
     while True:
 
@@ -442,6 +444,12 @@ def train(args, accelerator):
                         clean_up_tokenization_spaces=True
                     )
                     metric.add_batch(predictions=predictions, references=references)
+
+                    eval_bar.update(1)
+
+
+                eval_bar.refresh()
+                eval_bar.reset()
 
                 cer_result = metric.compute()
                 # add wer for hindi
