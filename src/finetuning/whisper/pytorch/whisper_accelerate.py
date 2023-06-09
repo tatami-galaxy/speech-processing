@@ -183,7 +183,7 @@ def train(args, accelerator):
     )
     if args.model_lang is not None:
         # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-        tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
+        tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
 
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -275,7 +275,7 @@ def train(args, accelerator):
 
     # since tokenizer saved in args.output_dir
     processor = AutoProcessor.from_pretrained(args.output_dir)
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
     # data collator
@@ -431,8 +431,8 @@ def train(args, accelerator):
                     output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
                     label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
 
-                    output_ids = accelerator.gather(output_ids).cpu().numpy()  # gather_for_metrics
-                    label_ids = accelerator.gather(label_ids).cpu().numpy()  # gather_for_metrics
+                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
                     
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
@@ -505,12 +505,6 @@ def run():
         default=None,  # openai/whisper-small
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
-    )
-    parser.add_argument(
-        "--teacher_name_or_path",
-        default=None,
-        type=str,
-        help="Path to trained teacher model",
     )
     parser.add_argument(
         '--forced_decoder_ids',
@@ -631,8 +625,13 @@ def run():
         type=str,
     )
     parser.add_argument(
+        "--task",
+        default='transcribe',
+        type=str,
+    )
+    parser.add_argument(
         "--train_batch_size",
-        default=32,
+        default=32, # 16
         type=int,
     )
     parser.add_argument(
@@ -703,17 +702,11 @@ def run():
         raise ValueError(
             f"pass in model_name_or_path"
         )
-    # check if model path is None
-    if args.teacher_name_or_path is None:
-        raise ValueError(
-            f"pass in teacher_name_or_path"
-        )
     # check if output directory is passed in
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
-        teacher_str = args.teacher_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_distil_from_'+teacher_str
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
     print('output directory set to : {}'.format(args.output_dir))
     
 
