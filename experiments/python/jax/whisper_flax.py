@@ -63,6 +63,7 @@ from datasets import (
 import evaluate
 
 
+#jax.config.update('jax_array', False) -> only works below jax and jaxlib 0.4.6
 logger = logging.getLogger(__name__)
 
 # sending telemetry
@@ -527,14 +528,11 @@ def train(args):
     p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=args.label_smoothing_factor), "batch")
     p_generate_step = jax.pmap(generate_step, "batch")
 
+    # replicate the train state on each device
+    state = state.replicate()
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(common_voice['train'])}")
-    logger.info(f"  Num steps = {args.train_steps}")
-    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
-
-    global_step = 0  # tracks total steps
+    # total steps
+    global_step = 0  
     train_time = 0
 
     # init checkpointer
@@ -554,7 +552,6 @@ def train(args):
             # get latest checkpoint
             step = checkpoint_manager.latest_step()
             restored = checkpoint_manager.restore(step)
-            #restored = checkpoint_manager.restore(step, restore_kwargs=restore_kwargs)
             global_step = step
         else:
             raise ValueError(
@@ -564,21 +561,26 @@ def train(args):
         print('loading state')
         state = state.replace(
             step=step,
-            params=restored['state']['params'],  # model or state, automate this
+            params=restored['model']['params'],  # model or state, automate this
             tx=adamw,
-            opt_state=restored['state']['opt_state'],
-            dropout_rng=restored['state']['dropout_rng']
+            opt_state=restored['model']['opt_state'],
+            dropout_rng=restored['model']['dropout_rng']
         )
     # else output_dir cleared in main
     else: print("training from scratch")
 
-    # replicate the train state on each device
-    state = jax_utils.replicate(state)
 
     # write fixed hyoerparameters to tensorboard
     if has_tensorboard and jax.process_index() == 0:
         summary_writer.scalar("train_batch_size", train_batch_size, global_step + 1)
         summary_writer.scalar("eval_batch_size", eval_batch_size, global_step + 1)
+
+    
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(common_voice['train'])}")
+    logger.info(f"  Num steps = {args.train_steps}")
+    logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
+    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
 
     # Training
@@ -606,8 +608,6 @@ def train(args):
             # shard changes dim
             batch = shard(batch) 
             state, train_metric = p_train_step(state, batch) 
-            print(train_metric)
-            quit()
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
@@ -616,7 +616,7 @@ def train(args):
             # eval_loss with eval_step
             # cer, wer with generate_step
             #if (global_step + 1) % args.eval_steps == 0:
-            if True:
+            if True:  # for debugging eval step
                 train_time += time.time() - train_start
                 eval_metrics = []
                 eval_preds = []
