@@ -595,7 +595,7 @@ def train(args):
 
     # replicate the train state on each device
     #state = state.replicate()
-    state = jax.utils.replicate(state)
+    state = jax_utils.replicate(state)
 
     # Training
 
