@@ -310,10 +310,6 @@ def train(args):
         )
 
 
-    # initialize training
-    rng = jax.random.PRNGKey(args.seed)
-    rng, dropout_rng = jax.random.split(rng)
-
     # compute effective batch size
     train_batch_size = int(args.per_device_train_batch_size) * jax.device_count()
     eval_batch_size = int(args.per_device_eval_batch_size) * jax.device_count()
@@ -599,6 +595,10 @@ def train(args):
 
     # Training
 
+    # initialize training
+    rng = jax.random.PRNGKey(args.seed)
+    dropout_rngs = jax.random.split(rng, jax.local_device_count())
+
     # main progress bar
     progress_bar = tqdm(range(global_step, args.train_steps), position=0)
 
@@ -621,7 +621,7 @@ def train(args):
             # check with multi gpu
             # shard changes dim
             batch = shard(batch) 
-            state, train_metric, dropout_rng = p_train_step(state, batch, dropout_rng) 
+            state, train_metric, dropout_rngs = p_train_step(state, batch, dropout_rngs) 
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
