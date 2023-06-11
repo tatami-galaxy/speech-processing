@@ -19,5 +19,5 @@ git clone https://github.com/tatami-galaxy/speech-processing.git
 cd speech-processing
 python repo_setup.py  # --jax or --torch 
 huggingface-cli login 
-accelerate config  # if installed accelerate
+accelerate config  # if installed accelerate (--torch)
 ```
