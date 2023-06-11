@@ -597,7 +597,7 @@ def train(args):
 
     # initialize training
     rng = jax.random.PRNGKey(args.seed)
-    dropout_rngs = jax.random.split(rng, jax.local_device_count())
+    rng, dropout_rng = jax.random.split(rng, jax.local_device_count())
 
     # main progress bar
     progress_bar = tqdm(range(global_step, args.train_steps), position=0)
@@ -621,7 +621,7 @@ def train(args):
             # check with multi gpu
             # shard changes dim
             batch = shard(batch) 
-            state, train_metric, dropout_rngs = p_train_step(state, batch, dropout_rngs) 
+            state, train_metric, dropout_rng = p_train_step(state, batch, dropout_rng) 
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
