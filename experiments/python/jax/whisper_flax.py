@@ -82,11 +82,11 @@ LANG_TO_ID = {"hindi" : "<|hi|>"}
 
     
 
-class TrainState(train_state.TrainState):
-    dropout_rng: jnp.ndarray
+#class TrainState(train_state.TrainState):
+    #dropout_rng: jnp.ndarray
 
-    def replicate(self):
-        return jax_utils.replicate(self).replace(dropout_rng=shard_prng_key(self.dropout_rng))
+    #def replicate(self):
+        #return jax_utils.replicate(self).replace(dropout_rng=shard_prng_key(self.dropout_rng.reshape(-1)))
     
 
 def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False, drop_last=True):
@@ -380,7 +380,8 @@ def train(args):
 
     # setup train state
     # FlaxWhisperForConditionalGenerationModule -> __call__ -> self.model -> FlaxWhisperModule
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw, dropout_rng=dropout_rng)
+    #state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw, dropout_rng=dropout_rng)
+    state = train_state.TrainState.create(apply_fn=model.__call__, params=model.params, tx=adamw)
 
 
     # label smoothed cross entropy
@@ -417,8 +418,9 @@ def train(args):
     # pmean to average them across all devices and apply your gradient (psum)
 
     # use pjit for model sharding
-    def train_step(state, batch, label_smoothing_factor=0.0):
-        dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
+    def train_step(state, batch, dropout_rng, label_smoothing_factor=args.label_smoothing_factor):
+        #dropout_rng, new_dropout_rng = jax.random.split(state.dropout_rng)
+        dropout_rng, new_dropout_rng = jax.random.split(dropout_rng)
 
         def compute_loss(params):
             labels = batch.pop("labels")
@@ -445,10 +447,11 @@ def train(args):
         # true grad = total grad / total samples
         grad = jax.lax.psum(grad, "batch")  # AllReduce
         grad = jax.tree_util.tree_map(lambda x: x / num_labels, grad)
-        new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
+        #new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
+        new_state = state.apply_gradients(grads=grad)
 
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step), "num_labels": num_labels}
-        return new_state, metrics
+        return new_state, metrics, new_dropout_rng
 
 
     # define eval fn
@@ -528,8 +531,6 @@ def train(args):
     p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=args.label_smoothing_factor), "batch")
     p_generate_step = jax.pmap(generate_step, "batch")
 
-    # replicate the train state on each device
-    state = state.replicate()
 
     # total steps
     global_step = 0  
@@ -546,27 +547,36 @@ def train(args):
 )     
     # load from previous checkpoint
     if not args.overwrite_output_dir:
+
         # load from previous checkpoint
         if os.path.isdir(args.output_dir):
-            print('checkpoints found. restoring latest')
+            print('checkpoints found')
             # get latest checkpoint
             step = checkpoint_manager.latest_step()
-            restored = checkpoint_manager.restore(step)
+            print('restoring step : {}'.format(step))
+
+            # empty state and config to load state into
+            empty_state = train_state.TrainState.create(
+                apply_fn=model.__call__,
+                params=jax.tree_map(np.zeros_like, model.params),  # values of the tree leaf doesn't matter
+                tx=adamw,
+                #dropout_rng=dropout_rng
+            )
+            empty_config = model.config
+            #target = {'model': empty_state, 'config': empty_config, 'data': [jnp.zeros_like(x1)]}
+            target = {'state': empty_state, 'config': empty_config}  # state or model -> automate maybe
+
+            # restore
+            restored = checkpoint_manager.restore(step, items=target)
+            state = restored['state']
             global_step = step
+
         else:
             raise ValueError(
                 f"no checkpoint found. set overwrite_output_dir to train from scratch"
             )
-        # load state
-        print('loading state')
-        state = state.replace(
-            step=step,
-            params=restored['model']['params'],  # model or state, automate this
-            tx=adamw,
-            opt_state=restored['model']['opt_state'],
-            dropout_rng=restored['model']['dropout_rng']
-        )
-    # else output_dir cleared in main
+
+    # else train from scratch, output_dir cleared in main
     else: print("training from scratch")
 
 
@@ -582,6 +592,10 @@ def train(args):
     logger.info(f"  Instantaneous batch size per device = {args.per_device_train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
 
+
+    # replicate the train state on each device
+    #state = state.replicate()
+    state = jax.utils.replicate(state)
 
     # Training
 
@@ -607,7 +621,7 @@ def train(args):
             # check with multi gpu
             # shard changes dim
             batch = shard(batch) 
-            state, train_metric = p_train_step(state, batch) 
+            state, train_metric, dropout_rng = p_train_step(state, batch, dropout_rng) 
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
@@ -615,8 +629,8 @@ def train(args):
             # eval
             # eval_loss with eval_step
             # cer, wer with generate_step
-            #if (global_step + 1) % args.eval_steps == 0:
-            if True:  # for debugging eval step
+            if (global_step + 1) % args.eval_steps == 0:
+            #if True:  # for debugging eval step
                 train_time += time.time() - train_start
                 eval_metrics = []
                 eval_preds = []
@@ -673,7 +687,7 @@ def train(args):
                         summary_writer.scalar(key, val, global_step + 1)
 
                 # save the model, optimizer, lr_scheduler, and seed states 
-                ckpt = {'state': state, 'config': model.config}
+                ckpt = {'state': unreplicate(state), 'config': model.config}
                 save_args = orbax_utils.save_args_from_target(ckpt)
                 checkpoint_manager.save(global_step + 1, ckpt, save_kwargs={'save_args': save_args})
 
