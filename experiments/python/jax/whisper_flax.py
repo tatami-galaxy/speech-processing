@@ -62,6 +62,8 @@ from datasets import (
 
 import evaluate
 
+#from multiprocess import set_start_method
+
 
 #jax.config.update('jax_array', False) -> only works below jax and jaxlib 0.4.6
 logger = logging.getLogger(__name__)
@@ -223,7 +225,10 @@ def train(args):
     # https://github.com/huggingface/transformers/blob/v4.29.1/src/transformers/models/whisper/feature_extraction_whisper.py#L254
     #if return_attention_mask:
         # rescale from sample (48000) to feature (3000)
-    def prepare_dataset(batch):
+    def prepare_dataset(batch, rank):
+
+        #os.environ["CUDA_VISIBLE_DEVICES"] = str(rank % jax.device_count())
+
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
 
@@ -259,6 +264,7 @@ def train(args):
     # input_features, decoder_input_ids, decoder_attention_mask, labels
     common_voice = common_voice.map(
         prepare_dataset,
+        #with_rank=True,
         remove_columns=common_voice.column_names["train"],
         desc="vectorize dataset",
         num_proc=args.num_workers,
@@ -548,7 +554,7 @@ def train(args):
         if os.path.isdir(args.output_dir):
             print('checkpoints found')
             # get latest checkpoint
-            step = checkpoint_manager.latest_step()
+            step = checkpoint_manager.latest_step()  # or choose step
             print('restoring step : {}'.format(step))
 
             # empty state and config to load state into
@@ -929,6 +935,6 @@ def main():
 
 
 if __name__ == "__main__":
-
+    #set_start_method("spawn")
     main()
 
