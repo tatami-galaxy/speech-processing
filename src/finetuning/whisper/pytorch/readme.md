@@ -25,7 +25,11 @@ accelerate launch whisper_accelerate.py --model_name_or_path /home/ujan/speech-p
 # --max_train_samples 1000 --max_eval_samples 100 --eval_steps 10
 
 # 76
-export HF_DATASETS_CACHE="/media/ujan/52850d32-e9c9-47e3-8370-07c2aad12eb1/datasets"
+export HF_DATASETS_CACHE="/raid/cache"
+or
+export HF_DATASETS_CACHE="/media/ujan/asr"
+accelerate launch whisper_accelerate.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/whisper-medium  --data_dir /home/ujan/Datasets --train_batch_size 4 --train_steps 200000 --eval_steps 2000
+
 
 
 

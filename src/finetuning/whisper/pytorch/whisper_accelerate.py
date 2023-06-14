@@ -107,8 +107,8 @@ def train(args, accelerator):
 
     # data files
     data_files = {
-        'train': args.data_dir+'/final_train_v2a_wo_aishell4_hkust.csv', # final_train.csv
-        'validation': args.data_dir+'/final_dev_v2a_wo_aishell4_hkust.csv', # final_train.csv
+        'train': args.data_dir+'/final_train_v2a.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_v2a_short.csv', # final_train.csv
         }
 
     raw_datasets = load_dataset('csv', data_files=data_files)
@@ -242,7 +242,6 @@ def train(args, accelerator):
             remove_columns=next(iter(raw_datasets.values())).column_names,
             num_proc=num_workers,
             #keep_in_memory=True,  # no cache
-            #cache_dir="/media/ujan/c8b0350d-fbf1-45fa-bc8d-be17fdc5b8b3/dataset",
             desc="preprocess train dataset",
         )
 
@@ -257,7 +256,6 @@ def train(args, accelerator):
             num_proc=num_workers,
             input_columns=["input_length"],
             #keep_in_memory=True
-            #cache_dir="/media/ujan/c8b0350d-fbf1-45fa-bc8d-be17fdc5b8b3/dataset",
         )
 
 
@@ -631,7 +629,7 @@ def run():
     )
     parser.add_argument(
         "--train_batch_size",
-        default=32, # 16
+        default=16,
         type=int,
     )
     parser.add_argument(
@@ -656,7 +654,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
@@ -702,7 +700,7 @@ def run():
         raise ValueError(
             f"pass in model_name_or_path"
         )
-    # check if output directory is passed in
+   # check if output directory is passed in
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
@@ -715,7 +713,7 @@ def run():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        logging_dir=args.output_dir
+        project_dir=args.output_dir
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
