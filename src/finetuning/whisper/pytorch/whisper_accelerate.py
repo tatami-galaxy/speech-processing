@@ -103,7 +103,7 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 def train(args, accelerator):
 
     # load dataset
-    print('loading dataset from {}'.format(args.data_dir))
+    accelerator.print('loading dataset from {}'.format(args.data_dir))
 
     # data files
     data_files = {

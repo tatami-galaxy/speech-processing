@@ -34,7 +34,6 @@ from flax.training import (
 from flax.training.common_utils import (
     onehot,
     shard,
-    shard_prng_key,
     get_metrics
 )
 
@@ -62,7 +61,7 @@ from datasets import (
 
 import evaluate
 
-#from multiprocess import set_start_method
+from multiprocess import set_start_method
 
 
 #jax.config.update('jax_array', False) -> only works below jax and jaxlib 0.4.6
@@ -227,7 +226,7 @@ def train(args):
         # rescale from sample (48000) to feature (3000)
     def prepare_dataset(batch, rank):
 
-        #os.environ["CUDA_VISIBLE_DEVICES"] = str(rank % jax.device_count())
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank % jax.device_count())
 
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
@@ -264,7 +263,7 @@ def train(args):
     # input_features, decoder_input_ids, decoder_attention_mask, labels
     common_voice = common_voice.map(
         prepare_dataset,
-        #with_rank=True,
+        with_rank=True,
         remove_columns=common_voice.column_names["train"],
         desc="vectorize dataset",
         num_proc=args.num_workers,
@@ -935,6 +934,6 @@ def main():
 
 
 if __name__ == "__main__":
-    #set_start_method("spawn")
+    set_start_method("spawn")
     main()
 
