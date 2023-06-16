@@ -80,6 +80,7 @@ while root.split('/')[-1] != 'speech-processing':
 
 # constants
 LANG_TO_ID = {"hindi" : "<|hi|>"}
+LANG_TO_ID = {"chinese" : "<|zh|>"}
 
     
 
@@ -156,7 +157,8 @@ def eval(args):
     model = FlaxWhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         seed=args.seed,
-        dtype=getattr(jnp, args.dtype)
+        dtype=getattr(jnp, args.dtype),
+        from_pt=args.from_pt
     )
     #model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     #model.config.suppress_tokens = []
@@ -611,6 +613,10 @@ def main():
         default="openai/whisper-tiny",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--from_pt",
+        action="store_true",
     )
     parser.add_argument(
         "--freeze_encoder",

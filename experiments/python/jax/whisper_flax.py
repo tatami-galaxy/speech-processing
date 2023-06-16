@@ -80,6 +80,7 @@ while root.split('/')[-1] != 'speech-processing':
 
 # constants
 LANG_TO_ID = {"hindi" : "<|hi|>"}
+LANG_TO_ID = {"chinese" : "<|zh|>"}
 
     
 

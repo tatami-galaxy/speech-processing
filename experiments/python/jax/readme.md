@@ -11,7 +11,7 @@ python whisper_flax_torch_loader.py --dtype float32
 python whisper_flax.py --dtype float32 --model_name_or_path openai/whisper-tiny --max_train_samples 100 --max_test_samples 20 --overwrite_output_dir
 
 # eval
-python whisper_flax_eval.py --dtype float32 --model_name_or_path " " --checkpoint_dir " "
+python whisper_flax_eval.py --dtype float32 --model_name_or_path " " --checkpoint_dir " " --model_lang chinese --data_lang zh-CN
 
 
 # runpod
