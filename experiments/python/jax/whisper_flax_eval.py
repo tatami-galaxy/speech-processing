@@ -224,9 +224,9 @@ def eval(args):
     # https://github.com/huggingface/transformers/blob/v4.29.1/src/transformers/models/whisper/feature_extraction_whisper.py#L254
     #if return_attention_mask:
         # rescale from sample (48000) to feature (3000)
-    def prepare_dataset(batch, rank):
+    def prepare_dataset(batch):  #, rank):
 
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank % jax.device_count())
+        #os.environ["CUDA_VISIBLE_DEVICES"] = str(rank % jax.device_count())
 
         # load and resample audio data from 48 to 16kHz
         audio = batch["audio"]
@@ -263,7 +263,7 @@ def eval(args):
     # input_features, decoder_input_ids, decoder_attention_mask, labels
     common_voice = common_voice.map(
         prepare_dataset,
-        with_rank=True,
+        #with_rank=True,
         remove_columns=common_voice.column_names["test"],
         desc="vectorize dataset",
         num_proc=args.num_workers,
@@ -492,35 +492,40 @@ def eval(args):
     p_eval_step = jax.pmap(partial(eval_step, label_smoothing_factor=args.label_smoothing_factor), "batch")
     p_generate_step = jax.pmap(generate_step, "batch")
 
-    # init checkpointer
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
-    options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
-    # checkpoint manager
-    checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        args.checkpoint_dir,
-        orbax_checkpointer,
-        options
-)     
 
-    # load from previous checkpoint
-    # get latest checkpoint
-    step = checkpoint_manager.latest_step()  # or choose step
-    print('restoring step : {}'.format(step))
+    if args.checkpoint_dir is not None:
 
-    # empty state and config to load state into
-    empty_state = train_state.TrainState.create(
-        apply_fn=model.__call__,
-        params=jax.tree_map(np.zeros_like, model.params),  # values of the tree leaf doesn't matter
-        tx=adamw,
-        #dropout_rng=dropout_rng
-    )
-    empty_config = model.config
-    #target = {'model': empty_state, 'config': empty_config, 'data': [jnp.zeros_like(x1)]}
-    target = {'model': empty_state, 'config': empty_config}  # state or model -> automate maybe
+        print("loading from : {}".format(args.checkpoint_dir))
 
-    # restore
-    restored = checkpoint_manager.restore(step, items=target)
-    state = restored['model']
+        # init checkpointer
+        orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
+        options = orbax.checkpoint.CheckpointManagerOptions(max_to_keep=args.max_to_keep, create=True)
+        # checkpoint manager
+        checkpoint_manager = orbax.checkpoint.CheckpointManager(
+            args.checkpoint_dir,
+            orbax_checkpointer,
+            options
+    )     
+
+        # load from previous checkpoint
+        # get latest checkpoint
+        step = checkpoint_manager.latest_step()  # or choose step
+        print('restoring step : {}'.format(step))
+
+        # empty state and config to load state into
+        empty_state = train_state.TrainState.create(
+            apply_fn=model.__call__,
+            params=jax.tree_map(np.zeros_like, model.params),  # values of the tree leaf doesn't matter
+            tx=adamw,
+            #dropout_rng=dropout_rng
+        )
+        empty_config = model.config
+        #target = {'model': empty_state, 'config': empty_config, 'data': [jnp.zeros_like(x1)]}
+        target = {'state': empty_state, 'config': empty_config}  # state or model -> automate maybe
+
+        # restore
+        restored = checkpoint_manager.restore(step, items=target)
+        state = restored['state']
 
 
 
@@ -640,7 +645,7 @@ def main():
         "--checkpoint_dir",
         default=None,
         type=str,
-        help="The output directory where the model checkpoints and predictions will be written.",
+        help="Has to be folder containing step folder. Not step folder itself",
     )
     parser.add_argument(
         "--model_lang",
@@ -754,10 +759,9 @@ def main():
         )
     # check if output directory is passed in
     if args.checkpoint_dir is None:
-        raise ValueError(
-            f"pass in checkpoint directory"
-        )
-    print('checkpoint directory set to : {}'.format(args.checkpoint_dir))
+        print('checkpoint None -> evalulating base model for {}'.format(args.model_name_or_path))
+    else:
+        print('checkpoint directory set to : {}'.format(args.checkpoint_dir))
 
     # check if model path is None
     if args.model_name_or_path is None:
@@ -784,6 +788,6 @@ def main():
 
 
 if __name__ == "__main__":
-    set_start_method("spawn")
+    #set_start_method("spawn")
     main()
 
