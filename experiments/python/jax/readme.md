@@ -13,7 +13,6 @@ python whisper_flax.py --dtype float32 --model_name_or_path openai/whisper-tiny 
 # eval
 python whisper_flax_eval.py --dtype float32 --model_name_or_path " " --checkpoint_dir " " --model_lang chinese --data_lang zh-CN
 
-
 # runpod
 python whisper_flax.py --model_name_or_path openai/whisper-small --per_device_train_batch_size 8 --overwrite_output_dir --num_workers 1
 
