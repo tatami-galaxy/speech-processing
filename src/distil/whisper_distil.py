@@ -260,7 +260,6 @@ def train(args, accelerator):
             remove_columns=next(iter(raw_datasets.values())).column_names,
             num_proc=num_workers,
             #keep_in_memory=True,  # no cache
-            #cache_dir="/media/ujan/c8b0350d-fbf1-45fa-bc8d-be17fdc5b8b3/dataset",
             desc="preprocess train dataset",
         )
 
@@ -275,7 +274,6 @@ def train(args, accelerator):
             num_proc=num_workers,
             input_columns=["input_length"],
             #keep_in_memory=True
-            #cache_dir="/media/ujan/c8b0350d-fbf1-45fa-bc8d-be17fdc5b8b3/dataset",
         )
 
 
@@ -469,8 +467,8 @@ def train(args, accelerator):
                     output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
                     label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
 
-                    output_ids = accelerator.gather(output_ids).cpu().numpy()  # gather_for_metrics
-                    label_ids = accelerator.gather(label_ids).cpu().numpy()  # gather_for_metrics
+                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
 
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
