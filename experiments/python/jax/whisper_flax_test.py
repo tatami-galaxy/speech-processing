@@ -63,6 +63,10 @@ import evaluate
 
 from multiprocess import set_start_method
 
+import os
+flags = os.environ.get('XLA_FLAGS', '')
+os.environ['XLA_FLAGS'] = flags + " --xla_force_host_platform_device_count=4"
+
 
 #jax.config.update('jax_array', False) -> only works below jax and jaxlib 0.4.6
 logger = logging.getLogger(__name__)
@@ -262,7 +266,6 @@ def train(args):
 
     # vectorize dataset
     # input_features, decoder_input_ids, decoder_attention_mask, labels
-    ## multithreading errors ##
     common_voice = common_voice.map(
         prepare_dataset,
         with_rank=True,
@@ -440,6 +443,8 @@ def train(args):
         # if has_aux is True then a tuple of ((value, auxiliary_data), gradient) is returned.
         grad_fn = jax.value_and_grad(compute_loss, has_aux=True)
         (loss, num_labels), grad = grad_fn(state.params)
+        grad_no_psum = grad
+        # sum over all devices, replicate across each device
         num_labels = jax.lax.psum(num_labels, "batch")  # AllReduce
 
         # true loss = total loss / total samples
@@ -448,13 +453,12 @@ def train(args):
 
         # true grad = total grad / total samples
         grad = jax.lax.psum(grad, "batch")  # AllReduce
-        # divide replicated grad by num_labels (number of actual values)
-        grad = jax.tree_util.tree_map(lambda x: x / num_labels, grad)
+        grad = jax.tree_util.tree_map(lambda x: x / num_labels, grad)  # divide replicated grad by num_labels (number of actual values)
         #new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
         new_state = state.apply_gradients(grads=grad)
 
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step), "num_labels": num_labels}
-        return new_state, metrics, new_dropout_rng
+        return new_state, metrics, new_dropout_rng, grad_no_psum, grad
 
 
     # define eval fn
@@ -547,7 +551,7 @@ def train(args):
         args.output_dir,
         orbax_checkpointer,
         options
-    )     
+)     
     # load from previous checkpoint
     if not args.overwrite_output_dir:
 
@@ -628,7 +632,16 @@ def train(args):
             # check with multi gpu
             # shard changes dim
             batch = shard(batch) 
-            state, train_metric, dropout_rngs = p_train_step(state, batch, dropout_rngs) 
+            state, train_metric, dropout_rngs, grad_no_psum, grad = p_train_step(state, batch, dropout_rngs)
+
+            print(type(grad_no_psum['model']['decoder']['embed_positions']['embedding']))
+            print(grad_no_psum['model']['decoder']['embed_positions']['embedding'].shape)
+            print(grad_no_psum['model']['decoder']['embed_positions']['embedding'])
+
+            print(type(grad['model']['decoder']['embed_positions']['embedding']))
+            print(grad['model']['decoder']['embed_positions']['embedding'].shape)
+            print(grad['model']['decoder']['embed_positions']['embedding'])
+            quit()
             train_metrics.append(train_metric)
 
             progress_bar.update(1)
