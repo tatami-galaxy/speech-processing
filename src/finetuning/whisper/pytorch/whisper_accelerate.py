@@ -340,11 +340,12 @@ def train(args, accelerator):
         accelerator.load_state(args.resume_from_checkpoint)
         # if resumed from checkpoint
         # we need to skip steps until we reach the current step
+        # ../checkpoint-123 -> int(123)
+        steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+        global_step = steps_completed
         if args.skip_steps:
-            # ../checkpoint-123 -> int(123)
-            steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
             train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-            global_step = steps_completed
+
 
 
     def make_generation_config():
