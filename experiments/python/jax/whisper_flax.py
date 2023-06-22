@@ -561,7 +561,7 @@ def train(args):
             # empty state and config to load state into
             empty_state = train_state.TrainState.create(
                 apply_fn=model.__call__,
-                params=jax.tree_map(np.zeros_like, model.params),  # values of the tree leaf doesn't matter
+                params=jax.tree_map(jnp.zeros_like, model.params),  # values of the tree leaf doesn't matter
                 tx=adamw,
                 #dropout_rng=dropout_rng
             )
