@@ -112,12 +112,9 @@ def train(args, accelerator):
 
     raw_datasets = load_dataset('Ujan/asr_testset_zh_16k')
 
-    print(raw_datasets)
-    quit()
-
     # map to new audio path
-    with accelerator.main_process_first():
-        raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
+    #with accelerator.main_process_first():
+        #raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -200,6 +197,9 @@ def train(args, accelerator):
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
+
+    print('works')
+    quit()
 
 
 
@@ -485,6 +485,11 @@ def run():
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
+        "--gradient_accumulation_steps",
+        default=1,
+        type=int,
+    )
+    parser.add_argument(
         "--checkpoint",
         default=None,
         type=str,
@@ -561,10 +566,7 @@ def run():
         transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
         "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
     }
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', track_config)

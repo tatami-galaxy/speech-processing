@@ -482,6 +482,11 @@ def run():
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
+        "--gradient_accumulation_steps",
+        default=1,
+        type=int,
+    )
+    parser.add_argument(
         "--output_dir",
         default=None,  # root+'/models/whisper/'+'whisper_small_cv11'
         type=str,
@@ -571,10 +576,7 @@ def run():
         transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
         "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
     }
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', track_config)
