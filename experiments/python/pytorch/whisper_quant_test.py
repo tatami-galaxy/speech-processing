@@ -198,10 +198,6 @@ def train(args, accelerator):
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-    print('works')
-    quit()
-
-
 
     # resample speech dataset if necessary
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
@@ -260,18 +256,18 @@ def train(args, accelerator):
 
 
     # cer metric
-    #metric = evaluate.load("cer")
-    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+    metric = evaluate.load("cer")
+    #metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
 
     # create a single speech processor
-    if accelerator.is_local_main_process:
+    #if accelerator.is_local_main_process:
         # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        model_config.save_pretrained(args.output_dir)
+        #feature_extractor.save_pretrained(args.output_dir)
+        #tokenizer.save_pretrained(args.output_dir)
+        #model_config.save_pretrained(args.output_dir)
 
     # since tokenizer saved in args.output_dir
-    processor = AutoProcessor.from_pretrained(args.output_dir)
+    processor = AutoProcessor.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
@@ -296,14 +292,6 @@ def train(args, accelerator):
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
 
     global_step = 0  # tracks total steps
-
-
-    # load from checkpoint
-    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
-    # check if checkpoint directory passed in
-    if args.checkpoint is not None:
-        accelerator.print(f"loaded from checkpoint: {args.checkpoint}")
-        accelerator.load_state(args.checkpoint)
 
 
 
@@ -488,12 +476,6 @@ def run():
         "--gradient_accumulation_steps",
         default=1,
         type=int,
-    )
-    parser.add_argument(
-        "--checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
     )
     parser.add_argument(
         "--model_lang",
