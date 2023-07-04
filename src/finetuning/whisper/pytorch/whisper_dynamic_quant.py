@@ -32,7 +32,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
 import argparse
 from accelerate import Accelerator
 
-torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
+#torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
@@ -136,7 +136,7 @@ def train(args, accelerator):
 
     with accelerator.main_process_first():
         if args.max_test_samples is not None:
-            raw_datasets["train"] = raw_datasets["test"].select(range(args.max_test_samples))
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
 
@@ -261,14 +261,14 @@ def train(args, accelerator):
     metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
 
     # create a single speech processor
-    if accelerator.is_local_main_process:
+    #if accelerator.is_local_main_process:
         # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        model_config.save_pretrained(args.output_dir)
+        #feature_extractor.save_pretrained(args.output_dir)
+        #tokenizer.save_pretrained(args.output_dir)
+        #model_config.save_pretrained(args.output_dir)
 
     # since tokenizer saved in args.output_dir
-    processor = AutoProcessor.from_pretrained(args.output_dir)
+    processor = AutoProcessor.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
@@ -281,10 +281,33 @@ def train(args, accelerator):
 
     # data loader
     test_dataloader = DataLoader(
-        vectorized_datasets["validation"],
+        vectorized_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.test_batch_size,
     )
+
+    # dynamic quatization
+
+    def print_size_of_model(model):
+        torch.save(model.state_dict(), "temp.p")
+        print('Size (MB):', os.path.getsize("temp.p")/1e6)
+        os.remove("temp.p")
+
+    if args.dynamic_quantization:
+        # quantized_model
+        model = torch.quantization.quantize_dynamic(
+            model, {torch.nn.Linear}, dtype=torch.qint8
+        )
+        #print(quantized_model)
+
+        #def print_size_of_model(model):
+            #torch.save(model.state_dict(), "temp.p")
+            #print('Size (MB):', os.path.getsize("temp.p")/1e6)
+            #os.remove("temp.p")
+
+        #print_size_of_model(model)
+        #print_size_of_model(quantized_model)
+        #quit()
 
     # prepare everything for accelerator
     # any instruction using your training dataloader length,
@@ -298,9 +321,9 @@ def train(args, accelerator):
     # load from checkpoint
     ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
-    if args.checkpoint is not None:
-        accelerator.print(f"loaded from checkpoint: {args.checkpoint}")
-        accelerator.load_state(args.checkpoint)
+    #if args.checkpoint is not None:
+        #accelerator.print(f"loaded from checkpoint: {args.checkpoint}")
+        #accelerator.load_state(args.checkpoint)
 
 
 
@@ -434,6 +457,11 @@ def run():
         help="Whether to freeze the transformer encoder of the model."
     )
     parser.add_argument(
+        '--dynamic_quantization',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
         "--data_dir",
         default=None,  # mozilla-foundation/common_voice_11_0"
         type=str,
@@ -485,18 +513,6 @@ def run():
         "--gradient_accumulation_steps",
         default=1,
         type=int,
-    )
-    parser.add_argument(
-        "--output_dir",
-        default=None,  # root+'/models/whisper/'+'whisper_small_cv11'
-        type=str,
-        help="The output directory where the model checkpoints and predictions will be written.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
     )
     parser.add_argument(
         "--model_lang",
@@ -552,11 +568,11 @@ def run():
             f"pass in model_name_or_path"
         )
    # check if output directory is passed in
-    if args.output_dir is None:
-        model_str = args.model_name_or_path.split('/')[-1]
-        data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
-    print('output directory set to : {}'.format(args.output_dir))
+    #if args.output_dir is None:
+        #model_str = args.model_name_or_path.split('/')[-1]
+        #data_str = args.data_dir.split('/')[-1]
+        #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+    #print('output directory set to : {}'.format(args.output_dir))
     
 
     # initialize accelerator
@@ -564,7 +580,7 @@ def run():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        project_dir=args.output_dir
+        project_dir='./'
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
