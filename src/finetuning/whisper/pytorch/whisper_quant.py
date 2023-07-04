@@ -286,8 +286,9 @@ def train(args, accelerator):
         batch_size=args.test_batch_size,
     )
 
-    # dynamic quatization
+    # quatization
 
+    # dynamic quantization
     def print_size_of_model(model):
         torch.save(model.state_dict(), "temp.p")
         print('Size (MB):', os.path.getsize("temp.p")/1e6)
@@ -308,6 +309,18 @@ def train(args, accelerator):
         #print_size_of_model(model)
         #print_size_of_model(quantized_model)
         #quit()
+
+    # static quantization
+    #if args.static_quantization:
+        # set quantization config for server (x86)
+        #deploymentmyModel.qconfig = torch.quantization.get_default_config('fbgemm')
+
+        # insert observers
+        #torch.quantization.prepare(myModel, inplace=True)
+        # Calibrate the model and collect statistics
+
+        # convert to quantized version
+        #torch.quantization.convert(myModel, inplace=True)
 
     # prepare everything for accelerator
     # any instruction using your training dataloader length,
