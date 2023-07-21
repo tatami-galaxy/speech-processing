@@ -43,23 +43,6 @@ while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
 
-def path_remap(x, args):
-
-    # get audio path
-    #path_list = x['audio'].split('/')
-    path = x['audio']
-
-    #for i in range(len(path_list)):
-        #if path_list[i] == 'wav': break
-
-    #new_path = '/'.join(path_list[i:])
-    #new_path = args.data_dir+'/'+new_path
-    new_path = args.data_dir+'/'+path
-    x['audio'] = new_path
-
-    return x
-
-
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
     """
@@ -107,11 +90,6 @@ def train(args, accelerator):
 
     raw_datasets = load_dataset(args.data_dir)
 
-    # map to new audio path
-    with accelerator.main_process_first():
-        raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
-
-
     # check audio column, text column names
     if args.audio_column not in raw_datasets["test"].column_names:
         raise ValueError(
@@ -129,7 +107,7 @@ def train(args, accelerator):
 
     with accelerator.main_process_first():
         if args.max_test_samples is not None:
-            raw_datasets["train"] = raw_datasets["test"].select(range(args.max_test_samples))
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
 
@@ -175,10 +153,6 @@ def train(args, accelerator):
         tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
 
-    processor = AutoProcessor.from_pretrained(args.model_name_or_path)
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
-
-
     model = AutoModelForSpeechSeq2Seq.from_pretrained(
         args.model_name_or_path,
         config=model_config,
@@ -189,6 +163,9 @@ def train(args, accelerator):
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    
+    processor = AutoProcessor.from_pretrained(args.model_name_or_path)
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
     if args.freeze_encoder:
@@ -266,7 +243,7 @@ def train(args, accelerator):
 
     # data loader
     test_dataloader = DataLoader(
-        vectorized_datasets["validation"],
+        vectorized_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.test_batch_size,
     )
@@ -516,10 +493,6 @@ def run():
         raise ValueError(
             f"pass in dataset directory"
         )
-    if not os.path.isdir(args.data_dir):
-        raise ValueError(
-            f"data directory does not exist"
-        )
     # check if model path is None
     if args.model_name_or_path is None:
         raise ValueError(
@@ -529,7 +502,6 @@ def run():
     # initialize accelerator
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
         project_dir='./outputs'
     )
@@ -543,10 +515,8 @@ def run():
         transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
         "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
+        "test_batch_size": args.test_batch_size,
     }
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', track_config)
