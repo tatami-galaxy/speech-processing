@@ -33,7 +33,7 @@ accelerate launch whisper_accelerate.py --model_name_or_path /home/ujan/speech-p
 
 
 # cloud
-acceletate launch whisper_cloud --model_name_or_path openai/whisper-small --data_dir Ujan/asr_testset_zh_16k
+accelerate launch whisper_cloud.py --model_name_or_path openai/whisper-small --data_dir Ujan/asr_testset_zh_16k
 
 
 

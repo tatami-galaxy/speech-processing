@@ -91,9 +91,7 @@ def train(args, accelerator):
 
     dataset = load_dataset(args.data_dir)
 
-    print(dataset.train_test_split(test_size=0.2))
-    quit()
-
+    raw_datasets = dataset['test'].train_test_split(test_size=0.2)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -118,7 +116,7 @@ def train(args, accelerator):
             raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
 
         if args.max_eval_samples is not None:
-            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_eval_samples))
 
 
 
@@ -239,8 +237,7 @@ def train(args, accelerator):
 
 
     # cer metric
-    #metric = evaluate.load("cer")
-    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+    metric = evaluate.load("cer")
 
     # create a single speech processor
     if accelerator.is_local_main_process:
@@ -269,7 +266,7 @@ def train(args, accelerator):
         batch_size=args.train_batch_size,
     )
     eval_dataloader = DataLoader(
-        vectorized_datasets["validation"],
+        vectorized_datasets["test"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
@@ -393,8 +390,6 @@ def train(args, accelerator):
 
                     # compute metric
                     # generate and calculate cer 
-                    # unwrap model?
-                     ## slow ##
                     output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
