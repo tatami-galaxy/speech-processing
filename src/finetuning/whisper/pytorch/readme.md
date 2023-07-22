@@ -32,6 +32,10 @@ export HF_DATASETS_CACHE="/media/ujan/asr/cache"
 accelerate launch whisper_accelerate.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/whisper-medium  --data_dir /home/ujan/Datasets --train_batch_size 4 --train_steps 200000 --eval_steps 2000
 
 
+# cloud
+acceletate launch whisper_cloud --model_name_or_path openai/whisper-small --data_dir Ujan/asr_testset_zh_16k
+
+
 
 
 # eval
