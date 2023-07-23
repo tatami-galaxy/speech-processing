@@ -603,7 +603,7 @@ def run():
     )
     parser.add_argument(
         "--train_batch_size",
-        default=16,
+        default=8,
         type=int,
     )
     parser.add_argument(
