@@ -15,7 +15,7 @@ import os, re
 import datetime
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset
 import transformers, datasets
 from transformers import AutoConfig
 from transformers import AutoFeatureExtractor
@@ -32,7 +32,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
 import argparse
 from accelerate import Accelerator
 
-torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
+#torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
@@ -41,7 +41,6 @@ chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
-
 
 
 @dataclass
@@ -84,39 +83,30 @@ class DataCollatorSpeechSeq2SeqWithPadding:
     
 
 
-def train(args, accelerator):
+def train(args):
 
     # load dataset
-    accelerator.print('loading dataset from {}'.format(args.data_dir))
+    print('loading dataset from {}'.format(args.data_dir))
 
-    dataset = load_dataset(args.data_dir)
-
-    raw_datasets = dataset['test'].train_test_split(test_size=0.2)
-
-
-    #raw_datasets.cleanup_cache_files()
+    raw_datasets = load_dataset(args.data_dir)
 
     # check audio column, text column names
-    if args.audio_column not in raw_datasets["train"].column_names:
+    if args.audio_column not in raw_datasets["test"].column_names:
         raise ValueError(
             f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
             " Make sure to set `--audio_column` to the correct audio column - one of"
-            f" {', '.join(raw_datasets['train'].column_names)}."
+            f" {', '.join(raw_datasets['test'].column_names)}."
         )
 
-    if args.text_column not in raw_datasets["train"].column_names:
+    if args.text_column not in raw_datasets["test"].column_names:
         raise ValueError(
             f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
             "Make sure to set `--text_column` to the correct text column - one of "
-            f"{', '.join(raw_datasets['train'].column_names)}."
+            f"{', '.join(raw_datasets['test'].column_names)}."
         )
 
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
-
-        if args.max_eval_samples is not None:
-            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_eval_samples))
+    if args.max_test_samples is not None:
+        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
 
@@ -125,14 +115,13 @@ def train(args, accelerator):
         batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
     
-    with accelerator.main_process_first():
-        raw_datasets = raw_datasets.map(
-            remove_special_characters,
-            desc="remove special characters from datasets",
-        )
+    raw_datasets = raw_datasets.map(
+        remove_special_characters,
+        desc="remove special characters from datasets",
+    )
 
 
-    # model, tokenizer
+    # model, tokenizer, feature extractor, processor
 
     model_config = AutoConfig.from_pretrained(
         args.model_name_or_path,
@@ -172,6 +161,9 @@ def train(args, accelerator):
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    
+    processor = AutoProcessor.from_pretrained(args.model_name_or_path)
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
     if args.freeze_encoder:
@@ -183,10 +175,9 @@ def train(args, accelerator):
     # resample speech dataset if necessary
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
     #if dataset_sampling_rate != feature_extractor.sampling_rate:
-    with accelerator.main_process_first():
-        raw_datasets = raw_datasets.cast_column(
-            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-        )
+    raw_datasets = raw_datasets.cast_column(
+        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+    )
 
     # preprocess dataset
     max_input_length = args.max_duration * feature_extractor.sampling_rate
@@ -212,43 +203,30 @@ def train(args, accelerator):
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
     
-    with accelerator.main_process_first():
-        vectorized_datasets = raw_datasets.map(
-            prepare_dataset,
-            remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=num_workers,
-            #keep_in_memory=True,  # no cache
-            desc="preprocess train dataset",
-        )
+    vectorized_datasets = raw_datasets.map(
+        prepare_dataset,
+        remove_columns=next(iter(raw_datasets.values())).column_names,
+        num_proc=num_workers,
+        #keep_in_memory=True,  # no cache
+        desc="preprocess test dataset",
+    )
 
     # filter data that is shorter than min_input_length or longer than
     # max_input_length
     def is_audio_in_length_range(length):
         return length > min_input_length and length < max_input_length
 
-    with accelerator.main_process_first():
-        vectorized_datasets = vectorized_datasets.filter(
-            is_audio_in_length_range,
-            num_proc=num_workers,
-            input_columns=["input_length"],
-            #keep_in_memory=True
-        )
+    vectorized_datasets = vectorized_datasets.filter(
+        is_audio_in_length_range,
+        num_proc=num_workers,
+        input_columns=["input_length"],
+        #keep_in_memory=True
+    )
 
 
 
     # cer metric
     metric = evaluate.load("cer")
-
-    # create a single speech processor
-    if accelerator.is_local_main_process:
-        # save feature extractor, tokenizer and config
-        feature_extractor.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        model_config.save_pretrained(args.output_dir)
-
-    # since tokenizer saved in args.output_dir
-    processor = AutoProcessor.from_pretrained(args.output_dir)
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
 
 
     # data collator
@@ -258,70 +236,20 @@ def train(args, accelerator):
     )
 
 
-    # data loaders
-    train_dataloader = DataLoader(
-        vectorized_datasets["train"],
-        shuffle=True,
-        collate_fn=data_collator,
-        batch_size=args.train_batch_size,
-    )
-    eval_dataloader = DataLoader(
+    # data loader
+    test_dataloader = DataLoader(
         vectorized_datasets["test"],
         collate_fn=data_collator,
-        batch_size=args.eval_batch_size,
+        batch_size=args.test_batch_size,
     )
 
-    # optimizer
-    optimizer = AdamW(
-        list(model.parameters()),
-        lr=args.lr,
-    )
 
-    # calculate epochs
-    #args.num_train_epochs = args.train_steps // len(train_dataloader) + 1
+    ###########
+    ## quant ##
+    ###########
 
-    # scheduler
-    lr_scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=args.warmup_steps,
-        num_training_steps=args.train_steps
-    )
-
-    # prepare everything for accelerator
-    # any instruction using your training dataloader length,
-    # for instance if you need the number of total training steps
-    # to create a learning rate scheduler) should go after the call to prepare()
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
 
     global_step = 0  # tracks total steps
-    total_loss = 0  # total loss before each eval
-
-
-    accelerator.log({
-        "train_batch_size": args.train_batch_size,
-        "eval_batch_size": args.eval_batch_size,
-        "gpus": accelerator.state.num_processes
-        },
-        step=global_step + 1,
-    )
-
-    # load from checkpoint
-    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
-    # check if checkpoint directory passed in
-    if args.resume_from_checkpoint is not None:
-        accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
-        accelerator.load_state(args.resume_from_checkpoint)
-        # if resumed from checkpoint
-        # we need to skip steps until we reach the current step
-        # ../checkpoint-123 -> int(123)
-        steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
-        global_step = steps_completed
-        if args.skip_steps:
-            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-
-
 
     def make_generation_config():
 
@@ -356,109 +284,61 @@ def train(args, accelerator):
     generation_config = make_generation_config()
 
 
-    # Training
-
-    # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
     # eval bar
-    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
+    eval_bar = tqdm(range(len(test_dataloader)), position=0)
 
-    while True:
+    model.eval()
+    val_loss = 0
+    for batch in test_dataloader:
+        with torch.no_grad():
+            outputs = model(**batch)
+            val_loss += outputs.loss.item()
 
-        model.train()
+        # compute metric
+        # generate and calculate cer 
+        output_ids = model.generate(
+            batch["input_features"],
+            generation_config=generation_config,
+            task=args.task,
+            language=args.model_lang,
+            is_multilingual=True,
+            **gen_kwargs
+        )
 
-        for batch in train_dataloader:
-            with accelerator.accumulate(model):
-                outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+        # pad_acrss_processes to get equal length for each processs
+        output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
+        label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
 
-            progress_bar.update(1)
-
-
-            if (global_step + 1) % args.eval_steps == 0:
-                model.eval()
-                val_loss = 0
-                for batch in eval_dataloader:
-                    with torch.no_grad():
-                        outputs = model(**batch)
-                        val_loss += outputs.loss.item()
-
-                    # compute metric
-                    # generate and calculate cer 
-                    output_ids = accelerator.unwrap_model(model).generate(
-                        batch["input_features"],
-                        generation_config=generation_config,
-                        task=args.task,
-                        language=args.model_lang,
-                        is_multilingual=True,
-                        **gen_kwargs
-                    )
-
-                    # pad_acrss_processes to get equal length for each processs
-                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
-                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-
-                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
-                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
+        output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+        label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
                     
-                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(
-                        label_ids,
-                        group_tokens=False,
-                        skip_special_tokens=True,
-                        clean_up_tokenization_spaces=True
-                    )
-                    metric.add_batch(predictions=predictions, references=references)
+        label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+        predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        # we do not want to group tokens when computing the metrics
+        references = processor.batch_decode(
+            label_ids,
+            group_tokens=False,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+        metric.add_batch(predictions=predictions, references=references)
 
-                    eval_bar.update(1)
-
-
-                eval_bar.refresh()
-                eval_bar.reset()
-
-                cer_result = metric.compute()
-                # add wer for hindi
-                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
-                accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
-                accelerator.log({
-                    "cer": cer_result,
-                    "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "val_loss": val_loss / len(eval_dataloader)
-                },
-                step=global_step + 1,
-                )
-
-                # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
-                # saved to folders named `checkpoint-{global_step}`
-                # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
-                # if mixed precision was used, will also save a "scalar.bin" file
-                output_dir = f"checkpoint-{global_step + 1}"
-                if args.output_dir is not None:
-                    output_dir = os.path.join(args.output_dir, output_dir)
-                    accelerator.save_state(output_dir)
-                    # save config
-                    accelerator.wait_for_everyone()
-                    unwrapped_model = accelerator.unwrap_model(model)
-                    #model.config.save_pretrained(output_dir)
-                    unwrapped_model.config.save_pretrained(
-                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-                    )
-
-                model.train()
-                total_loss = 0
-
-            global_step += 1
-
-            if global_step >= args.train_steps : return
+        eval_bar.update(1)
 
 
+    eval_bar.refresh()
+    eval_bar.reset()
+
+    cer_result = metric.compute()
+    # add wer for hindi
+    accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
+    accelerator.print('val loss : {}'.format(val_loss/len(test_dataloader)))
+    accelerator.log({
+        "cer": cer_result,
+        "val_loss": val_loss / len(test_dataloader)
+    },
+    step=global_step + 1,
+    )
 
 
 
@@ -499,38 +379,10 @@ def run():
         help="Whether to freeze the transformer encoder of the model."
     )
     parser.add_argument(
-        "--alpha_ce",
-        default=0.5,
-        type=float,
-        help="Cross entropy loss linear weight (student loss). Only for distillation."
-    )
-    parser.add_argument(
-        "--alpha_distil",
-        default=0.5,
-        type=float,
-        help="Distillation loss linear weight (distil loss). Only for distillation."
-    )
-    parser.add_argument(
-        "--temperature",
-        default=2.0,
-        type=float,
-        help="Distillation temperature. Only for distillation."
-    )
-    parser.add_argument(
         "--data_dir",
         default=None,  # mozilla-foundation/common_voice_11_0"
         type=str,
         help="Dataset",
-    )
-    parser.add_argument(
-        '--max_train_samples',
-        type=int,
-        default=None
-    )
-    parser.add_argument(
-        '--max_eval_samples',
-        type=int,
-        default=None
     )
     parser.add_argument(
         '--max_test_samples',
@@ -571,25 +423,14 @@ def run():
     parser.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=1,  # os.cpu_count(), # None, 32
+        default=os.cpu_count(), # None, 32
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
-        "--output_dir",
-        default=None,  # root+'/models/whisper/'+'whisper_small_cv11'
-        type=str,
-        help="The output directory where the model checkpoints and predictions will be written.",
-    )
-    parser.add_argument(
-        "--resume_from_checkpoint",
+        "--checkpoint",
         default=None,
         type=str,
         help="checkpoint directory to load model from",
-    )
-    parser.add_argument(
-        "--skip_steps",
-        action="store_true",
-        help="whether to skip steps already ccompleted while loading from checkpoint"
     )
     parser.add_argument(
         "--model_lang",
@@ -602,39 +443,9 @@ def run():
         type=str,
     )
     parser.add_argument(
-        "--train_batch_size",
-        default=4,
-        type=int,
-    )
-    parser.add_argument(
-        "--eval_batch_size",
+        "--test_batch_size",
         default=8,
         type=int,
-    )
-    parser.add_argument(
-        "--train_steps",
-        default=50000,
-        type=int,
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        default=500,
-        type=int,
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        default=1,
-        type=int,
-    )
-    parser.add_argument(
-        "--eval_steps",
-        default=5000,
-        type=int,
-    )
-    parser.add_argument(
-        "--lr",
-        default=1e-5,
-        type=float,
     )
     parser.add_argument(
         "--mixed_precision",
@@ -670,20 +481,12 @@ def run():
         raise ValueError(
             f"pass in model_name_or_path"
         )
-   # check if output directory is passed in
-    if args.output_dir is None:
-        model_str = args.model_name_or_path.split('/')[-1]
-        data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
-    print('output directory set to : {}'.format(args.output_dir))
-    
 
     # initialize accelerator
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        project_dir=args.output_dir
+        project_dir='./outputs'
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
@@ -695,10 +498,8 @@ def run():
         transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
         "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
+        "test_batch_size": args.test_batch_size,
     }
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', track_config)
