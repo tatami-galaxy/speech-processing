@@ -11,6 +11,7 @@
 """
 
 import re
+import torch
 from tqdm.auto import tqdm
 from datasets import load_dataset
 from transformers import AutoConfig
@@ -19,7 +20,6 @@ from transformers import AutoTokenizer
 from transformers import AutoProcessor
 from transformers import GenerationConfig
 from typing import List
-import evaluate
 from transformers import AutoModelForSpeechSeq2Seq
 from transformers import set_seed
 import argparse
@@ -135,16 +135,11 @@ def train(args):
     dataset = raw_datasets['test']
 
 
-    # cer metric
-    metric = evaluate.load("cer")
+    ## dynamic quant ##
+    #model = torch.quantization.quantize_dynamic(
+        #model, {torch.nn.Linear}, dtype=torch.qint8
+    #)
 
-
-    ## quant ##
-    
-    
-
-
-    global_step = 0  # tracks total steps
 
     def make_generation_config():
 
