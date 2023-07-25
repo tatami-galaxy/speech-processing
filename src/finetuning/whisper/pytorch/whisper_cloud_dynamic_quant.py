@@ -10,25 +10,20 @@
 
 """
 
-import os, re
-import datetime
-from os.path import dirname, abspath
+import re
 from tqdm.auto import tqdm
 from datasets import load_dataset
-import transformers, datasets
 from transformers import AutoConfig
 from transformers import AutoFeatureExtractor
 from transformers import AutoTokenizer
 from transformers import AutoProcessor
 from transformers import GenerationConfig
-import torch
-from dataclasses import dataclass
-from typing import Any, Dict, List, Union
+from typing import List
 import evaluate
 from transformers import AutoModelForSpeechSeq2Seq
-from torch.utils.data.dataloader import DataLoader
 from transformers import set_seed
 import argparse
+import timeit
 
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
@@ -125,15 +120,6 @@ def train(args):
 
 
 
-    # some values
-    max_input_length = args.max_duration * feature_extractor.sampling_rate
-    min_input_length = args.min_duration * feature_extractor.sampling_rate
-    audio_column_name = args.audio_column
-    num_workers = args.preprocessing_num_workers
-    text_column_name = args.text_column
-    model_input_name = feature_extractor.model_input_names[0]
-
-
     # filter data that is shorter than min_input_length or longer than
     # max_input_length
     def is_audio_in_length_range(duration):
@@ -141,20 +127,21 @@ def train(args):
 
     raw_datasets = raw_datasets.filter(
         is_audio_in_length_range,
-        num_proc=num_workers,
+        num_proc=args.preprocessing_num_workers,
         input_columns=["duration"],
         #keep_in_memory=True
     )
+
+    dataset = raw_datasets['test']
 
 
     # cer metric
     metric = evaluate.load("cer")
 
 
-
-    ###########
     ## quant ##
-    ###########
+    
+    
 
 
     global_step = 0  # tracks total steps
@@ -192,15 +179,21 @@ def train(args):
     generation_config = make_generation_config()
 
 
+    per_sec_inf_times = []
+
+
     # eval bar
-    eval_bar = tqdm(range(len(test_dataloader)), position=0)
+    eval_bar = tqdm(range(len(dataset)), position=0)
 
     model.eval()
-    val_loss = 0
-    for sample in raw_datasets:
-        inputs = batch["input_features"][i].reshape(1, batch["input_features"].shape[1], -1)
+
+    for sample in dataset:
+        inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        input_features = inputs.input_features
+        # start timer
+        start_time = timeit.default_timer()
         output_ids = model.generate(
-            inputs,
+            input_features,
             generation_config=generation_config,
             task=args.task,
             language=args.model_lang,
@@ -208,57 +201,14 @@ def train(args):
             **gen_kwargs
         )
         predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
-        print(predictions)
-
-        with torch.no_grad():
-            outputs = model(**batch)
-            val_loss += outputs.loss.item()
-
-        # compute metric
-        # generate and calculate cer 
-        output_ids = model.generate(
-            batch["input_features"],
-            generation_config=generation_config,
-            task=args.task,
-            language=args.model_lang,
-            is_multilingual=True,
-            **gen_kwargs
-        )
-
-        # pad_acrss_processes to get equal length for each processs
-        output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
-        label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-
-        output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
-        label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
-                    
-        label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
-        predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-        # we do not want to group tokens when computing the metrics
-        references = processor.batch_decode(
-            label_ids,
-            group_tokens=False,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True
-        )
-        metric.add_batch(predictions=predictions, references=references)
-
+        # end timer
+        elapsed = timeit.default_timer() - start_time
+        per_sec_inf_times.append(elapsed / sample["duration"])
         eval_bar.update(1)
 
 
-    eval_bar.refresh()
-    eval_bar.reset()
+    print("average per sec inference time : {}".format(sum(per_sec_inf_times)/len(dataset)))
 
-    cer_result = metric.compute()
-    # add wer for hindi
-    print('step : {}, cer : {}'.format(global_step + 1, cer_result))
-    print('val loss : {}'.format(val_loss/len(test_dataloader)))
-    log({
-        "cer": cer_result,
-        "val_loss": val_loss / len(test_dataloader)
-    },
-    step=global_step + 1,
-    )
 
 
 
