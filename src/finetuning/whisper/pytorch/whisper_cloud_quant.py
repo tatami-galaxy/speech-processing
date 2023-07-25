@@ -21,9 +21,14 @@ from transformers import AutoProcessor
 from transformers import GenerationConfig
 from typing import List
 from transformers import AutoModelForSpeechSeq2Seq
+from optimum.bettertransformer import BetterTransformer
 from transformers import set_seed
 import argparse
 import timeit
+# Intel Extension for PyTorch
+import intel_extension_for_pytorch as ipex
+# neural comressor
+#from neural_compressor.compression.pruner import model_slim
 
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
@@ -135,10 +140,30 @@ def train(args):
     dataset = raw_datasets['test']
 
 
+    # better transformer 
+    model = BetterTransformer.transform(model, keep_original_model=False)
+
+
+    # Intel Extention
+    # Apply some fusions at the front end
+    #model = ipex.optimize(model, dtype=torch.float32)
+    #model = ipex.optimize(model)
+
+
     ## dynamic quant ##
-    #model = torch.quantization.quantize_dynamic(
-        #model, {torch.nn.Linear}, dtype=torch.qint8
-    #)
+
+    # The easiest method of quantization PyTorch supports is called dynamic quantization.
+    # This involves not just converting the weights to int8 - as happens in all quantization variants -
+    # but also converting the activations to int8 on the fly, just before doing the computation (hence “dynamic”).
+    # The computations will thus be performed using efficient int8 matrix multiplication
+    # and convolution implementations, resulting in faster compute.
+    # However, the activations are read and written to memory in floating point format
+    
+    
+    model = torch.quantization.quantize_dynamic(
+        model, {torch.nn.Linear}, dtype=torch.qint8
+    )
+
 
 
     def make_generation_config():
@@ -174,13 +199,36 @@ def train(args):
     generation_config = make_generation_config()
 
 
-    per_sec_inf_times = []
+    #model = model_slim(model)
 
+    # compile
+    model = torch.compile(model)
+
+
+    model.eval()
+
+    # warm up for compile
+    #warmup_samples = 10
+    #warmup_dataset = dataset.select(range(warmup_samples))
+
+    #print('warmup')
+    #for sample in warmup_dataset:
+        #inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        #input_features = inputs.input_features
+        #output_ids = model.generate(
+            #input_features,
+            #generation_config=generation_config,
+            #task=args.task,
+            #language=args.model_lang,
+            #is_multilingual=True,
+            #**gen_kwargs
+        #)
+    #print('warmup done')
 
     # eval bar
     eval_bar = tqdm(range(len(dataset)), position=0)
 
-    model.eval()
+    per_sec_inf_times = []
 
     for sample in dataset:
         inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
