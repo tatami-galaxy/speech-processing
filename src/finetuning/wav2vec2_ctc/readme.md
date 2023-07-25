@@ -8,3 +8,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python asr_ctc.py --model_name_or_path /home/ujan/s
 
 # eval
 CUDA_VISIBLE_DEVICES=0,1,2,3 python asr_ctc.py --model_name_or_path /home/ujan/speech-processing/models/wav2vec2/wav2vec2-xls-r-1b_Datasets/checkpoint-33000 --output_dir /home/ujan/speech-processing/models/wav2vec2/wav2vec2-xls-r-1b_Datasets/ --data_dir /home/ujan/Datasets --preprocessing_num_workers 128 --max_train_samples 100 --max_eval_samples 100 --freeze_feature_encoder --do_eval --gradient_checkpointing --group_by_length --load_best_model_at_end --fp16
+
+
+# inf
+python wav2vec2_quant.py --model_name_or_path Harveenchadha/vakyansh-wav2vec2-indian-english-enm-700 --data_dir hf-internal-testing/librispeech_asr_demo
