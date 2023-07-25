@@ -10,7 +10,6 @@
 
 """
 
-from functools import partial
 import os, re
 import datetime
 from os.path import dirname, abspath
@@ -28,59 +27,13 @@ from typing import Any, Dict, List, Union
 import evaluate
 from transformers import AutoModelForSpeechSeq2Seq
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
+from transformers import set_seed
 import argparse
-from accelerate import Accelerator
 
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
-
-# get root directory
-root = abspath(__file__)
-while root.split('/')[-1] != 'speech-processing':
-    root = dirname(root)
-
-
-@dataclass
-class DataCollatorSpeechSeq2SeqWithPadding:
-    """
-    Data collator that will dynamically pad the inputs received.
-    Args:
-        processor ([`WhisperProcessor`])
-            The processor used for processing the data.
-        decoder_start_token_id (`int`)
-            The begin-of-sentence of the decoder.
-    """
-
-    processor: Any
-    decoder_start_token_id: int
-
-    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lengths and need
-        # different padding methods
-        model_input_name = self.processor.model_input_names[0]
-        input_features = [{model_input_name: feature[model_input_name]} for feature in features]
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
-
-        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
-
-        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
-
-        # replace padding with -100 to ignore loss correctly
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
-
-        # if bos token is appended in previous tokenization step,
-        # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
-            labels = labels[:, 1:]
-
-        batch["labels"] = labels
-
-        return batch
-
-    
 
 
 def train(args):
@@ -172,14 +125,7 @@ def train(args):
 
 
 
-    # resample speech dataset if necessary
-    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
-    #if dataset_sampling_rate != feature_extractor.sampling_rate:
-    raw_datasets = raw_datasets.cast_column(
-        args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
-    )
-
-    # preprocess dataset
+    # some values
     max_input_length = args.max_duration * feature_extractor.sampling_rate
     min_input_length = args.min_duration * feature_extractor.sampling_rate
     audio_column_name = args.audio_column
@@ -188,60 +134,22 @@ def train(args):
     model_input_name = feature_extractor.model_input_names[0]
 
 
-
-    def prepare_dataset(batch):
-        # process audio
-        sample = batch[audio_column_name]
-        inputs = feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
-        # process audio length
-        batch[model_input_name] = inputs.get(model_input_name)[0]
-        batch["input_length"] = len(sample["array"])
-
-        # process targets
-        #input_str = batch[text_column_name].lower() if do_lower_case else batch[text_column_name]
-        input_str = batch[text_column_name]
-        batch["labels"] = tokenizer(input_str).input_ids
-        return batch
-    
-    vectorized_datasets = raw_datasets.map(
-        prepare_dataset,
-        remove_columns=next(iter(raw_datasets.values())).column_names,
-        num_proc=num_workers,
-        #keep_in_memory=True,  # no cache
-        desc="preprocess test dataset",
-    )
-
     # filter data that is shorter than min_input_length or longer than
     # max_input_length
-    def is_audio_in_length_range(length):
-        return length > min_input_length and length < max_input_length
+    def is_audio_in_length_range(duration):
+        return duration > args.min_duration and duration < args.max_duration
 
-    vectorized_datasets = vectorized_datasets.filter(
+    raw_datasets = raw_datasets.filter(
         is_audio_in_length_range,
         num_proc=num_workers,
-        input_columns=["input_length"],
+        input_columns=["duration"],
         #keep_in_memory=True
     )
-
 
 
     # cer metric
     metric = evaluate.load("cer")
 
-
-    # data collator
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
-        processor=processor,
-        decoder_start_token_id=model.config.decoder_start_token_id,
-    )
-
-
-    # data loader
-    test_dataloader = DataLoader(
-        vectorized_datasets["test"],
-        collate_fn=data_collator,
-        batch_size=args.test_batch_size,
-    )
 
 
     ###########
@@ -289,7 +197,19 @@ def train(args):
 
     model.eval()
     val_loss = 0
-    for batch in test_dataloader:
+    for sample in raw_datasets:
+        inputs = batch["input_features"][i].reshape(1, batch["input_features"].shape[1], -1)
+        output_ids = model.generate(
+            inputs,
+            generation_config=generation_config,
+            task=args.task,
+            language=args.model_lang,
+            is_multilingual=True,
+            **gen_kwargs
+        )
+        predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
+        print(predictions)
+
         with torch.no_grad():
             outputs = model(**batch)
             val_loss += outputs.loss.item()
@@ -331,9 +251,9 @@ def train(args):
 
     cer_result = metric.compute()
     # add wer for hindi
-    accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
-    accelerator.print('val loss : {}'.format(val_loss/len(test_dataloader)))
-    accelerator.log({
+    print('step : {}, cer : {}'.format(global_step + 1, cer_result))
+    print('val loss : {}'.format(val_loss/len(test_dataloader)))
+    log({
         "cer": cer_result,
         "val_loss": val_loss / len(test_dataloader)
     },
@@ -423,7 +343,7 @@ def run():
     parser.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=os.cpu_count(), # None, 32
+        default=None,  # os.cpu_count(), # None, 32
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
@@ -482,33 +402,9 @@ def run():
             f"pass in model_name_or_path"
         )
 
-    # initialize accelerator
-    accelerator = Accelerator(
-        mixed_precision=args.mixed_precision,
-        log_with="tensorboard",
-        project_dir='./outputs'
-    )
-    # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
-    # to INFO for the main process only.
-    if accelerator.is_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
-    # we need to initialize the trackers we use, and also store our configuration
-    track_config = {
-        "seed": args.seed,
-        "test_batch_size": args.test_batch_size,
-    }
-    #run = os.path.split(__file__)[-1].split(".")[0]
-    accelerator.init_trackers('runs', track_config)
-
     # train function
-    train(args, accelerator)
+    train(args)
 
-    # end logging
-    accelerator.end_training()
 
 
             

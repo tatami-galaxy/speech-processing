@@ -45,5 +45,10 @@ python asr_seq2seq.py --model_name_or_path /home/ujan/speech-processing/models/p
 accelerate launch whisper_cloud_eval.py --model_name_or_path Ujan/whisper-small-Datasets  --data_dir Ujan/asr_testset_zh_16k 
 
 
+# dynamic quant
+
+python whisper_cloud_dynamic_quant.py --model_name_or_path Ujan/whisper-small-Datasets  --data_dir Ujan/asr_testset_zh_16k
+
+
 # eval whisper
 python asr_seq2seq.py --model_name_or_path /home/dysl-ai/Documents/ASR/speech-processing/models/checkpoint-12000/ --data_dir /home/dysl-ai/Documents/ASR/speech-processing/src/finetuning/whisper/chinese_movies_dataset --do_eval --predict_with_generate --fp16 --per_device_eval_batch_size 4
