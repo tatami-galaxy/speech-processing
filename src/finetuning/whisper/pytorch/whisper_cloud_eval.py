@@ -10,7 +10,6 @@
 
 """
 
-from functools import partial
 import os, re
 import datetime
 from os.path import dirname, abspath
@@ -28,7 +27,7 @@ from typing import Any, Dict, List, Union
 import evaluate
 from transformers import AutoModelForSpeechSeq2Seq
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
+from transformers import set_seed
 import argparse
 from accelerate import Accelerator
 
