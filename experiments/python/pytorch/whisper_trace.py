@@ -33,37 +33,16 @@ def train(args):
     # load dataset
     print('loading dataset from {}'.format(args.data_dir))
 
-    raw_datasets = load_dataset(args.data_dir)
+    if args.cv:
+        raw_datasets = load_dataset(args.data_dir, "zh-CN", split="test", streaming=True)
+        args.text_column_name = 'sentence'
 
-    # check audio column, text column names
-    if args.audio_column not in raw_datasets["test"].column_names:
-        raise ValueError(
-            f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
-            " Make sure to set `--audio_column` to the correct audio column - one of"
-            f" {', '.join(raw_datasets['test'].column_names)}."
-        )
+    else:
+        raw_datasets = load_dataset(args.data_dir)
 
-    if args.text_column not in raw_datasets["test"].column_names:
-        raise ValueError(
-            f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
-            "Make sure to set `--text_column` to the correct text column - one of "
-            f"{', '.join(raw_datasets['test'].column_names)}."
-        )
+        if args.max_test_samples is not None:
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
-    if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
-
-
-
-     # remove punctuations
-    def remove_special_characters(batch):
-        batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
-        return batch
-    
-    raw_datasets = raw_datasets.map(
-        remove_special_characters,
-        desc="remove special characters from datasets",
-    )
 
 
     # model, tokenizer, feature extractor, processor
@@ -117,19 +96,23 @@ def train(args):
 
 
 
-    # filter data that is shorter than min_input_length or longer than
-    # max_input_length
-    def is_audio_in_length_range(duration):
-        return duration > args.min_duration and duration < args.max_duration
+    if not args.cv:
+        # filter data that is shorter than min_input_length or longer than
+        # max_input_length
+        def is_audio_in_length_range(duration):
+            return duration > args.min_duration and duration < args.max_duration
 
-    raw_datasets = raw_datasets.filter(
-        is_audio_in_length_range,
-        num_proc=args.preprocessing_num_workers,
-        input_columns=["duration"],
-        #keep_in_memory=True
-    )
+        raw_datasets = raw_datasets.filter(
+            is_audio_in_length_range,
+            num_proc=args.preprocessing_num_workers,
+            input_columns=["duration"],
+            #keep_in_memory=True
+        )
 
-    dataset = raw_datasets['test']
+        dataset = raw_datasets['test']
+
+    else:
+        dataset = raw_datasets
 
 
     def make_generation_config():
@@ -167,55 +150,24 @@ def train(args):
 
     model.eval()
 
-    # warm up for compile
-    #warmup_samples = 10
-    #warmup_dataset = dataset.select(range(warmup_samples))
-
-    #print('warmup')
-    #for sample in warmup_dataset:
-        #inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
-        #input_features = inputs.input_features
-        #output_ids = model.generate(
-            #input_features,
-            #generation_config=generation_config,
-            #task=args.task,
-            #language=args.model_lang,
-            #is_multilingual=True,
-            #**gen_kwargs
-        #)
-    #print('warmup done')
-
-    # eval bar
-    #eval_bar = tqdm(range(len(dataset)), position=0)
-
-    per_sec_inf_times = []
-
     #dataset = dataset.shuffle(123)
 
-    for sample in dataset:
-        inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
-        input_features = inputs.input_features
-        # start timer
-        start_time = timeit.default_timer()
-        output_ids = model.generate(
-            input_features,
-            generation_config=generation_config,
-            task=args.task,
-            language=args.model_lang,
-            is_multilingual=True,
-            **gen_kwargs
-        )
-        predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
-        print(predictions)
-        print('done!')
-        quit()
-        # end timer
-        elapsed = timeit.default_timer() - start_time
-        per_sec_inf_times.append(elapsed / sample["duration"])
-        eval_bar.update(1)
+    sample = next(iter(dataset))
+    inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+    input_features = inputs.input_features
 
+    output_ids = model.generate(
+        input_features,
+        generation_config=generation_config,
+        task=args.task,
+        language="<|zh|>",
+        is_multilingual=True,
+        **gen_kwargs
+    )
+    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
+    print(predictions)
+    print('done!')
 
-    print("average per sec inference time : {}".format(sum(per_sec_inf_times)/len(dataset)))
 
 
 
@@ -255,6 +207,11 @@ def run():
         default=False,
         action=argparse.BooleanOptionalAction,
         help="Whether to freeze the transformer encoder of the model."
+    )
+    parser.add_argument(
+        '--cv',
+        default=False,
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
         "--data_dir",
