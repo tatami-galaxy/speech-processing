@@ -10,7 +10,6 @@
 
 """
 
-import re
 from datasets import load_dataset
 from transformers import AutoConfig
 from transformers import AutoFeatureExtractor
@@ -21,7 +20,7 @@ from typing import List
 from transformers import AutoModelForSpeechSeq2Seq
 from transformers import set_seed
 import argparse
-import timeit
+import torch
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
@@ -155,6 +154,23 @@ def train(args):
     sample = next(iter(dataset))
     inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
     input_features = inputs.input_features
+
+    decoder_input_ids = [model.config.decoder_start_token_id]
+
+    predicted_ids = []
+
+    for i in range(args.generation_max_length):
+        outputs = model(input_features=input_features, decoder_input_ids=torch.tensor([decoder_input_ids]))
+        logits = outputs.logits[:,i,:]
+        # perform argmax on the last dimension (i.e. greedy decoding)
+        predicted_id = logits.argmax(-1)
+        predicted_ids.append(predicted_id.item())
+        print(tokenizer.decode([predicted_id.squeeze()]))
+        # add predicted id to decoder_input_ids
+        decoder_input_ids = decoder_input_ids + [predicted_id]
+        #quit()
+    quit()
+
 
     output_ids = model.generate(
         input_features,
