@@ -18,9 +18,11 @@ from transformers import AutoProcessor
 from transformers import GenerationConfig
 from typing import List
 from transformers import AutoModelForSpeechSeq2Seq
+from transformers.generation.logits_process import LogitsProcessorList
 from transformers import set_seed
 import argparse
 import torch
+import timeit
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
@@ -147,31 +149,115 @@ def train(args):
     generation_config = make_generation_config()
 
 
+    device = torch.device("cpu")
+    model.to(device)
     model.eval()
 
     #dataset = dataset.shuffle(123)
 
     sample = next(iter(dataset))
-    inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
-    input_features = inputs.input_features
 
-    decoder_input_ids = [model.config.decoder_start_token_id]
+    with torch.no_grad():
+        inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        input_features = inputs.input_features
 
-    predicted_ids = []
+        decoder_input_ids = torch.tensor([model.config.decoder_start_token_id]).reshape(1, -1)
+        #print(torch.tensor([decoder_input_ids]))
 
-    for i in range(args.generation_max_length):
-        outputs = model(input_features=input_features, decoder_input_ids=torch.tensor([decoder_input_ids]))
-        logits = outputs.logits[:,i,:]
-        # perform argmax on the last dimension (i.e. greedy decoding)
-        predicted_id = logits.argmax(-1)
-        if predicted_id == model.config.eos_token_id:
-            break
-        predicted_ids.append(predicted_id.item())
-        #print(tokenizer.decode([predicted_id.squeeze()]))
-        # add predicted id to decoder_input_ids
-        decoder_input_ids = decoder_input_ids + [predicted_id]
+        encoder_kwargs = {'output_attentions': False,
+                        'output_hidden_states': False,
+                        'return_dict': True,
+                        'input_features': input_features
+                        }
 
-    #print(predicted_ids)
+        encoder = model.get_encoder()
+
+        start_time = timeit.default_timer()
+
+        encoder_outputs = encoder(**encoder_kwargs)
+
+        logits_processor = LogitsProcessorList()  # might need to change
+        
+
+        for i in range(args.generation_max_length):
+
+            model_inputs = {
+            "encoder_outputs": encoder_outputs,
+            "past_key_values": None,
+            "decoder_input_ids": decoder_input_ids,
+            "use_cache": True,
+            "decoder_attention_mask": None,
+        }
+            
+            outputs = model(
+                **model_inputs,
+                return_dict=True,
+                output_attentions=False,
+                output_hidden_states=False
+            )
+
+            next_token_logits = outputs.logits[:, -1, :]
+
+            # pre-process distribution
+            next_tokens_scores = logits_processor(decoder_input_ids, next_token_logits)
+
+            # argmax
+            next_tokens = torch.argmax(next_tokens_scores, dim=-1)
+            #print(next_tokens)
+
+            # update generated ids, model inputs, and length for next step
+            decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1)
+
+            ### past key values ###
+
+            if next_tokens == model.config.eos_token_id:
+                break
+
+        elapsed = timeit.default_timer() - start_time
+        print(elapsed)
+
+
+
+        predicted_ids = []
+
+        # start timer
+        start_time = timeit.default_timer()
+
+        #for i in range(args.generation_max_length):
+            #outputs = model(input_features=input_features, decoder_input_ids=torch.tensor([decoder_input_ids]), use_cache=True)
+            #logits = outputs.logits[:,i,:]
+            # perform argmax on the last dimension (i.e. greedy decoding)
+            #predicted_id = logits.argmax(-1)
+            #predicted_id = torch.argmax(logits, dim=-1)
+            #if predicted_id == model.config.eos_token_id:
+                #break
+            #predicted_ids.append(predicted_id.item())
+            #print(tokenizer.decode([predicted_id.squeeze()]))
+            # add predicted id to decoder_input_ids
+            #decoder_input_ids = decoder_input_ids + [predicted_id]
+
+        #predictions = processor.decode(predicted_ids , skip_special_tokens=True)[0]
+        #elapsed = timeit.default_timer() - start_time
+        #print(i)
+        #print(elapsed)
+
+
+    # start timer
+    start_time = timeit.default_timer()
+    output_ids = model.generate(
+        input_features,
+        generation_config=generation_config,
+        task=args.task,
+        language=args.model_lang,
+        is_multilingual=True,
+        **gen_kwargs
+    )
+    #predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
+    #print(predictions)
+    # end timer
+    elapsed = timeit.default_timer() - start_time
+    print(elapsed)
+
     print('done!')
 
 
