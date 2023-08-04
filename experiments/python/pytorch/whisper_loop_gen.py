@@ -177,6 +177,8 @@ def train(args):
         encoder_outputs = encoder(**encoder_kwargs)
 
         logits_processor = LogitsProcessorList()  # might need to change
+
+        past_key_values = None
         
 
         for i in range(args.generation_max_length):
@@ -198,20 +200,24 @@ def train(args):
 
             next_token_logits = outputs.logits[:, -1, :]
 
+
             # pre-process distribution
             next_tokens_scores = logits_processor(decoder_input_ids, next_token_logits)
 
+            print(torch.equal(next_token_logits, next_tokens_scores))
+
             # argmax
             next_tokens = torch.argmax(next_tokens_scores, dim=-1)
-            #print(next_tokens)
+            print(next_tokens)
 
             # update generated ids, model inputs, and length for next step
             decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1)
 
-            ### past key values ###
+            past_key_values = outputs.past_key_values
 
             if next_tokens == model.config.eos_token_id:
                 break
+
 
         elapsed = timeit.default_timer() - start_time
         print(elapsed)
@@ -248,10 +254,11 @@ def train(args):
         input_features,
         generation_config=generation_config,
         task=args.task,
-        language=args.model_lang,
+        language="<|zh|>",  # args.model_lang
         is_multilingual=True,
         **gen_kwargs
     )
+    print(output_ids)
     #predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
     #print(predictions)
     # end timer
