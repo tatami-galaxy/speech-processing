@@ -159,16 +159,22 @@ def train(args):
 
 
     with torch.no_grad():
-        inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        inputs = processor(
+            sample[args.audio_column]["array"],
+            sampling_rate=feature_extractor.sampling_rate,
+            return_attention_mask=True,
+            return_tensors="pt")
+        
+        
         input_features = inputs.input_features
-
+        attention_mask = inputs.attention_mask
         decoder_input_ids = torch.tensor([model.config.decoder_start_token_id]).reshape(1, -1)
-        #print(torch.tensor([decoder_input_ids]))
 
         encoder_kwargs = {'output_attentions': False,
                         'output_hidden_states': False,
                         'return_dict': True,
-                        'input_features': input_features
+                        'input_features': input_features,
+                        'attention_mask': attention_mask
                         }
 
         encoder = model.get_encoder()
@@ -182,9 +188,12 @@ def train(args):
 
         for i in range(args.generation_max_length):
 
+            if past_key_values is not None:
+                decoder_input_ids = decoder_input_ids[:, -1:]
+
             model_inputs = {
             "encoder_outputs": encoder_outputs,
-            "past_key_values": None,   # past_key_values
+            "past_key_values": past_key_values,   # past_key_values
             "decoder_input_ids": decoder_input_ids,
             "use_cache": True,
             "decoder_attention_mask": None,
