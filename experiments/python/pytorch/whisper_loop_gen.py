@@ -157,6 +157,7 @@ def train(args):
 
     sample = next(iter(dataset))
 
+
     with torch.no_grad():
         inputs = processor(sample[args.audio_column]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
         input_features = inputs.input_features
@@ -176,8 +177,6 @@ def train(args):
 
         encoder_outputs = encoder(**encoder_kwargs)
 
-        logits_processor = LogitsProcessorList()  # might need to change
-
         past_key_values = None
         
 
@@ -185,7 +184,7 @@ def train(args):
 
             model_inputs = {
             "encoder_outputs": encoder_outputs,
-            "past_key_values": None,
+            "past_key_values": None,   # past_key_values
             "decoder_input_ids": decoder_input_ids,
             "use_cache": True,
             "decoder_attention_mask": None,
@@ -202,32 +201,32 @@ def train(args):
 
 
             # pre-process distribution
-            next_tokens_scores = logits_processor(decoder_input_ids, next_token_logits)
+            #next_tokens_scores = logits_processor(decoder_input_ids, next_token_logits)
 
-            print(torch.equal(next_token_logits, next_tokens_scores))
+            #print(torch.equal(next_token_logits, next_tokens_scores))
 
             # argmax
-            next_tokens = torch.argmax(next_tokens_scores, dim=-1)
-            print(next_tokens)
-
-            # update generated ids, model inputs, and length for next step
-            decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1)
-
-            past_key_values = outputs.past_key_values
+            #next_tokens = torch.argmax(next_tokens_scores, dim=-1)
+            next_tokens = torch.argmax(next_token_logits, dim=-1)
+            #print(next_tokens)
 
             if next_tokens == model.config.eos_token_id:
                 break
 
+            # update generated ids, model inputs, and length for next step
+            decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1)
+            #print(decoder_input_ids.shape)
+
+            past_key_values = outputs.past_key_values   ## fix
+
 
         elapsed = timeit.default_timer() - start_time
-        print(elapsed)
+        print('time : {}'.format(elapsed))
 
 
 
         predicted_ids = []
 
-        # start timer
-        start_time = timeit.default_timer()
 
         #for i in range(args.generation_max_length):
             #outputs = model(input_features=input_features, decoder_input_ids=torch.tensor([decoder_input_ids]), use_cache=True)
