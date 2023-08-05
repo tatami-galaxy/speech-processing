@@ -18,5 +18,6 @@ python whisper_cv_eval.py --model_name_or_path openai/whisper-small --checkpoint
 python whisper_trace.py --model_name_or_path Ujan/whisper-small-Datasets --data_dir Ujan/asr_testset_zh_16k --max_test_samples 100
 python whisper_loop_gen.py --model_name_or_path Ujan/whisper-small-Datasets --data_dir Ujan/asr_testset_zh_16k --max_test_samples 100
 
-python whisper_trace.py --model_name_or_path openai/whisper-tiny --data_dir mozilla-foundation/common_voice_11_0 --cv
+python whisper_loop_gen.py --model_name_or_path openai/whisper-small --data_dir mozilla-foundation/common_voice_11_0 --cv
+python whisper_loop_gen.py --model_name_or_path Ujan/whisper-small-Datasets --data_dir mozilla-foundation/common_voice_11_0 --cv
 

@@ -222,15 +222,18 @@ def train(args):
             if next_tokens == model.config.eos_token_id:
                 break
 
+
             # update generated ids, model inputs, and length for next step
             decoder_input_ids = torch.cat([decoder_input_ids, next_tokens[:, None]], dim=-1)
             #print(decoder_input_ids.shape)
 
-            past_key_values = outputs.past_key_values   ## fix
+            past_key_values = outputs.past_key_values   
 
 
         elapsed = timeit.default_timer() - start_time
         print('time : {}'.format(elapsed))
+
+        quit()
 
 
 
@@ -266,12 +269,12 @@ def train(args):
         is_multilingual=True,
         **gen_kwargs
     )
-    print(output_ids)
+    #print(output_ids)
     #predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
     #print(predictions)
     # end timer
     elapsed = timeit.default_timer() - start_time
-    print(elapsed)
+    print('time : {}'.format(elapsed))
 
     print('done!')
 

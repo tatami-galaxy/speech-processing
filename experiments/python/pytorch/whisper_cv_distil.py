@@ -253,7 +253,7 @@ def train(args, accelerator):
                 for batch in eval_dataloader:
                     with torch.no_grad():
                         outputs = model(**batch)
-                        val_loss += outputs.loss.item()
+                        val_loss += outputs.loss.item()   ### copy eval from whisper_distil.py ###
 
                     # compute metric
                     ## check cer calculation ##
