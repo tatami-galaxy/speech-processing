@@ -244,9 +244,10 @@ def train(args, accelerator):
     # eval bar
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
-    while True:
+    model.train()
+    teacher.eval()
 
-        model.train()
+    while True:
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
@@ -445,7 +446,7 @@ def main():
     )
     parser.add_argument(
         "--model_lang",
-        default='Hindi',
+        default='hindi',
         type=str,
     )
     parser.add_argument(
