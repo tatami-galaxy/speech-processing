@@ -74,15 +74,13 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 def train(args, accelerator):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
-    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
-    # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
-    tokenizer.set_prefix_tokens(language=args.model_lang, task="transcribe")
-    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task="transcribe")
+    tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
+    processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
     model.config.forced_decoder_ids = None
-    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     model.config.suppress_tokens = []
 
     if model.config.decoder_start_token_id is None:
@@ -96,7 +94,7 @@ def train(args, accelerator):
     # teacher
     teacher = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
     teacher.config.forced_decoder_ids = None
-    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task="transcribe")
+    teacher.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     teacher.config.suppress_tokens = []
 
     if teacher.config.decoder_start_token_id is None:
@@ -108,8 +106,8 @@ def train(args, accelerator):
 
     # dataset
     common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
-    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
+    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
+    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
     with accelerator.main_process_first():
         # remove unused columns
@@ -451,6 +449,11 @@ def main():
         type=str,
     )
     parser.add_argument(
+        "--task",
+        default='transcribe',
+        type=str,
+    )
+    parser.add_argument(
         "--train_batch_size",
         default=4,
         type=int,
@@ -459,6 +462,16 @@ def main():
         "--eval_batch_size",
         default=4,
         type=int,
+    )
+    parser.add_argument(
+        '--generation_max_length',
+        type=int,
+        default=225
+    )
+    parser.add_argument(
+        '--num_beams',
+        type=int,
+        default=1
     )
     parser.add_argument(
         "--train_steps",
@@ -537,7 +550,7 @@ def main():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        logging_dir=args.output_dir
+        project_dir=args.output_dir
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
