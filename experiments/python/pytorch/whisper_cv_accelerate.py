@@ -434,7 +434,7 @@ def main():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="openai/whisper-tiny",
+        default="openai/whisper-small",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
@@ -456,7 +456,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_tiny_cv11',
+        default=root+'/models/whisper/'+'whisper_small_cv11',
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )

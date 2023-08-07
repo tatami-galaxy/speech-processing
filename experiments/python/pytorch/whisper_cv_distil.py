@@ -19,6 +19,7 @@ import transformers, datasets
 from transformers import WhisperFeatureExtractor
 from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
+from transformers import GenerationConfig
 from transformers import get_linear_schedule_with_warmup
 from datasets import Audio
 import torch
@@ -204,10 +205,45 @@ def train(args, accelerator):
             global_step = steps_completed
 
 
+    def make_generation_config():
+
+        generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
+        gen_dict = generation_config.to_dict()
+        # add attributes to genration_config
+        # generation_config does not have "langauge", but generate() tries to use it
+        # can be empty dict here since being set in generate_step
+        gen_dict["language"] = args.model_lang
+        #if supress_en:
+            # en tokens to suppress from multilingual vocab
+            #en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
+            #suppress_en_list = []
+            #for key in en_tokenizer.encoder.keys():
+                #if key in tokenizer.encoder.keys() and key.isalpha():
+                    #suppress_en_list.append(key)
+            # supress english tokens
+            #gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
+        # add any other args here   
+        # reload with new attributes
+        generation_config = GenerationConfig.from_dict(gen_dict)
+
+        return generation_config
+
+
+    max_length = (
+        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
+    )
+    num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
+    gen_kwargs = {"max_new_tokens": max_length, "num_beams": num_beams}
+    # generation config
+    generation_config = make_generation_config()
+
+
     # Training
 
     # main progress bar
     progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process)
+    # eval bar
+    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
     while True:
 
@@ -253,26 +289,48 @@ def train(args, accelerator):
                 for batch in eval_dataloader:
                     with torch.no_grad():
                         outputs = model(**batch)
-                        val_loss += outputs.loss.item()   ### copy eval from whisper_distil.py ###
+                        val_loss += outputs.loss.item()
 
                     # compute metric
-                    ## check cer calculation ##
-                    pred_logits = outputs.logits
-                    pred_logits, references = accelerator.gather_for_metrics((pred_logits, batch["labels"]))
-                    predictions = np.argmax(pred_logits.detach().cpu().clone().numpy(), axis=-1)
-                    #predictions, references = accelerator.gather_for_metrics((predictions, batch["labels"]))
-                    references[batch['labels'] == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(predictions, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    # generate and calculate cer, wer
+                    ## slow ##
+                    output_ids = accelerator.unwrap_model(model).generate(
+                        batch["input_features"],
+                        generation_config=generation_config,
+                        task=args.task,
+                        language=args.model_lang,
+                        is_multilingual=True,
+                        **gen_kwargs
+                    )
+
+                    # pad_acrss_processes to get equal length for each processs
+                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
+                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
+
+                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
+
+                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(references, group_tokens=False, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                    references = processor.batch_decode(
+                        label_ids,
+                        group_tokens=False,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    )
                     metric.add_batch(predictions=predictions, references=references)
+
+                    eval_bar.update(1)
+                    
+                eval_bar.refresh()
+                eval_bar.reset()
 
                 cer_result = metric.compute()
                 accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
-                    # might be incorrect
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
