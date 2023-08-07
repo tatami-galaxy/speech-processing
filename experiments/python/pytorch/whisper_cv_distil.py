@@ -140,7 +140,8 @@ def train(args, accelerator):
 
 
     # cer metric
-    metric = evaluate.load("cer")
+    cer_metric = evaluate.load("cer")
+    wer_metric = evaluate.load("wer")
 
     # data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
@@ -257,14 +258,15 @@ def train(args, accelerator):
                 s_loss = outputs.loss
                 # teacher
                 with torch.no_grad():
-                    outputs = teacher(**batch)
+                    t_outputs = teacher(**batch)
                     # teacher logits
-                    t_logits = outputs.logits
+                    t_logits = t_outputs.logits
                 # distillation loss
                 # has to be outside no_grad()
                 d_loss = nn.functional.kl_div(
                     input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
-                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    #target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    target=nn.functional.log_softmax(t_logits / args.temperature, dim=-1),
                     reduction="batchmean",
                 ) * (args.temperature**2)
                 # net loss after weightage
@@ -317,18 +319,21 @@ def train(args, accelerator):
                         skip_special_tokens=True,
                         clean_up_tokenization_spaces=True
                     )
-                    metric.add_batch(predictions=predictions, references=references)
+                    cer_metric.add_batch(predictions=predictions, references=references)
+                    wer_metric.add_batch(predictions=predictions, references=references)
 
                     eval_bar.update(1)
                     
                 eval_bar.refresh()
                 eval_bar.reset()
 
-                cer_result = metric.compute()
-                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
+                cer_result = cer_metric.compute()
+                wer_result = wer_metric.compute()
+                accelerator.print('step : {}, cer : {}, wer: {}'.format(global_step + 1, cer_result, wer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
+                    "wer": wer_result,
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     "train_s_loss": total_s_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                     "train_d_loss": total_d_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
@@ -490,7 +495,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=500,
+        default=1000,
         type=int,
     )
     parser.add_argument(
