@@ -266,8 +266,7 @@ def train(args, accelerator):
                 # has to be outside no_grad()
                 d_loss = nn.functional.kl_div(
                     input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
-                    #target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
-                    target=nn.functional.log_softmax(t_logits / args.temperature, dim=-1),
+                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
                     reduction="batchmean",
                 ) * (args.temperature**2)
                 # net loss after weightage
