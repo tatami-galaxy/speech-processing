@@ -523,7 +523,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=200,
+        default=1000,
         type=int,
     )
     parser.add_argument(
