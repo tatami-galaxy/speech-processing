@@ -112,8 +112,8 @@ def train(args, accelerator):
 
     # dataset
     common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation", use_auth_token=True)
-    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test", use_auth_token=True)
+    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
+    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
     with accelerator.main_process_first():
         # remove unused columns
