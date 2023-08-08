@@ -23,6 +23,7 @@ from transformers import set_seed
 import argparse
 from accelerate import Accelerator
 import nltk
+nltk.download('punkt')
 
 
 
@@ -150,6 +151,11 @@ def train(args, accelerator):
     global_step = 0  # tracks total steps
     total_loss = 0  # total loss before each eval
 
+    gen_kwargs = {
+        "max_length": args.max_target_length,
+        "num_beams": args.num_beams,
+    }
+
     accelerator.log({
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
@@ -201,11 +207,8 @@ def train(args, accelerator):
                 # eval progress bar
                 #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
                 model.eval()
-                gen_kwargs = {
-                    "max_length": args.max_target_length,
-                    "num_beams": args.num_beams,
-                }
                 val_loss = 0
+
                 for batch in eval_dataloader:
                     with torch.no_grad():
                         outputs = model(**batch)
@@ -357,12 +360,12 @@ def main():
     )
     parser.add_argument(
         "--per_device_train_batch_size",
-        default=8,
+        default=4,
         type=int,
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
-        default=8,
+        default=4,
         type=int,
     )
     parser.add_argument(
