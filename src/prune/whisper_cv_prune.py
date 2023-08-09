@@ -85,6 +85,30 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
 
 def train(args, accelerator):
+
+
+    ## masked models ##
+    config = config_class.from_pretrained(
+        args.config_name if args.config_name else args.model_name_or_path,
+        cache_dir=args.cache_dir if args.cache_dir else None,
+        pruning_method=args.pruning_method,
+        mask_init=args.mask_init,
+        mask_scale=args.mask_scale,
+    )
+    tokenizer = tokenizer_class.from_pretrained(
+        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
+        do_lower_case=args.do_lower_case,
+        cache_dir=args.cache_dir if args.cache_dir else None,
+    )
+    model = model_class.from_pretrained(
+        args.model_name_or_path,
+        from_tf=bool(".ckpt" in args.model_name_or_path),
+        config=config,
+        cache_dir=args.cache_dir if args.cache_dir else None,
+    )
+
+
+
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
@@ -112,7 +136,7 @@ def train(args, accelerator):
 
     # dataset
     common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train")
+    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
     common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
     with accelerator.main_process_first():
@@ -229,14 +253,34 @@ def train(args, accelerator):
         batch_size=args.eval_batch_size,
     )
 
-    # optimizer
-    optimizer = AdamW(
-        list(model.parameters()),
-        lr=args.lr,
-    )
+    # prepare optimizer and schedule (linear warmup and decay)
+    no_decay = ["bias", "LayerNorm.weight"]
+    optimizer_grouped_parameters = [
+        {
+            "params": [p for n, p in model.named_parameters() if "mask_score" in n and p.requires_grad],
+            "lr": args.mask_scores_learning_rate,
+        },
+        {
+            "params": [
+                p
+                for n, p in model.named_parameters()
+                if "mask_score" not in n and p.requires_grad and not any(nd in n for nd in no_decay)
+            ],
+            "lr": args.learning_rate,
+            "weight_decay": args.weight_decay,
+        },
+        {
+            "params": [
+                p
+                for n, p in model.named_parameters()
+                if "mask_score" not in n and p.requires_grad and any(nd in n for nd in no_decay)
+            ],
+            "lr": args.learning_rate,
+            "weight_decay": 0.0,
+        },
+    ]
 
-    # calculate epochs
-    #args.num_train_epochs = args.train_steps // len(train_dataloader) + 1
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.lr, eps=args.adam_epsilon)
 
     # scheduler
     lr_scheduler = get_linear_schedule_with_warmup(
@@ -244,6 +288,7 @@ def train(args, accelerator):
         num_warmup_steps=args.warmup_steps,
         num_training_steps=args.train_steps
     )
+
 
     # prepare everything for accelerator
     # any instruction using your training dataloader length,
@@ -473,7 +518,7 @@ def main():
     )
     parser.add_argument(
         "--model_lang",
-        default='chinese',
+        default='hindi',
         type=str,
     )
     parser.add_argument(
@@ -483,7 +528,7 @@ def main():
     )
     parser.add_argument(
         "--data_lang",
-        default='zh-CN',
+        default='hi',
         type=str,
     )
     parser.add_argument(
@@ -523,7 +568,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=200,
+        default=1000,
         type=int,
     )
     parser.add_argument(
@@ -536,6 +581,12 @@ def main():
         "--lr",
         default=1e-5,
         type=float,
+    )
+    parser.add_argument(
+        "--adam_epsilon",
+        default=1e-8,
+        type=float,
+        help="Epsilon for Adam optimizer."
     )
     parser.add_argument(
         "--mixed_precision",

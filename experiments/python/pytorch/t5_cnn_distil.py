@@ -13,7 +13,6 @@
 import os
 from tqdm.auto import tqdm
 from datasets import load_dataset
-import transformers, datasets
 from transformers import get_linear_schedule_with_warmup
 from transformers import T5Tokenizer, T5ForConditionalGeneration, DataCollatorForSeq2Seq
 import torch
@@ -22,15 +21,17 @@ from torch.utils.data.dataloader import DataLoader
 from transformers import set_seed
 import argparse
 from accelerate import Accelerator
+import torch.nn as nn
 import nltk
 nltk.download('punkt')
 
 
 
 def train(args, accelerator):
-    # tokenizer, model
+    # tokenizer, model, teacher
     tokenizer = T5Tokenizer.from_pretrained(args.model_name_or_path)
     model = T5ForConditionalGeneration.from_pretrained(args.model_name_or_path)
+    teacher = T5ForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -38,13 +39,28 @@ def train(args, accelerator):
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
     if model.config.decoder_start_token_id is None:
-        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined for model")
     
+    t_embedding_size = teacher.get_input_embeddings().weight.shape[0]
+    if len(tokenizer) > t_embedding_size:
+        teacher.resize_token_embeddings(len(tokenizer))
+    if teacher.config.decoder_start_token_id is None:
+        raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined for teacher")
+    
+
     prefix = args.source_prefix if args.source_prefix is not None else ""
 
 
     # dataset
     raw_datasets = load_dataset(args.data_dir, args.dataset_config_name)
+
+    with accelerator.main_process_first():
+        if args.max_train_samples is not None:
+            raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+
+        if args.max_eval_samples is not None:
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+
 
     # preprocessing the datasets.
     # first we tokenize all the texts.
@@ -143,8 +159,8 @@ def train(args, accelerator):
 
 
     # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, eval_dataloader, test_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, test_dataloader, lr_scheduler
+    model, teacher, optimizer, train_dataloader, eval_dataloader, test_dataloader, lr_scheduler = accelerator.prepare(
+        model, teacher, optimizer, train_dataloader, eval_dataloader, test_dataloader, lr_scheduler
     )
 
 
@@ -185,15 +201,37 @@ def train(args, accelerator):
     progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
-    while True:
+    model.train()
+    teacher.eval()
 
-        model.train()
+    while True:
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
                 outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
+                # stduent logits
+                s_logits = outputs.logits
+                # student loss
+                s_loss = outputs.loss
+
+                # teacher
+                with torch.no_grad():
+                    t_outputs = teacher(**batch)
+                    # teacher logits
+                    t_logits = t_outputs.logits
+                # distillation loss
+                # has to be outside no_grad()
+                d_loss = nn.functional.kl_div(
+                    input=nn.functional.log_softmax(s_logits / args.temperature, dim=-1),
+                    target=nn.functional.softmax(t_logits / args.temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (args.temperature**2)
+                # net loss after weightage
+                loss = args.alpha_distil * d_loss + args.alpha_ce * s_loss
+
+                total_loss += loss.detach().item() # for tensorboard
+                total_s_loss += s_loss.detach().item()
+                total_d_loss += d_loss.detach().item()
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
@@ -315,6 +353,29 @@ def main():
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
+        "--teacher_name_or_path",
+        default=None,
+        type=str,
+    )
+    parser.add_argument(
+        "--alpha_ce",
+        default=0.5,
+        type=float,
+        help="Cross entropy loss linear weight (student loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--alpha_distil",
+        default=0.5,
+        type=float,
+        help="Distillation loss linear weight (distil loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--temperature",
+        default=2.0,
+        type=float,
+        help="Distillation temperature. Only for distillation."
+    )
+    parser.add_argument(
         "--data_dir",
         default="cnn_dailymail",
         type=str,
@@ -354,11 +415,6 @@ def main():
         default=None
     )
     parser.add_argument(
-        '--max_test_samples',
-        type=int,
-        default=None
-    )
-    parser.add_argument(
         "--per_device_train_batch_size",
         default=4,
         type=int,
@@ -370,7 +426,7 @@ def main():
     )
     parser.add_argument(
         "--train_steps",
-        default=5000,
+        default=20000,
         type=int,
     )
     parser.add_argument(
@@ -391,7 +447,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
@@ -488,12 +544,12 @@ def main():
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
-    if accelerator.is_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
+    #if accelerator.is_main_process:
+        #datasets.utils.logging.set_verbosity_warning()
+        #transformers.utils.logging.set_verbosity_info()
+    #else:
+        #datasets.utils.logging.set_verbosity_error()
+        #transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
         "lr": args.lr,

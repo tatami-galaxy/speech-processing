@@ -46,6 +46,13 @@ def train(args, accelerator):
     # dataset
     raw_datasets = load_dataset(args.data_dir, args.dataset_config_name)
 
+    with accelerator.main_process_first():
+        if args.max_train_samples is not None:
+            raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
+
+        if args.max_eval_samples is not None:
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
+
     # preprocessing the datasets.
     # first we tokenize all the texts.
     column_names = raw_datasets["train"].column_names
@@ -354,11 +361,6 @@ def main():
         default=None
     )
     parser.add_argument(
-        '--max_test_samples',
-        type=int,
-        default=None
-    )
-    parser.add_argument(
         "--per_device_train_batch_size",
         default=4,
         type=int,
@@ -370,7 +372,7 @@ def main():
     )
     parser.add_argument(
         "--train_steps",
-        default=5000,
+        default=20000,
         type=int,
     )
     parser.add_argument(
@@ -391,7 +393,7 @@ def main():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
@@ -488,12 +490,12 @@ def main():
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
-    if accelerator.is_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
+    #if accelerator.is_main_process:
+        #datasets.utils.logging.set_verbosity_warning()
+        #transformers.utils.logging.set_verbosity_info()
+    #else:
+        #datasets.utils.logging.set_verbosity_error()
+        #transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
         "lr": args.lr,

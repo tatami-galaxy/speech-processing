@@ -1,0 +1,4 @@
+lr: 5.0e-05
+per_device_train_batch_size: 4
+seed: 42
+train_steps: 20000
