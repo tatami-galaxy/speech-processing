@@ -16,6 +16,7 @@ from transformers import AutoFeatureExtractor
 from transformers import AutoTokenizer
 from transformers import AutoProcessor
 from transformers import GenerationConfig
+from transformers.modeling_outputs import BaseModelOutput
 from typing import List
 from transformers import AutoModelForSpeechSeq2Seq
 from transformers.generation.logits_process import LogitsProcessorList
@@ -182,6 +183,9 @@ def train(args):
         start_time = timeit.default_timer()
 
         encoder_outputs = encoder(**encoder_kwargs)
+
+        print(isinstance(encoder_outputs, BaseModelOutput))
+        quit()
 
         past_key_values = None
         
