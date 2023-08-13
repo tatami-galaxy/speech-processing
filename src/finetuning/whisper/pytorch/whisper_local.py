@@ -43,6 +43,22 @@ while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
 
+def path_remap(x, args):
+
+    # get audio path
+    #path_list = x['audio'].split('/')
+    path = x['audio']
+
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
+
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
+
 
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
@@ -89,9 +105,17 @@ def train(args, accelerator):
     # load dataset
     accelerator.print('loading dataset from {}'.format(args.data_dir))
 
-    dataset = load_dataset(args.data_dir)
+    # data files
+    data_files = {
+        'train': args.data_dir+'/final_train_v2a.csv', # final_train.csv
+        'validation': args.data_dir+'/final_dev_v2a_short.csv', # final_train.csv
+        }
 
-    raw_datasets = dataset['test'].train_test_split(test_size=0.2)
+    raw_datasets = load_dataset('csv', data_files=data_files)
+
+    # map to new audio path
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.map(partial(path_remap, args=args), batched=False)
 
 
     #raw_datasets.cleanup_cache_files()
@@ -116,7 +140,7 @@ def train(args, accelerator):
             raw_datasets["train"] = raw_datasets["train"].select(range(args.max_train_samples))
 
         if args.max_eval_samples is not None:
-            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_eval_samples))
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(args.max_eval_samples))
 
 
 
@@ -237,7 +261,8 @@ def train(args, accelerator):
 
 
     # cer metric
-    metric = evaluate.load("cer")
+    #metric = evaluate.load("cer")
+    metric = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
 
     # create a single speech processor
     if accelerator.is_local_main_process:
@@ -266,7 +291,7 @@ def train(args, accelerator):
         batch_size=args.train_batch_size,
     )
     eval_dataloader = DataLoader(
-        vectorized_datasets["test"],
+        vectorized_datasets["validation"],
         collate_fn=data_collator,
         batch_size=args.eval_batch_size,
     )
@@ -585,7 +610,7 @@ def run():
     )
     parser.add_argument(
         "--train_batch_size",
-        default=4,
+        default=16,
         type=int,
     )
     parser.add_argument(
@@ -595,7 +620,7 @@ def run():
     )
     parser.add_argument(
         "--train_steps",
-        default=50000,
+        default=100000,
         type=int,
     )
     parser.add_argument(
@@ -610,7 +635,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=5000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
@@ -646,6 +671,10 @@ def run():
     if args.data_dir is None:
         raise ValueError(
             f"pass in dataset directory"
+        )
+    if not os.path.isdir(args.data_dir):
+        raise ValueError(
+            f"data directory does not exist"
         )
     # check if model path is None
     if args.model_name_or_path is None:
