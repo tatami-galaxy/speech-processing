@@ -43,24 +43,24 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 
-from ...activations import ACT2FN
-from ...generation.logits_process import WhisperTimeStampLogitsProcessor
-from ...modeling_outputs import (
+from transformers.activations import ACT2FN
+from transformers.generation.logits_process import WhisperTimeStampLogitsProcessor
+from transformers.modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
     SequenceClassifierOutput,
 )
-from ...modeling_utils import PreTrainedModel
-from ...utils import (
+from transformers.modeling_utils import PreTrainedModel
+from transformers.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
 )
-from .configuration_whisper import WhisperConfig
-from .tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
+from transformers.models.whisper.configuration_whisper import WhisperConfig
+from transformers.models.whisper.tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
 
 # a wrapped function can be thought of a “leaf function”,
 # analogous to the concept of “leaf modules”, that is, 
