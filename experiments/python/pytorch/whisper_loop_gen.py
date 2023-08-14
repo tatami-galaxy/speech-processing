@@ -184,9 +184,8 @@ def train(args):
 
         encoder_outputs = encoder(**encoder_kwargs)
 
-        print(isinstance(encoder_outputs, BaseModelOutput))
-        quit()
-
+        #print(isinstance(encoder_outputs, BaseModelOutput))
+        
         past_key_values = None
         
 

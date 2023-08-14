@@ -100,7 +100,7 @@ def _prepare_fx(
     _equalization_config: Optional[Union[QConfigMapping, Dict[str, Any]]] = None,
     backend_config: Union[BackendConfig, Dict[str, Any], None] = None,
     is_standalone_module: bool = False,
-    concrete_args: dict = None,
+    concrete_args: dict = None,  ##
 ) -> GraphModule:
     r""" Internal helper function for prepare_fx
     Args:
@@ -134,7 +134,7 @@ forward graph of the parent module,
     # symbolically trace the model
     tracer = QuantizationTracer(skipped_module_names, skipped_module_classes)  # type: ignore[arg-type]
     #graph_module = GraphModule(model, tracer.trace(model))
-    graph_module = GraphModule(model, tracer.trace(model, concrete_args=concrete_args))
+    graph_module = GraphModule(model, tracer.trace(model, concrete_args=concrete_args))  ##
     _attach_meta_to_node_if_not_exist(graph_module)
 
     fuse_custom_config = FuseCustomConfig().set_preserved_attributes(prepare_custom_config.preserved_attributes)

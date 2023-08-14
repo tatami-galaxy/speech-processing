@@ -29,14 +29,15 @@ from transformers import (
     WhisperTokenizer,
     WhisperProcessor,
     GenerationConfig,
-    AdamW,
     set_seed,
-    get_linear_schedule_with_warmup,
 )
+
+from torch.ao.quantization import get_default_qconfig
+from quantize_fx import prepare_fx, convert_fx
+from torch.ao.quantization import QConfigMapping
 
 import evaluate
 
-from accelerate import Accelerator
 
 
 # get root directory
@@ -68,30 +69,42 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         # different padding methods
         model_input_name = self.processor.model_input_names[0]
         input_features = [{model_input_name: feature[model_input_name]} for feature in features]
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
+        #label_features = [{"input_ids": feature["labels"]} for feature in features]
+        #decoder_input_ids = torch.LongTensor([feature["decoder_input_ids"] for feature in features])
+        decoder_input_ids = torch.Tensor([feature["decoder_input_ids"] for feature in features])
 
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
         if self.forward_attention_mask:
             batch["attention_mask"] = torch.LongTensor([feature["attention_mask"] for feature in features])
 
-        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+        #labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
 
         # replace padding with -100 to ignore loss correctly
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        #labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
 
         # if bos token is appended in previous tokenization step,
         # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
-            labels = labels[:, 1:]
+        #if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
+            #labels = labels[:, 1:]
 
-        batch["labels"] = labels
+        #batch["labels"] = labels
+        batch["decoder_input_ids"] = decoder_input_ids
 
         return batch
     
 
+def print_size_of_model(model):
+    if isinstance(model, torch.jit.RecursiveScriptModule):
+        torch.jit.save(model, "temp.p")
+    else:
+        torch.jit.save(torch.jit.script(model), "temp.p")
+    print("Size (MB):", os.path.getsize("temp.p")/1e6)
+    os.remove("temp.p")
+    
 
-def train(args, accelerator):
+
+def load_model(args):
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
@@ -114,7 +127,14 @@ def train(args, accelerator):
         model.model.encoder.gradient_checkpointing = False
 
 
-    ## save config ##
+    model.to("cpu")
+
+
+    return model, feature_extractor, tokenizer, processor
+
+
+
+def load_data(args, model, feature_extractor, tokenizer):
 
 
     # dataset
@@ -122,31 +142,33 @@ def train(args, accelerator):
     common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
     common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
-    with accelerator.main_process_first():
-        # remove unused columns
-        common_voice = common_voice.remove_columns(
-            [
-                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
-            ]
-        )
+    # remove unused columns
+    common_voice = common_voice.remove_columns(
+        [
+            "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
+        ]
+    )
 
-        # select small dataset for testing
-        if args.max_train_samples is not None:
-            common_voice["train"] = common_voice["train"].select(range(args.max_train_samples))
+    # select small dataset for testing
+    if args.max_train_samples is not None:
+        common_voice["train"] = common_voice["train"].select(range(args.max_train_samples))
 
-        if args.max_test_samples is not None:
-            common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
+    if args.max_test_samples is not None:
+        common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
 
-        # resample to 16kHz
-        common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
+    # resample to 16kHz
+    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # if SpecAugment is used for whisper models, return attention_mask to guide the mask along time axis
-    forward_attention_mask = (
-        getattr(model.config, "model_type", None) == "whisper"
-        and getattr(model.config, "apply_spec_augment", False)
-        and getattr(model.config, "mask_time_prob", 0) > 0
-    )
+    #forward_attention_mask = (
+        #getattr(model.config, "model_type", None) == "whisper"
+        #and getattr(model.config, "apply_spec_augment", False)
+        #and getattr(model.config, "mask_time_prob", 0) > 0
+    #)
+    # get attention mask for observers
+    forward_attention_mask = True
+
     # other hyperparameters
     max_input_length = args.max_duration_in_seconds * feature_extractor.sampling_rate
     min_input_length = args.min_duration_in_seconds * feature_extractor.sampling_rate
@@ -186,17 +208,17 @@ def train(args, accelerator):
             batch["attention_mask"] = inputs.get("attention_mask")[0]
 
         # process targets
-        input_str = batch["sentence"]  # do lower
-        batch["labels"] = tokenizer(input_str).input_ids
+        #input_str = batch["sentence"]  # do lower
+        #batch["labels"] = tokenizer(input_str).input_ids
+        batch["decoder_input_ids"] = torch.tensor([model.config.decoder_start_token_id]).reshape(1, -1)
         return batch
     
     
-    with accelerator.main_process_first():
-        # vectorize dataset
-        common_voice = common_voice.map(
-            prepare_dataset,
-            remove_columns=common_voice.column_names["train"],
-            num_proc=args.num_workers)
+    # vectorize dataset
+    common_voice = common_voice.map(
+        prepare_dataset,
+        remove_columns=common_voice.column_names["train"],
+        num_proc=args.num_workers)
 
 
     # filter data that is shorter than min_input_length or longer than
@@ -210,81 +232,28 @@ def train(args, accelerator):
         input_columns=["input_length"],
     )
 
+    return common_voice, forward_attention_mask
 
 
-    # cer and wer
-    cer_metric = evaluate.load("cer")
-    wer_metric = evaluate.load("wer")
+# calibrate with generate? or train data?
+def calibrate(model, data_loader):
+    # calibration progress bar
+    eval_bar = tqdm(range(len(data_loader)), position=0)
+    model.eval()
+    with torch.no_grad():
+        for batch in data_loader:
+            batch.pop('decoder_input_ids')
+            model(
+                #output_hidden_states=False,
+                #output_attentions=False,
+                #return_dict=True,
+                #use_cache=True,
+                #decoder_inputs_embeds=None,
+                **batch
+            )
+            eval_bar.update(1)
 
-    # data collator
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
-        processor=processor,
-        decoder_start_token_id=model.config.decoder_start_token_id,
-        forward_attention_mask=forward_attention_mask,
-    )
-
-    # data loaders
-    train_dataloader = DataLoader(
-        common_voice["train"],
-        shuffle=True,
-        collate_fn=data_collator,
-        batch_size=args.train_batch_size,
-    )
-    eval_dataloader = DataLoader(
-        common_voice["test"],
-        collate_fn=data_collator,
-        batch_size=args.eval_batch_size,
-    )
-
-    # optimizer
-    optimizer = AdamW(
-        list(model.parameters()),
-        lr=args.lr,
-    )
-
-    # calculate epochs
-    #args.num_train_epochs = args.train_steps // len(train_dataloader) + 1
-
-    # scheduler
-    lr_scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=args.warmup_steps,
-        num_training_steps=args.train_steps
-    )
-
-    # prepare everything for accelerator
-    # any instruction using your training dataloader length,
-    # for instance if you need the number of total training steps
-    # to create a learning rate scheduler) should go after the call to prepare()
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
-
-    global_step = 0  # tracks total steps
-    total_loss = 0  # total loss before each eval
-
-    accelerator.log({
-        "train_batch_size": args.train_batch_size,
-        "eval_batch_size": args.eval_batch_size,
-        "gpus": accelerator.state.num_processes
-        },
-        step=global_step + 1,
-    )
-
-    # load from checkpoint
-    # check if checkpoint directory passed in
-    if args.resume_from_checkpoint is not None:
-        accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
-        accelerator.load_state(args.resume_from_checkpoint)
-        # if resumed from checkpoint
-        # we need to skip steps until we reach the current step
-            # ../checkpoint-123 -> int(123)
-        steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
-        global_step = steps_completed
-        if args.skip_steps:
-            train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-            
-
+    return
     
     def make_generation_config(supress_en=False):
 
@@ -321,8 +290,7 @@ def train(args, accelerator):
 
     # Training
 
-    # main progress bar
-    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    # eval progress bar
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
     while True:
@@ -468,17 +436,6 @@ def main():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
-    )
-    parser.add_argument(
-        "--skip_steps",
-        action="store_true",
-        help="whether to skip steps in dataloader (checkpoint)"
-    )
-    parser.add_argument(
         "--model_lang",
         default='hindi',
         type=str,
@@ -514,40 +471,10 @@ def main():
         type=int,
     )
     parser.add_argument(
-        "--train_steps",
-        default=5000,
-        type=int,
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        default=0,
-        type=int,
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        default=1,
-        type=int,
-    )
-    parser.add_argument(
-        "--eval_steps",
-        default=1000,
-        type=int,
-    )
-    parser.add_argument(
         '--num_workers',
         type=int,
-        default=os.cpu_count(), # os.cpu_count()
+        default=None, # os.cpu_count()
         help="The number of processes to use for the preprocessing."
-    )
-    parser.add_argument(
-        "--lr",
-        default=1e-5,
-        type=float,
-    )
-    parser.add_argument(
-        "--mixed_precision",
-        default='fp16',
-        type=str,
     )
     parser.add_argument(
         '--generation_max_length',
@@ -602,30 +529,143 @@ def main():
         raise ValueError(
             f"pass in model_name_or_path"
         )
-    
 
-    # initialize accelerator
-    accelerator = Accelerator(
-        mixed_precision=args.mixed_precision,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        log_with="tensorboard",
-        project_dir=args.output_dir 
+    # model
+    model, feature_extractor, tokenizer, processor = load_model(args)
+
+    # data
+    common_voice, forward_attention_mask = load_data(args, model, feature_extractor, tokenizer)
+
+    # metrics
+    cer_metric = evaluate.load("cer")
+    wer_metric = evaluate.load("wer")
+
+    # data collator
+    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
+        processor=processor,
+        decoder_start_token_id=model.config.decoder_start_token_id,
+        forward_attention_mask=forward_attention_mask,
     )
-    # we need to initialize the trackers we use, and also store our configuration
-    track_config = {
-        "lr": args.lr,
-        "train_steps": args.train_steps,
-        "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
+
+    # data loaders
+    train_dataloader = DataLoader(
+        common_voice["train"],
+        shuffle=True,
+        collate_fn=data_collator,
+        batch_size=args.train_batch_size,
+    )
+    test_dataloader = DataLoader(
+        common_voice["test"],
+        collate_fn=data_collator,
+        batch_size=args.eval_batch_size,
+    )
+
+
+    # config for static quantization
+    qconfig = get_default_qconfig("x86")
+    qconfig_mapping = QConfigMapping().set_global(qconfig)
+
+    # example inputs to set up observers
+    example_inputs = (next(iter(train_dataloader)))
+    #print(example_inputs)
+
+    encoder_concrete_args={
+        'output_hidden_states': False,
+        'output_attentions': False,
+        'head_mask': None,
+        'return_dict': True,
     }
-    #run = os.path.split(__file__)[-1].split(".")[0]
-    accelerator.init_trackers('runs', track_config)
 
-    # train function
-    train(args, accelerator)
+    decoder_concrete_args={
+        'output_hidden_states': False,
+        'output_attentions': False,
+        'return_dict': True,
+        'use_cache': True,
+        'decoder_inputs_embeds': None,
+    }
 
-    # end logging
-    accelerator.end_training()
+    encoder = model.get_encoder()
+
+    example_inputs.pop('decoder_input_ids')
+
+    prepared_encoder = prepare_fx(encoder, qconfig_mapping, example_inputs, concrete_args=encoder_concrete_args)
+    #print(prepared_encoder.graph)
+    
+    for node in prepared_encoder.graph.nodes:
+        #print(node.format_node())
+        #print(node.name)
+        #print(node.args)
+        if node.name == 'output_attentions_1':
+            #print(node.format_node())
+            node.update_arg(0, False)
+        if node.name == 'output_hidden_states_1':
+            #print(node.format_node())
+            node.update_arg(0, False)
+        if node.name == 'return_dict_1':
+            #print(node.format_node())
+            node.update_arg(0, True)
+
+    prepared_encoder.recompile()
+
+    calibrate(prepared_encoder, test_dataloader)
+
+    quantized_encoder = convert_fx(prepared_encoder)
+    #print(quantized_encoder)
+    quit()
+
+    print("Size of encoder before quantization") ##
+    print_size_of_model(encoder)
+    print("Size of encoder after quantization")
+    print_size_of_model(quantized_encoder)
+
+    quit()
+
+    # prepare model for quantization
+    prepared_model = prepare_fx(model, qconfig_mapping, example_inputs, concrete_args=decoder_concrete_args)
+    #print(prepared_model.graph)
+    #print(prepared_model)
+    
+    for node in prepared_model.graph.nodes:
+        #print(node.format_node())
+        #print(node.name)
+        #print(node.args)
+        if node.name == 'use_cache_1':
+            #print(node.format_node())
+            node.update_arg(0, True)
+            #print(node.args)
+        if node.name == 'output_attentions_1':
+            #print(node.format_node())
+            node.update_arg(0, False)
+        if node.name == 'output_hidden_states_1':
+            #print(node.format_node())
+            node.update_arg(0, False)
+        if node.name == 'return_dict_1':
+            #print(node.format_node())
+            node.update_arg(0, True)
+
+    #for node in prepared_model.graph.nodes:
+        #print(node.format_node())
+        #print(node.name)
+        #print(node.args)
+        #if node.name == 'use_cache_1':
+            #print(node.format_node())
+            #quit()
+
+    #print(prepared_model.graph)
+    prepared_model.recompile()
+
+    calibrate(prepared_model, test_dataloader)
+
+    quantized_model = convert_fx(prepared_model)
+    print(quantized_model)
+
+    print("Size of model before quantization")
+    print_size_of_model(model)
+    print("Size of model after quantization")
+    print_size_of_model(quantized_model)
+
+
+
 
 
             
