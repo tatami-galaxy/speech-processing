@@ -1500,6 +1500,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             in WhisperAttention.forward"""
         )
         warnings.warn('prefix tuning disabled in WhisperAttention.forward')
+        warnings.warn('_prepare_decoder_attention_mask wraped')
 
         # Initialize weights and apply final processing
         self.post_init()

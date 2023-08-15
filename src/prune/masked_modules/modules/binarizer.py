@@ -23,7 +23,7 @@ from torch import autograd
 
 class ThresholdBinarizer(autograd.Function):
     """
-    Thresholdd binarizer.
+    Thresholdd binarizer. pruning method : threshold, sigmoid_threshold
     Computes a binary mask M from a real value matrix S such that `M_{i,j} = 1` if and only if `S_{i,j} > \tau`
     where `\tau` is a real value threshold.
 
@@ -68,7 +68,7 @@ class ThresholdBinarizer(autograd.Function):
 
 class TopKBinarizer(autograd.Function):
     """
-    Top-k Binarizer.
+    Top-k Binarizer. pruning method : topK
     Computes a binary mask M from a real value matrix S such that `M_{i,j} = 1` if and only if `S_{i,j}`
     is among the k% highest values of S.
 
@@ -95,7 +95,7 @@ class TopKBinarizer(autograd.Function):
         # Get the subnetwork by sorting the inputs and using the top threshold %
         mask = inputs.clone()
         _, idx = inputs.flatten().sort(descending=True)
-        j = int(threshold * inputs.numel())
+        j = int(threshold * inputs.numel())  # numel -> num of elements
 
         # flat_out and mask access the same memory.
         flat_out = mask.flatten()
@@ -110,7 +110,7 @@ class TopKBinarizer(autograd.Function):
 
 class MagnitudeBinarizer(object):
     """
-    Magnitude Binarizer.
+    Magnitude Binarizer. pruing method : magnitude
     Computes a binary mask M from a real value matrix S such that `M_{i,j} = 1` if and only if `S_{i,j}`
     is among the k% highest values of |S| (absolute value).
 
