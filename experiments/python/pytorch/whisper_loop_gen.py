@@ -196,7 +196,7 @@ def train(args):
 
             model_inputs = {
             "encoder_outputs": encoder_outputs,
-            "past_key_values": past_key_values,   # past_key_values
+            "past_key_values": past_key_values,  
             "decoder_input_ids": decoder_input_ids,
             "use_cache": True,
             "decoder_attention_mask": None,

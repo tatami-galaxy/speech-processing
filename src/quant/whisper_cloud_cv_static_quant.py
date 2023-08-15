@@ -28,9 +28,9 @@ from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
     WhisperProcessor,
-    GenerationConfig,
     set_seed,
 )
+from transformers.modeling_outputs import BaseModelOutput
 
 from torch.ao.quantization import get_default_qconfig
 from quantize_fx import prepare_fx, convert_fx
@@ -71,7 +71,8 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         input_features = [{model_input_name: feature[model_input_name]} for feature in features]
         #label_features = [{"input_ids": feature["labels"]} for feature in features]
         #decoder_input_ids = torch.LongTensor([feature["decoder_input_ids"] for feature in features])
-        decoder_input_ids = torch.Tensor([feature["decoder_input_ids"] for feature in features])
+        # needs to be LongTensor, cast before torch.histc
+        decoder_input_ids = torch.LongTensor([feature["decoder_input_ids"] for feature in features])
 
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
 
@@ -235,165 +236,75 @@ def load_data(args, model, feature_extractor, tokenizer):
     return common_voice, forward_attention_mask
 
 
+def quantize(model, example_inputs, qconfig_mapping, concrete_args, dataloader, is_encoder=False, encoder_outputs_list=[]):
+
+    example_inputs.pop('decoder_input_ids')
+    model = prepare_fx(model, qconfig_mapping, example_inputs, concrete_args=concrete_args)
+
+    #if not is_encoder:
+        #print(model.code)
+        #quit()
+
+    # get node names (concrete_arg_1)
+    update_dict = {}
+    for key, val in concrete_args.items():
+        new_key = key+'_1'
+        update_dict[new_key] = val
+    
+    # update nodes
+    for node in model.graph.nodes:
+        if node.name in update_dict:
+            node.update_arg(0, update_dict[node.name])
+
+    model.recompile()
+
+    if is_encoder:
+        encoder_outputs_list = calibrate(model, dataloader, is_encoder=is_encoder)
+        quantized_model = convert_fx(model)
+        return quantized_model, encoder_outputs_list
+    
+    else:
+        calibrate(model, dataloader, is_encoder=is_encoder, encoder_outputs_list=encoder_outputs_list)
+        quantized_model = convert_fx(model)
+        return quantized_model
+
+
 # calibrate with generate? or train data?
-def calibrate(model, data_loader):
+def calibrate(model, data_loader, is_encoder=False, encoder_outputs_list=[]):
+
+    #past_key_values = [(None, None)]*12
+
+    #if is_encoder:
+        # store encoder_outputs for calibrating decoder 
+        #encoder_outputs_list = []
     # calibration progress bar
     eval_bar = tqdm(range(len(data_loader)), position=0)
     model.eval()
     with torch.no_grad():
         for batch in data_loader:
-            batch.pop('decoder_input_ids')
-            model(
-                #output_hidden_states=False,
-                #output_attentions=False,
-                #return_dict=True,
-                #use_cache=True,
-                #decoder_inputs_embeds=None,
-                **batch
-            )
-            eval_bar.update(1)
 
-    return
-    
-    def make_generation_config(supress_en=False):
+            if is_encoder:
+                batch.pop('decoder_input_ids')
+                encoder_outputs = BaseModelOutput(model(**batch))
+                #print(encoder_outputs)
+                #print(type(encoder_outputs))
+                #quit()
+                encoder_outputs_list.append(encoder_outputs)
 
-        generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
-        gen_dict = generation_config.to_dict()
-        # add attributes to genration_config
-        # generation_config does not have "langauge", but generate() tries to use it
-        # can be empty dict here since being set in generate_step
-        gen_dict["language"] = args.model_lang
-        if supress_en:
-            # en tokens to suppress from multilingual vocab
-            en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
-            suppress_en_list = []
-            for key in en_tokenizer.encoder.keys():
-                if key in tokenizer.encoder.keys() and key.isalpha():
-                    suppress_en_list.append(key)
-            # supress english tokens
-            gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
-        # add any other args here   
-        # reload with new attributes
-        generation_config = GenerationConfig.from_dict(gen_dict)
-
-        return generation_config
-
-
-    max_length = (
-        args.generation_max_length if args.generation_max_length is not None else model.config.max_length
-    )
-    num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
-    gen_kwargs = {"max_new_tokens": max_length, "num_beams": num_beams}
-    # generation config
-    generation_config = make_generation_config()
-
-
-    # Training
-
-    # eval progress bar
-    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
-
-    while True:
-
-        model.train()
-
-        for batch in train_dataloader:
-            with accelerator.accumulate(model):
-                outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-
-            progress_bar.update(1)
-
-            if (global_step + 1) % args.eval_steps == 0:
-                # eval progress bar
-                #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
-                model.eval()
-                val_loss = 0
-                for batch in eval_dataloader:
-                    with torch.no_grad():
-                        outputs = model(**batch)
-                        val_loss += outputs.loss.item()
-
-                    # compute metric
-                    # generate and calculate cer, wer
-                    ## slow ##
-                    output_ids = accelerator.unwrap_model(model).generate(
-                        batch["input_features"],
-                        generation_config=generation_config,
-                        task=args.task,
-                        language=args.model_lang,
-                        is_multilingual=True,
-                        **gen_kwargs
-                    )
-                    # pad_acrss_processes recursively pads the tensors 
-                    # in a nested list/tuple/dictionary of tensors from all devices 
-                    # to the same size so they can safely be gathered
-                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
-                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-                    # gather from all devices
-                    output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
-                    label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
-                    # decode ids
-                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
-                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                    # we do not want to group tokens when computing the metrics
-                    references = processor.batch_decode(
-                        label_ids,
-                        group_tokens=False,
-                        skip_special_tokens=True,
-                        clean_up_tokenization_spaces=True
-                    )
-                    cer_metric.add_batch(predictions=predictions, references=references)
-                    wer_metric.add_batch(predictions=predictions, references=references)
-
-                    eval_bar.update(1)
-
-                eval_bar.refresh()
-                eval_bar.reset()
-
-                cer_result = cer_metric.compute()
-                wer_result = wer_metric.compute()
-                # add wer for hindi
-                accelerator.print('step : {}, cer : {}, wer: {}'.format(global_step + 1, cer_result, wer_result))
-                accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
-                accelerator.log({
-                    "cer": cer_result,
-                    "wer": wer_result,
-                    "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "val_loss": val_loss / len(eval_dataloader)
-                },
-                step=global_step + 1,
+            else:  # single pass through decoder, no generation
+                encoder_outputs = encoder_outputs_list.pop(0)
+                model(
+                    encoder_outputs=encoder_outputs,
+                    decoder_input_ids=batch['decoder_input_ids'],
+                    #past_key_values=past_key_values,
                 )
 
-                # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
-                # saved to folders named `checkpoint-{global_step}`
-                # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
-                # if mixed precision was used, will also save a "scalar.bin" file
-                output_dir = f"checkpoint-{global_step + 1}"
-                if args.output_dir is not None:
-                    output_dir = os.path.join(args.output_dir, output_dir)
-                    accelerator.save_state(output_dir)
-                    # save config
-                    accelerator.wait_for_everyone()
-                    unwrapped_model = accelerator.unwrap_model(model)
-                    #model.config.save_pretrained(output_dir)
-                    unwrapped_model.config.save_pretrained(
-                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-                    )
+            eval_bar.update(1)
 
-                model.train()
-                total_loss = 0
+    if is_encoder: return encoder_outputs_list
+    else: return
 
-            global_step += 1
-
-            if global_step >= args.train_steps : return
-
-
+    
 
 
 
@@ -563,101 +474,45 @@ def main():
 
     # config for static quantization
     qconfig = get_default_qconfig("x86")
+    #print(qconfig)
+    #quit()
     qconfig_mapping = QConfigMapping().set_global(qconfig)
 
     # example inputs to set up observers
     example_inputs = (next(iter(train_dataloader)))
     #print(example_inputs)
 
+    # concrete args for tracing control flow
     encoder_concrete_args={
         'output_hidden_states': False,
         'output_attentions': False,
         'head_mask': None,
         'return_dict': True,
     }
-
     decoder_concrete_args={
         'output_hidden_states': False,
         'output_attentions': False,
         'return_dict': True,
-        'use_cache': True,
+        'use_cache': True, 
         'decoder_inputs_embeds': None,
+        'past_key_values': None, # cant be None for fast generation
     }
 
+    # quantize encoder
     encoder = model.get_encoder()
-
-    example_inputs.pop('decoder_input_ids')
-
-    prepared_encoder = prepare_fx(encoder, qconfig_mapping, example_inputs, concrete_args=encoder_concrete_args)
-    #print(prepared_encoder.graph)
+    encoder_example_inputs = example_inputs.copy()
+    quantized_encoder, encoder_outputs_list = quantize(
+        encoder, encoder_example_inputs, qconfig_mapping, encoder_concrete_args, test_dataloader,
+        is_encoder=True,
+    )
     
-    for node in prepared_encoder.graph.nodes:
-        #print(node.format_node())
-        #print(node.name)
-        #print(node.args)
-        if node.name == 'output_attentions_1':
-            #print(node.format_node())
-            node.update_arg(0, False)
-        if node.name == 'output_hidden_states_1':
-            #print(node.format_node())
-            node.update_arg(0, False)
-        if node.name == 'return_dict_1':
-            #print(node.format_node())
-            node.update_arg(0, True)
-
-    prepared_encoder.recompile()
-
-    calibrate(prepared_encoder, test_dataloader)
-
-    quantized_encoder = convert_fx(prepared_encoder)
-    #print(quantized_encoder)
-    quit()
-
-    print("Size of encoder before quantization") ##
-    print_size_of_model(encoder)
-    print("Size of encoder after quantization")
-    print_size_of_model(quantized_encoder)
-
-    quit()
-
-    # prepare model for quantization
-    prepared_model = prepare_fx(model, qconfig_mapping, example_inputs, concrete_args=decoder_concrete_args)
-    #print(prepared_model.graph)
-    #print(prepared_model)
+    # quantize model
+    decoder_example_inputs = example_inputs.copy()
+    quantized_model = quantize(
+        model, decoder_example_inputs, qconfig_mapping, decoder_concrete_args, test_dataloader,
+        encoder_outputs_list=encoder_outputs_list,
+    )
     
-    for node in prepared_model.graph.nodes:
-        #print(node.format_node())
-        #print(node.name)
-        #print(node.args)
-        if node.name == 'use_cache_1':
-            #print(node.format_node())
-            node.update_arg(0, True)
-            #print(node.args)
-        if node.name == 'output_attentions_1':
-            #print(node.format_node())
-            node.update_arg(0, False)
-        if node.name == 'output_hidden_states_1':
-            #print(node.format_node())
-            node.update_arg(0, False)
-        if node.name == 'return_dict_1':
-            #print(node.format_node())
-            node.update_arg(0, True)
-
-    #for node in prepared_model.graph.nodes:
-        #print(node.format_node())
-        #print(node.name)
-        #print(node.args)
-        #if node.name == 'use_cache_1':
-            #print(node.format_node())
-            #quit()
-
-    #print(prepared_model.graph)
-    prepared_model.recompile()
-
-    calibrate(prepared_model, test_dataloader)
-
-    quantized_model = convert_fx(prepared_model)
-    print(quantized_model)
 
     print("Size of model before quantization")
     print_size_of_model(model)
