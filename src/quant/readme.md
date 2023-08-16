@@ -1,1 +1,1 @@
-python whisper_cloud_cv_static_quant.py --max_train_samples 1000 --max_test_samples 10
+python whisper_cloud_cv_static_quant.py --max_train_samples 100 --max_test_samples 10
