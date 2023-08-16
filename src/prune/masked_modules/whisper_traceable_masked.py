@@ -59,7 +59,8 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from transformers.models.whisper.configuration_whisper import WhisperConfig
+from configuration_whisper import MaskedWhisperConfig
+from modules.masked_nn import MaskedLinear
 from transformers.models.whisper.tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
 
 # a wrapped function can be thought of a “leaf function”,
@@ -366,6 +367,7 @@ class WhisperAttention(nn.Module):
 
     def __init__(
         self,
+        config,
         embed_dim: int,
         num_heads: int,
         dropout: float = 0.0,
@@ -386,10 +388,42 @@ class WhisperAttention(nn.Module):
         self.scaling = self.head_dim**-0.5
         self.is_decoder = is_decoder
 
-        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
-        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        #self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.k_proj = MaskedLinear(
+            embed_dim,
+            embed_dim, 
+            bias=False,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
+        #self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.v_proj = MaskedLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
+        #self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.q_proj = MaskedLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
+        #self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = MaskedLinear(
+            embed_dim,
+            embed_dim,
+            bias=bias,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention._shape with BART->whisper
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
@@ -404,6 +438,7 @@ class WhisperAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        threshold = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -414,7 +449,7 @@ class WhisperAttention(nn.Module):
         bsz, tgt_len, _ = hidden_states.size()
 
         # get query proj
-        query_states = self.q_proj(hidden_states) * self.scaling
+        query_states = self.q_proj(hidden_states, threshold=threshold) * self.scaling
         # get key, value proj
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
@@ -429,18 +464,18 @@ class WhisperAttention(nn.Module):
             value_states = past_key_value[1]
         elif is_cross_attention:
             # cross_attentions
-            key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
-            value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
+            key_states = self._shape(self.k_proj(key_value_states, threshold=threshold), -1, bsz)
+            value_states = self._shape(self.v_proj(key_value_states, threshold=threshold), -1, bsz)
         elif past_key_value is not None:
             # reuse k, v, self_attention
-            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = self._shape(self.k_proj(hidden_states, threshold=threshold), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states, threshold=threshold), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
             # self_attention
-            key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            key_states = self._shape(self.k_proj(hidden_states, threshold=threshold), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states, threshold=threshold), -1, bsz)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -516,17 +551,18 @@ class WhisperAttention(nn.Module):
         # partitioned across GPUs when using tensor-parallelism.
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
 
-        attn_output = self.out_proj(attn_output)
+        attn_output = self.out_proj(attn_output, threshold=threshold)
 
         return attn_output, attn_weights_reshaped, past_key_value
 
 
 # Copied from transformers.models.mbart.modeling_mbart.MBartEncoderLayer with MBart->Whisper
 class WhisperEncoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):  # masked config #
+    def __init__(self, config: MaskedWhisperConfig):  # masked config #
         super().__init__()
         self.embed_dim = config.d_model
         self.self_attn = WhisperAttention(
+            config=config,
             embed_dim=self.embed_dim,
             num_heads=config.encoder_attention_heads,
             dropout=config.attention_dropout,
@@ -535,8 +571,22 @@ class WhisperEncoderLayer(nn.Module):
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
-        self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)  # masked linear
-        self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)  # masked linear
+        #self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
+        self.fc1 = MaskedLinear(
+            self.embed_dim,
+            config.encoder_ffn_dim,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale
+        )
+        #self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)  # masked linear
+        self.fc2 = MaskedLinear(
+            config.encoder_ffn_dim,
+            self.embed_dim,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale
+        )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -572,9 +622,9 @@ class WhisperEncoderLayer(nn.Module):
 
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
+        hidden_states = self.activation_fn(self.fc1(hidden_states, threshold=threshold))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
+        hidden_states = self.fc2(hidden_states, threshold=threshold)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -595,11 +645,12 @@ class WhisperEncoderLayer(nn.Module):
 
 # Copied from transformers.models.mbart.modeling_mbart.MBartDecoderLayer with MBart->Whisper
 class WhisperDecoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: MaskedWhisperConfig):
         super().__init__()
         self.embed_dim = config.d_model
 
         self.self_attn = WhisperAttention(
+            config=config,
             embed_dim=self.embed_dim,
             num_heads=config.decoder_attention_heads,
             dropout=config.attention_dropout,
@@ -611,14 +662,29 @@ class WhisperDecoderLayer(nn.Module):
 
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.encoder_attn = WhisperAttention(
+            config,
             self.embed_dim,
             config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
         )
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
-        self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
+        #self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
+        self.fc1 = MaskedLinear(
+            self.embed_dim,
+            config.decoder_ffn_dim,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
+        #self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
+        self.fc2 = MaskedLinear(
+            config.decoder_ffn_dim,
+            self.embed_dim,
+            pruning_method=config.pruning_method,
+            mask_init=config.mask_init,
+            mask_scale=config.mask_scale,
+        )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
     def forward(
@@ -632,6 +698,7 @@ class WhisperDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
+        threshold = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -694,9 +761,9 @@ class WhisperDecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
+        hidden_states = self.activation_fn(self.fc1(hidden_states, threshold=threshold))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
+        hidden_states = self.fc2(hidden_states, threshold=threshold)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -711,8 +778,8 @@ class WhisperDecoderLayer(nn.Module):
         return outputs
 
 
-class WhisperPreTrainedModel(PreTrainedModel):
-    config_class = WhisperConfig
+class MaskedWhisperPreTrainedModel(PreTrainedModel):
+    config_class = MaskedWhisperConfig
     base_model_prefix = "model"
     main_input_name = "input_features"
     supports_gradient_checkpointing = True
@@ -871,7 +938,7 @@ WHISPER_ENCODER_INPUTS_DOCSTRING = r"""
 """
 
 
-class WhisperEncoder(WhisperPreTrainedModel):
+class WhisperEncoder(MaskedWhisperPreTrainedModel):
     """
     Transformer encoder consisting of *config.encoder_layers* self attention layers. Each layer is a
     [`WhisperEncoderLayer`].
@@ -880,7 +947,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         config: WhisperConfig
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: MaskedWhisperConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.encoder_layerdrop
@@ -1024,7 +1091,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         )
 
 
-class WhisperDecoder(WhisperPreTrainedModel):
+class WhisperDecoder(MaskedWhisperPreTrainedModel):
     """
     Transformer decoder consisting of *config.decoder_layers* layers. Each layer is a [`WhisperDecoderLayer`]
 
@@ -1032,7 +1099,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
         config: WhisperConfig
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: MaskedWhisperConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.decoder_layerdrop
@@ -1294,11 +1361,12 @@ class WhisperDecoder(WhisperPreTrainedModel):
     WHISPER_START_DOCSTRING,
 )
 class MaskedWhisperModel(MaskedWhisperPreTrainedModel):
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: MaskedWhisperConfig):
         super().__init__(config)
 
         self.encoder = WhisperEncoder(config)
         self.decoder = WhisperDecoder(config)
+
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1365,16 +1433,6 @@ class MaskedWhisperModel(MaskedWhisperPreTrainedModel):
 
         return input_features
     
-    def _prune_heads(self, heads_to_prune):
-        """Prunes heads of the model.
-        heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
-        See base class PreTrainedModel
-        """
-        for layer, heads in heads_to_prune.items():
-            self.encoder.layer[layer].attention.prune_heads(heads)
-
-            # decoder?
-            #self.decoder.layer[layer].attention.prune_heads(heads)
 
 
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
@@ -1484,9 +1542,9 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
     base_model_prefix = "model"
     _tied_weights_keys = ["proj_out.weight"]
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: MaskedWhisperConfig):
         super().__init__(config)
-        self.model = WhisperModel(config)
+        self.model = MaskedWhisperModel(config)
         self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.loss_fct = CrossEntropyLoss()
 
@@ -1968,132 +2026,3 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
             timestamps[batch_idx, 1:] = torch.tensor(jump_times)
 
         return timestamps
-
-
-@add_start_docstrings(
-    """
-    Whisper Encoder Model with a sequence classification head on top (a linear layer over the pooled output) for tasks
-    like SUPERB Keyword Spotting.
-    """,
-    WHISPER_ENCODER_INPUTS_DOCSTRING,
-)
-
-class WhisperForAudioClassification(WhisperPreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.encoder = WhisperEncoder(config)
-        num_layers = config.num_hidden_layers + 1  # transformer layers + input embeddings
-        if config.use_weighted_layer_sum:
-            self.layer_weights = nn.Parameter(torch.ones(num_layers) / num_layers)
-        self.projector = nn.Linear(config.hidden_size, config.classifier_proj_size)
-        self.classifier = nn.Linear(config.classifier_proj_size, config.num_labels)
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def freeze_encoder(self):
-        """
-        Calling this function will disable the gradient computation for the Whisper encoder so that its parameters will
-        not be updated during training. Only the projection layers and classification head will be updated.
-        """
-        self.encoder._freeze_parameters()
-
-    def get_input_embeddings(self) -> nn.Module:
-        return self.encoder.get_input_embeddings()
-
-    def set_input_embeddings(self, value: nn.Module):
-        self.encoder.set_input_embeddings(value)
-
-    @add_start_docstrings_to_model_forward(WHISPER_ENCODER_INPUTS_DOCSTRING)
-    @replace_return_docstrings(output_type=SequenceClassifierOutput, config_class=_CONFIG_FOR_DOC)
-    def forward(
-        self,
-        input_features: Optional[torch.LongTensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.Tensor], SequenceClassifierOutput]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-
-        Returns:
-
-        Example:
-
-        ```python
-        >>> import torch
-        >>> from transformers import AutoFeatureExtractor, WhisperForAudioClassification
-        >>> from datasets import load_dataset
-
-        >>> feature_extractor = AutoFeatureExtractor.from_pretrained("sanchit-gandhi/whisper-medium-fleurs-lang-id")
-        >>> model = WhisperForAudioClassification.from_pretrained("sanchit-gandhi/whisper-medium-fleurs-lang-id")
-
-        >>> ds = load_dataset("google/fleurs", "all", split="validation", streaming=True)
-        >>> sample = next(iter(ds))
-
-        >>> inputs = feature_extractor(
-        ...     sample["audio"]["array"], sampling_rate=sample["audio"]["sampling_rate"], return_tensors="pt"
-        ... )
-        >>> input_features = inputs.input_features
-
-        >>> with torch.no_grad():
-        ...     logits = model(input_features).logits
-
-        >>> predicted_class_ids = torch.argmax(logits).item()
-        >>> predicted_label = model.config.id2label[predicted_class_ids]
-        >>> predicted_label
-        'Afrikaans'
-        ```"""
-
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if encoder_outputs is None:
-            encoder_outputs = self.encoder(
-                input_features,
-                head_mask=head_mask,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-
-        if self.config.use_weighted_layer_sum:
-            hidden_states = torch.stack(encoder_outputs, dim=1)
-            norm_weights = nn.functional.softmax(self.layer_weights, dim=-1)
-            hidden_states = (hidden_states * norm_weights.view(-1, 1, 1)).sum(dim=1)
-        else:
-            hidden_states = encoder_outputs[0]
-
-        hidden_states = self.projector(hidden_states)
-        pooled_output = hidden_states.mean(dim=1)
-
-        logits = self.classifier(pooled_output)
-
-        loss = None
-
-        if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            # move labels to correct device to enable PP
-            labels = labels.to(logits.device)
-            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
-
-        if not return_dict:
-            output = (logits,) + encoder_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
-
-        return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-        )

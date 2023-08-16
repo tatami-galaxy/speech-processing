@@ -17,15 +17,15 @@
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
-from ...configuration_utils import PretrainedConfig
-from ...onnx import OnnxConfig, OnnxSeq2SeqConfigWithPast
-from ...utils import logging
+from transformers.configuration_utils import PretrainedConfig
+from transformers.onnx import OnnxConfig, OnnxSeq2SeqConfigWithPast
+from transformers.utils import logging
 
 
 if TYPE_CHECKING:
-    from ...feature_extraction_utils import FeatureExtractionMixin
-    from ...tokenization_utils_base import PreTrainedTokenizerBase
-    from ...utils import TensorType
+    from transformers.feature_extraction_utils import FeatureExtractionMixin
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+    from transformers.utils import TensorType
 
 logger = logging.get_logger(__name__)
 
@@ -59,7 +59,7 @@ NON_SPEECH_TOKENS_MULTI = [
 # fmt: on
 
 
-class WhisperConfig(PretrainedConfig):
+class MaskedWhisperConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`WhisperModel`]. It is used to instantiate a
     Whisper model according to the specified arguments, defining the model architecture. Instantiating a configuration
@@ -232,6 +232,10 @@ class WhisperConfig(PretrainedConfig):
         mask_feature_length=10,
         mask_feature_min_masks=0,
         median_filter_width=7,
+        # pruning args 
+        pruning_method="topK",
+        mask_init="constant",
+        mask_scale=0.0,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -270,6 +274,11 @@ class WhisperConfig(PretrainedConfig):
         self.mask_feature_min_masks = mask_feature_min_masks
 
         self.median_filter_width = median_filter_width
+
+        # pruning
+        self.pruning_method = pruning_method
+        self.mask_init = mask_init
+        self.mask_scale = mask_scale
 
         super().__init__(
             pad_token_id=pad_token_id,
