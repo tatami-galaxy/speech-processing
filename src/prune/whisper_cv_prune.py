@@ -13,22 +13,36 @@
 import os
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
-from datasets import load_dataset, DatasetDict
-import transformers, datasets
-from transformers import WhisperFeatureExtractor
-from transformers import WhisperTokenizer
-from transformers import WhisperProcessor
-from transformers import get_linear_schedule_with_warmup
-from datasets import Audio
-import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
-import evaluate
-from transformers import WhisperForConditionalGeneration, GenerationConfig
-from torch import nn
-from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, set_seed
 import argparse
+
+import transformers, datasets
+
+from datasets import(
+    load_dataset,
+    DatasetDict,
+    Audio,
+)
+
+from transformers import (
+    WhisperFeatureExtractor,
+    WhisperTokenizer,
+    WhisperProcessor,
+    GenerationConfig,
+    get_linear_schedule_with_warmup,
+    AdamW,
+    set_seed
+)
+from masked_modules.whisper_traceable_masked import MaskedWhisperForConditionalGeneration
+from masked_modules.configuration_whisper import MaskedWhisperConfig
+
+
+import torch
+from torch.utils.data.dataloader import DataLoader
+
+import evaluate
+
 from accelerate import Accelerator
 
 
@@ -86,29 +100,6 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
 def train(args, accelerator):
 
-
-    ## masked models ##
-    config = config_class.from_pretrained(
-        args.config_name if args.config_name else args.model_name_or_path,
-        cache_dir=args.cache_dir if args.cache_dir else None,
-        pruning_method=args.pruning_method,
-        mask_init=args.mask_init,
-        mask_scale=args.mask_scale,
-    )
-    tokenizer = tokenizer_class.from_pretrained(
-        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
-        do_lower_case=args.do_lower_case,
-        cache_dir=args.cache_dir if args.cache_dir else None,
-    )
-    model = model_class.from_pretrained(
-        args.model_name_or_path,
-        from_tf=bool(".ckpt" in args.model_name_or_path),
-        config=config,
-        cache_dir=args.cache_dir if args.cache_dir else None,
-    )
-
-
-
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
@@ -116,8 +107,19 @@ def train(args, accelerator):
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
+    config = MaskedWhisperConfig.from_pretrained(
+        args.config_name if args.config_name else args.model_name_or_path,
+        #cache_dir=args.cache_dir if args.cache_dir else None,
+        pruning_method=args.pruning_method,
+        mask_init=args.mask_init,
+        mask_scale=args.mask_scale,
+    )
     # model
-    model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
+    model = MaskedWhisperForConditionalGeneration.from_pretrained(
+        args.model_name_or_path,
+        config=config,
+        #cache_dir=args.cache_dir if args.cache_dir else None,
+    )
     #model.config.forced_decoder_ids = None
     model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
     model.config.suppress_tokens = []
@@ -131,8 +133,10 @@ def train(args, accelerator):
         model.model.encoder.gradient_checkpointing = False
 
 
-    ## save config ##
-
+    for name, param in model.named_parameters():
+        if 'mask_score' in name and param.requires_grad:
+            print(name)
+    quit()
 
     # dataset
     common_voice = DatasetDict()
@@ -275,7 +279,7 @@ def train(args, accelerator):
                 for n, p in model.named_parameters()
                 if "mask_score" not in n and p.requires_grad and any(nd in n for nd in no_decay)
             ],
-            "lr": args.learning_rate,
+            "lr": args.lr,
             "weight_decay": 0.0,
         },
     ]
@@ -477,6 +481,9 @@ def main():
         default=42,
         type=int,
     )
+
+
+    # model and data
     parser.add_argument(
         "--model_name_or_path",
         default="openai/whisper-small",
@@ -531,6 +538,19 @@ def main():
         default='hi',
         type=str,
     )
+    parser.add_argument(
+        '--max_duration_in_seconds',
+        type=float,
+        default=20.0
+    )
+    parser.add_argument(
+        '--min_duration_in_seconds',
+        type=float,
+        default=0.0
+    )
+
+
+    # train and eval
     parser.add_argument(
         '--max_train_samples',
         type=int,
@@ -603,16 +623,75 @@ def main():
         type=int,
         default=1
     )
+
+
+    # prune
     parser.add_argument(
-        '--max_duration_in_seconds',
+        "--mask_scores_learning_rate",
+        default=1e-2,
         type=float,
-        default=20.0
+        help="The Adam initial learning rate of the mask scores.",
     )
     parser.add_argument(
-        '--min_duration_in_seconds',
-        type=float,
-        default=0.0
+        "--initial_threshold", default=1.0, type=float, help="Initial value of the threshold (for scheduling)."
     )
+    parser.add_argument(
+        "--final_threshold", default=0.7, type=float, help="Final value of the threshold (for scheduling)."
+    )
+    parser.add_argument(
+        "--initial_warmup",
+        default=1,
+        type=int,
+        help=(
+            "Run `initial_warmup` * `warmup_steps` steps of threshold warmup during which threshold stays"
+            "at its `initial_threshold` value (sparsity schedule)."
+        ),
+    )
+    parser.add_argument(
+        "--final_warmup",
+        default=2,
+        type=int,
+        help=(
+            "Run `final_warmup` * `warmup_steps` steps of threshold cool-down during which threshold stays"
+            "at its final_threshold value (sparsity schedule)."
+        ),
+    )
+
+    parser.add_argument(
+        "--pruning_method",
+        default="topK",
+        type=str,
+        help=(
+            "Pruning Method (l0 = L0 regularization, magnitude = Magnitude pruning, topK = Movement pruning,"
+            " sigmoied_threshold = Soft movement pruning)."
+        ),
+    )
+    parser.add_argument(
+        "--mask_init",
+        default="constant",
+        type=str,
+        help="Initialization method for the mask scores. Choices: constant, uniform, kaiming.",
+    )
+    parser.add_argument(
+        "--mask_scale", default=0.0, type=float, help="Initialization parameter for the chosen initialization method."
+    )
+
+    parser.add_argument("--regularization", default=None, help="Add L0 or L1 regularization to the mask scores.")
+    parser.add_argument(
+        "--final_lambda",
+        default=0.0,
+        type=float,
+        help="Regularization intensity (used in conjunction with `regularization`.",
+    )
+
+    parser.add_argument("--global_topk", action="store_true", help="Global TopK on the Scores.")
+    parser.add_argument(
+        "--global_topk_frequency_compute",
+        default=25,
+        type=int,
+        help="Frequency at which we compute the TopK global threshold.",
+    )
+
 
 
     # parse args

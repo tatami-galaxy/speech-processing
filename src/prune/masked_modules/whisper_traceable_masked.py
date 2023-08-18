@@ -50,7 +50,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
-    SequenceClassifierOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
