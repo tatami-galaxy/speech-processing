@@ -59,7 +59,7 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 from configuration_whisper import MaskedWhisperConfig
-from modules.masked_nn import MaskedLinear
+from masked_nn import MaskedLinear
 from transformers.models.whisper.tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
 
 # a wrapped function can be thought of a “leaf function”,
@@ -730,6 +730,7 @@ class WhisperDecoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            threshold=threshold,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -750,6 +751,7 @@ class WhisperDecoderLayer(nn.Module):
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
+                threshold=threshold,
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -781,7 +783,7 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
     config_class = MaskedWhisperConfig
     base_model_prefix = "model"
     main_input_name = "input_features"
-    supports_gradient_checkpointing = True
+    supports_gradient_checkpointing = False
     _no_split_modules = ["WhisperEncoderLayer", "WhisperDecoderLayer"]
 
     def _init_weights(self, module):
@@ -795,9 +797,9 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
 
-    def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, (WhisperDecoder, WhisperEncoder)):
-            module.gradient_checkpointing = value
+    #def _set_gradient_checkpointing(self, module, value=False):
+        #if isinstance(module, (WhisperDecoder, WhisperEncoder)):
+            #module.gradient_checkpointing = value
 
     def _get_feat_extract_output_lengths(self, input_lengths: torch.LongTensor):
         """
@@ -1051,28 +1053,13 @@ class WhisperEncoder(MaskedWhisperPreTrainedModel):
             if to_drop:
                 layer_outputs = (None, None)
             else:
-                if self.gradient_checkpointing and self.training:
-
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs, output_attentions, threshold=threshold)
-
-                        return custom_forward
-
-                    layer_outputs = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(encoder_layer),
-                        hidden_states,
-                        None,
-                        (head_mask[idx] if head_mask is not None else None),
-                    )
-                else:
-                    layer_outputs = encoder_layer(
-                        hidden_states,
-                        None,
-                        layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                        output_attentions=output_attentions,
-                        threshold=threshold,
-                    )
+                layer_outputs = encoder_layer(
+                    hidden_states,
+                    None,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    output_attentions=output_attentions,
+                    threshold=threshold,
+                )
 
                 hidden_states = layer_outputs[0]
 
@@ -1258,12 +1245,12 @@ class WhisperDecoder(MaskedWhisperPreTrainedModel):
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
-                )
-                use_cache = False
+        #if self.gradient_checkpointing and self.training:
+            #if use_cache:
+                #logger.warning_once(
+                    #"`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
+                #)
+                #use_cache = False
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -1288,39 +1275,19 @@ class WhisperDecoder(MaskedWhisperPreTrainedModel):
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, output_attentions, use_cache, threshold=threshold)
-
-                    return custom_forward
-
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    encoder_hidden_states,
-                    None,  # encoder attention mask
-                    head_mask[idx] if head_mask is not None else None,
-                    cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None,
-                    None,  # past_key_value
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=encoder_hidden_states,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    cross_attn_layer_head_mask=(
-                        cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None
-                    ),
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                    threshold=threshold,
-                )
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                cross_attn_layer_head_mask=(
+                    cross_attn_head_mask[idx] if cross_attn_head_mask is not None else None
+                ),
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                threshold=threshold,
+            )
             hidden_states = layer_outputs[0]
 
             if use_cache:
@@ -1584,6 +1551,7 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         )
         warnings.warn('prefix tuning disabled in WhisperAttention.forward')
         warnings.warn('_prepare_decoder_attention_mask wraped')
+        warnings.warn('gradient checkpointing not supported')
 
         # Initialize weights and apply final processing
         self.post_init()

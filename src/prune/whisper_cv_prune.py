@@ -34,11 +34,13 @@ from transformers import (
     AdamW,
     set_seed
 )
-from masked_modules.whisper_traceable_masked import MaskedWhisperForConditionalGeneration
-from masked_modules.configuration_whisper import MaskedWhisperConfig
+from whisper_traceable_masked import MaskedWhisperForConditionalGeneration
+from configuration_whisper import MaskedWhisperConfig
 
+import numpy as np
 
 import torch
+import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 
 import evaluate
@@ -97,6 +99,43 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         return batch
     
 
+def schedule_threshold(
+    step: int,
+    total_step: int,
+    warmup_steps: int,
+    initial_threshold: float,
+    final_threshold: float,
+    initial_warmup: int,
+    final_warmup: int,
+    final_lambda: float,
+):
+    if step <= initial_warmup * warmup_steps:
+        threshold = initial_threshold
+    elif step > (total_step - final_warmup * warmup_steps):
+        threshold = final_threshold
+    else:
+        spars_warmup_steps = initial_warmup * warmup_steps
+        spars_schedu_steps = (final_warmup + initial_warmup) * warmup_steps
+        mul_coeff = 1 - (step - spars_warmup_steps) / (total_step - spars_schedu_steps)
+        threshold = final_threshold + (initial_threshold - final_threshold) * (mul_coeff**3)
+    regu_lambda = final_lambda * threshold / final_threshold
+    return threshold, regu_lambda
+
+
+def regularization(model: nn.Module, mode: str):
+    regu, counter = 0, 0
+    for name, param in model.named_parameters():
+        if "mask_scores" in name:
+            if mode == "l1":
+                regu += torch.norm(torch.sigmoid(param), p=1) / param.numel()
+            elif mode == "l0":
+                regu += torch.sigmoid(param - 2 / 3 * np.log(0.1 / 1.1)).sum() / param.numel()
+            else:
+                ValueError("Don't know this mode.")
+            counter += 1
+    return regu / counter
+    
+
 
 def train(args, accelerator):
 
@@ -108,7 +147,7 @@ def train(args, accelerator):
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
     config = MaskedWhisperConfig.from_pretrained(
-        args.config_name if args.config_name else args.model_name_or_path,
+        args.model_name_or_path,
         #cache_dir=args.cache_dir if args.cache_dir else None,
         pruning_method=args.pruning_method,
         mask_init=args.mask_init,
@@ -127,16 +166,11 @@ def train(args, accelerator):
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
-
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
 
-    for name, param in model.named_parameters():
-        if 'mask_score' in name and param.requires_grad:
-            print(name)
-    quit()
 
     # dataset
     common_voice = DatasetDict()
@@ -163,11 +197,14 @@ def train(args, accelerator):
 
 
     # if SpecAugment is used for whisper models, return attention_mask to guide the mask along time axis
-    forward_attention_mask = (
-        getattr(model.config, "model_type", None) == "whisper"
-        and getattr(model.config, "apply_spec_augment", False)
-        and getattr(model.config, "mask_time_prob", 0) > 0
-    )
+    #forward_attention_mask = (
+        #getattr(model.config, "model_type", None) == "whisper"
+        #and getattr(model.config, "apply_spec_augment", False)
+        #and getattr(model.config, "mask_time_prob", 0) > 0
+    #)
+    # return attention_mask anyway
+    forward_attention_mask = True
+
     # other hyperparameters
     max_input_length = args.max_duration_in_seconds * feature_extractor.sampling_rate
     min_input_length = args.min_duration_in_seconds * feature_extractor.sampling_rate
@@ -203,7 +240,7 @@ def train(args, accelerator):
         # process audio length
         batch[model_input_name] = inputs.get(model_input_name)[0]
         batch["input_length"] = len(sample["array"])
-        if forward_attention_mask:
+        if forward_attention_mask: # True, or check if needed above
             batch["attention_mask"] = inputs.get("attention_mask")[0]
 
         # process targets
@@ -270,7 +307,7 @@ def train(args, accelerator):
                 for n, p in model.named_parameters()
                 if "mask_score" not in n and p.requires_grad and not any(nd in n for nd in no_decay)
             ],
-            "lr": args.learning_rate,
+            "lr": args.lr,
             "weight_decay": args.weight_decay,
         },
         {
@@ -303,6 +340,8 @@ def train(args, accelerator):
     )
 
     global_step = 0  # tracks total steps
+    if args.global_topk:
+        threshold_mem = None
     total_loss = 0  # total loss before each eval
 
     accelerator.log({
@@ -367,18 +406,58 @@ def train(args, accelerator):
     progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
+    model.zero_grad()
+
     while True:
 
         model.train()
 
         for batch in train_dataloader:
+
+            threshold, regu_lambda = schedule_threshold(
+                step=global_step,
+                total_step=args.train_steps,
+                warmup_steps=args.warmup_steps,
+                final_threshold=args.final_threshold,
+                initial_threshold=args.initial_threshold,
+                final_warmup=args.final_warmup,
+                initial_warmup=args.initial_warmup,
+                final_lambda=args.final_lambda,
+            )
+
+            # Global TopK
+            if args.global_topk:
+                if threshold == 1.0:
+                    threshold = -1e2  # or an indefinitely low quantity
+                else:
+                    if (threshold_mem is None) or (global_step % args.global_topk_frequency_compute == 0):
+                        # Sort all the values to get the global topK
+                        concat = torch.cat(
+                            [param.view(-1) for name, param in model.named_parameters() if "mask_scores" in name]
+                        )
+                        n = concat.numel()
+                        kth = max(n - (int(n * threshold) + 1), 1)
+                        threshold_mem = concat.kthvalue(kth).values.item()
+                        threshold = threshold_mem
+                    else:
+                        threshold = threshold_mem
+
             with accelerator.accumulate(model):
+
+                batch["threshold"] = threshold
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.detach().item() # for tensorboard 
+
+                # Regularization
+                if args.regularization is not None:
+                    regu_ = regularization(model=model, mode=args.regularization)
+                    loss = loss + regu_lambda * regu_
+
                 accelerator.backward(loss)
                 optimizer.step()
                 lr_scheduler.step()
+                model.zero_grad()
                 optimizer.zero_grad()
 
             progress_bar.update(1)
@@ -386,16 +465,33 @@ def train(args, accelerator):
             if (global_step + 1) % args.eval_steps == 0:
                 # eval progress bar
                 #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
+
+                # Global TopK
+                if args.global_topk:
+                    threshold_mem = None
+
                 model.eval()
                 val_loss = 0
+
                 for batch in eval_dataloader:
                     with torch.no_grad():
+
+                        batch["threshold"] = args.final_threshold
+                        if args.global_topk:
+                            if threshold_mem is None:
+                                concat = torch.cat(
+                                    [param.view(-1) for name, param in model.named_parameters() if "mask_scores" in name]
+                                )
+                                n = concat.numel()
+                                kth = max(n - (int(n * args.final_threshold) + 1), 1)
+                                threshold_mem = concat.kthvalue(kth).values.item()
+                            batch["threshold"] = threshold_mem
+
                         outputs = model(**batch)
                         val_loss += outputs.loss.item()
 
                     # compute metric
                     # generate and calculate cer, wer
-                    ## slow ##
                     output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
@@ -602,6 +698,8 @@ def main():
         default=1e-5,
         type=float,
     )
+    parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument(
         "--adam_epsilon",
         default=1e-8,
@@ -734,23 +832,26 @@ def main():
         log_with="tensorboard",
         project_dir=args.output_dir  # project_dir 
     )
-    # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
-    # to INFO for the main process only.
-    if accelerator.is_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
+        "seed": args.seed,
+        "gpus": accelerator.state.num_processes,
         "lr": args.lr,
         "train_steps": args.train_steps,
-        "seed": args.seed,
-        "train_batch_size": args.train_batch_size,  ## more hyp here
+        "eval_steps": args.eval_steps,
+        "train_batch_size": args.train_batch_size,
+        "initial_threshold": args.initial_threshold,
+        "final_threshold": args.final_threshold,
+        "initial_warmup": args.initial_warmup,
+        "final_warmup": args.final_warmup,
+        "pruning_method": args.pruning_method,
+        "mask_init": args.mask_init,
+        "mask_scale": args.mask_scale,
+        "final_lambda": args.final_lambda,
     }
+
     #run = os.path.split(__file__)[-1].split(".")[0]
-    accelerator.init_trackers('runs', track_config)
+    accelerator.init_trackers('runs', config=track_config)
 
     # train function
     train(args, accelerator)
