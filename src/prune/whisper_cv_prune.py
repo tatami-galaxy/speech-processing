@@ -476,7 +476,8 @@ def train(args, accelerator):
                 for batch in eval_dataloader:
                     with torch.no_grad():
 
-                        batch["threshold"] = args.final_threshold
+                        #batch["threshold"] = args.final_threshold
+                        batch["threshold"] = threshold
                         if args.global_topk:
                             if threshold_mem is None:
                                 concat = torch.cat(
@@ -498,6 +499,8 @@ def train(args, accelerator):
                         task=args.task,
                         language=args.model_lang,
                         is_multilingual=True,
+                        #threshold = args.final_threshold
+                        threshold=threshold,
                         **gen_kwargs
                     )
                     # pad_acrss_processes recursively pads the tensors 
