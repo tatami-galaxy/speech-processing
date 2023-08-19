@@ -7,7 +7,7 @@ def main():
 
     torch_req = ['torch', 'torchvision', 'torchaudio', 'accelerate']
     jax_req = ['gdown', 'flax']
-    req = ['transformers', 'datasets', 'evaluate', 'jiwer', 'librosa', 'soundfile', 'tensorboard', 'sentencepiece', 'rouge_score']
+    req = ['git+https://github.com/huggingface/transformers.git', 'datasets', 'evaluate', 'jiwer', 'librosa', 'soundfile', 'tensorboard', 'sentencepiece', 'rouge_score']
 
     parser = argparse.ArgumentParser()
 
