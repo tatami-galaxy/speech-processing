@@ -134,6 +134,16 @@ def regularization(model: nn.Module, mode: str):
                 ValueError("Don't know this mode.")
             counter += 1
     return regu / counter
+
+
+## flatten mask after training
+## store final threshold value?
+## store final mask?
+## check sparsity
+## block sparsity
+## how to remove matrices after block sparsity?
+## relation to MOE?
+## combine with static quantization
     
 
 
