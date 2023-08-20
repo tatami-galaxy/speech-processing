@@ -538,7 +538,8 @@ def train(args, accelerator):
                     "cer": cer_result,
                     "wer": wer_result,
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "val_loss": val_loss / len(eval_dataloader)
+                    "val_loss": val_loss / len(eval_dataloader),
+                    "threshold": threshold,
                 },
                 step=global_step + 1,
                 )
