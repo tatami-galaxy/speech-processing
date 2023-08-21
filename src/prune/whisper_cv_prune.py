@@ -488,6 +488,7 @@ def train(args, accelerator):
 
                         #batch["threshold"] = args.final_threshold
                         batch["threshold"] = threshold
+
                         if args.global_topk:
                             if threshold_mem is None:
                                 concat = torch.cat(
@@ -541,7 +542,7 @@ def train(args, accelerator):
 
                 cer_result = cer_metric.compute()
                 wer_result = wer_metric.compute()
-                # add wer for hindi
+
                 accelerator.print('step : {}, cer : {}, wer: {}'.format(global_step + 1, cer_result, wer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({

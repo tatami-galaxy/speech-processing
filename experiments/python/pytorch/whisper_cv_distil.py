@@ -33,6 +33,7 @@ from transformers import AdamW, get_scheduler, set_seed
 import argparse
 from torch.utils.tensorboard import SummaryWriter
 from accelerate import Accelerator, DistributedType
+import torch.nn.functional as F
 
 
 # get root directory
@@ -68,6 +69,13 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         batch["labels"] = labels
 
         return batch
+    
+
+def dist_loss(t,s, args):
+    prob_t = F.softmax(t/args.temperature, dim = 1)
+    log_prob_s = F.log_softmax(s / args.temperature, dim=1)
+    dist_loss = -(prob_t*log_prob_s).sum(dim=1).mean()
+    return dist_loss
     
 
 
