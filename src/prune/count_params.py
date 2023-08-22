@@ -16,26 +16,25 @@ Count remaining (non-zero) weights in the encoder (i.e. the transformer layers).
 Sparsity and remaining weights levels are equivalent: sparsity % = 100 - remaining weights %.
 """
 import argparse
-import os
+from whisper_traceable_masked import MaskedWhisperForConditionalGeneration
 
 import torch
-from emmental.modules import ThresholdBinarizer, TopKBinarizer
+from binarizer import ThresholdBinarizer, TopKBinarizer
 
 
 def main(args):
-    serialization_dir = args.serialization_dir
+    model_name_or_path = args.pruned_model_name_or_path
     pruning_method = args.pruning_method
     threshold = args.threshold
 
-    st = torch.load(os.path.join(serialization_dir, "pytorch_model.bin"), map_location="cpu")
+    #st = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
+    model = MaskedWhisperForConditionalGeneration.from_pretrained(model_name_or_path)
 
-    remaining_count = 0  # Number of remaining (not pruned) params in the encoder
-    encoder_count = 0  # Number of params in the encoder
+    remaining_count = 0  # Number of remaining (not pruned) params in the model
+    model_count = 0  # Number of params in the model
 
     print("name".ljust(60, " "), "Remaining Weights %", "Remaining Weight")
-    for name, param in st.items():
-        if "encoder" not in name:
-            continue
+    for name, param in model.named_parameters():
 
         if "mask_scores" in name:
             if pruning_method == "topK":
@@ -53,12 +52,12 @@ def main(args):
             remaining_count += mask_ones
             print(name.ljust(60, " "), str(round(100 * mask_ones / param.numel(), 3)).ljust(20, " "), str(mask_ones))
         else:
-            encoder_count += param.numel()
+            model_count += param.numel()
             if "bias" in name or "LayerNorm" in name:
                 remaining_count += param.numel()
 
     print("")
-    print("Remaining Weights (global) %: ", 100 * remaining_count / encoder_count)
+    print("Remaining Weights (global) %: ", 100 * remaining_count / model_count)
 
 
 if __name__ == "__main__":
@@ -85,7 +84,7 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--serialization_dir",
+        "--pruned_model_name_or_path",
         type=str,
         required=True,
         help="Folder containing the model that was previously fine-pruned",

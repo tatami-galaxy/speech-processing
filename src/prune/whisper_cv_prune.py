@@ -140,6 +140,7 @@ def regularization(model: nn.Module, mode: str):
 ## store final threshold value?
 ## store final mask?
 ## check sparsity
+## soft pruning
 ## block sparsity
 ## how to remove matrices after block sparsity?
 ## relation to MOE?
@@ -180,6 +181,8 @@ def train(args, accelerator):
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
+
+    # teacher #
 
 
     # dataset
@@ -465,6 +468,9 @@ def train(args, accelerator):
                     loss = loss + regu_lambda * regu_
 
                 accelerator.backward(loss)
+
+                # clip grad norm?
+
                 optimizer.step()
                 lr_scheduler.step()
                 model.zero_grad()
@@ -813,6 +819,10 @@ def main():
     # set seed
     set_seed(args.seed)
 
+    # Regularization
+    if args.regularization == "null":
+        args.regularization = None
+
     # check if data path exists
     if args.data_dir is None:
         raise ValueError(
@@ -867,6 +877,8 @@ def main():
 
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', config=track_config)
+
+    accelerator.print('conv, embed, layer_norm not pruned')
 
     # train function
     train(args, accelerator)

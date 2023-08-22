@@ -22,25 +22,22 @@ import os
 import shutil
 
 import torch
-from emmental.modules import MagnitudeBinarizer, ThresholdBinarizer, TopKBinarizer
+from binarizer import MagnitudeBinarizer, ThresholdBinarizer, TopKBinarizer
 
 
 def main(args):
     pruning_method = args.pruning_method
     threshold = args.threshold
 
-    model_name_or_path = args.model_name_or_path.rstrip("/")
+    model_name_or_path = args.model_name_or_path
     target_model_path = args.target_model_path
 
     print(f"Load fine-pruned model from {model_name_or_path}")
-    model = torch.load(os.path.join(model_name_or_path, "pytorch_model.bin"))
+    model = torch.load(os.path.join(model_name_or_path, "pytorch_model.bin"), map_location=torch.device('cpu'))
     pruned_model = {}
 
     for name, tensor in model.items():
-        if "embeddings" in name or "LayerNorm" in name or "pooler" in name:
-            pruned_model[name] = tensor
-            print(f"Copied layer {name}")
-        elif "classifier" in name or "qa_output" in name:
+        if "embed" in name or "layer_norm" in name or "conv" or "proj_out" in name:
             pruned_model[name] = tensor
             print(f"Copied layer {name}")
         elif "bias" in name:
@@ -83,7 +80,7 @@ def main(args):
 
     if target_model_path is None:
         target_model_path = os.path.join(
-            os.path.dirname(model_name_or_path), f"bertarized_{os.path.basename(model_name_or_path)}"
+            os.path.dirname(model_name_or_path), f"pasted_{os.path.basename(model_name_or_path)}"
         )
 
     if not os.path.isdir(target_model_path):
@@ -91,7 +88,7 @@ def main(args):
         print(f"\nCreated folder {target_model_path}")
 
     torch.save(pruned_model, os.path.join(target_model_path, "pytorch_model.bin"))
-    print("\nPruned model saved! See you later!")
+    print("\nPruned model saved")
 
 
 if __name__ == "__main__":
