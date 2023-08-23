@@ -549,7 +549,7 @@ def train(args, accelerator):
                 cer_result = cer_metric.compute()
                 wer_result = wer_metric.compute()
 
-                accelerator.print('step : {}, cer : {}, wer: {}'.format(global_step + 1, cer_result, wer_result))
+                accelerator.print('step : {}, threshold : {}, cer : {}, wer: {}'.format(global_step + 1, threshold, cer_result, wer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
@@ -838,7 +838,8 @@ def main():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'-'+data_str+'-pruned'
+        prune_str = args.pruning_method
+        args.output_dir = root+'/models/whisper/'+model_str+'-'+data_str+'-'+prune_str+'-pruned'
     #print('output directory set to : {}'.format(args.output_dir))
     ##if not os.path.isdir(args.output_dir):
         ##os.mkdir(args.output_dir)

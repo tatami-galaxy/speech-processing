@@ -236,6 +236,7 @@ class MaskedWhisperConfig(PretrainedConfig):
         pruning_method="topK",
         mask_init="constant",
         mask_scale=0.0,
+        mask_pasted=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -279,6 +280,7 @@ class MaskedWhisperConfig(PretrainedConfig):
         self.pruning_method = pruning_method
         self.mask_init = mask_init
         self.mask_scale = mask_scale
+        self.mask_pasted = mask_pasted
 
         super().__init__(
             pad_token_id=pad_token_id,

@@ -18,14 +18,9 @@ Sparsity and remaining weights levels are equivalent: sparsity % = 100 - remaini
 import argparse
 from whisper_traceable_masked import MaskedWhisperForConditionalGeneration
 
-import torch
-from binarizer import ThresholdBinarizer, TopKBinarizer
-
 
 def main(args):
     model_name_or_path = args.pruned_model_name_or_path
-    pruning_method = args.pruning_method
-    threshold = args.threshold
 
     #st = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
     model = MaskedWhisperForConditionalGeneration.from_pretrained(model_name_or_path)
@@ -36,25 +31,17 @@ def main(args):
     print("name".ljust(60, " "), "Remaining Weights %", "Remaining Weight")
     for name, param in model.named_parameters():
 
-        if "mask_scores" in name:
-            if pruning_method == "topK":
-                mask_ones = TopKBinarizer.apply(param, threshold).sum().item()
-            elif pruning_method == "sigmoied_threshold":
-                mask_ones = ThresholdBinarizer.apply(param, threshold, True).sum().item()
-            elif pruning_method == "l0":
-                l, r = -0.1, 1.1
-                s = torch.sigmoid(param)
-                s_bar = s * (r - l) + l
-                mask = s_bar.clamp(min=0.0, max=1.0)
-                mask_ones = (mask > 0.0).sum().item()
-            else:
-                raise ValueError("Unknown pruning method")
-            remaining_count += mask_ones
-            print(name.ljust(60, " "), str(round(100 * mask_ones / param.numel(), 3)).ljust(20, " "), str(mask_ones))
-        else:
+        if "embed" in name or "bias" in name or "layer_norm" in name or "conv" in name or "proj_out" in name:
+            remaining_count += param.numel()
             model_count += param.numel()
-            if "bias" in name or "LayerNorm" in name:
-                remaining_count += param.numel()
+            
+
+        elif "mask_scores" not in name:
+            _ones = (param != 0.0).sum().item()
+            remaining_count += _ones
+            print(name.ljust(60, " "), str(round(100 * _ones / param.numel(), 3)).ljust(20, " "), str(_ones))
+            model_count += param.numel()
+
 
     print("")
     print("Remaining Weights (global) %: ", 100 * remaining_count / model_count)
@@ -63,26 +50,6 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--pruning_method",
-        choices=["l0", "topK", "sigmoied_threshold"],
-        type=str,
-        required=True,
-        help=(
-            "Pruning Method (l0 = L0 regularization, topK = Movement pruning, sigmoied_threshold = Soft movement"
-            " pruning)"
-        ),
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        required=False,
-        help=(
-            "For `topK`, it is the level of remaining weights (in %) in the fine-pruned model."
-            "For `sigmoied_threshold`, it is the threshold \tau against which the (sigmoied) scores are compared."
-            "Not needed for `l0`"
-        ),
-    )
     parser.add_argument(
         "--pruned_model_name_or_path",
         type=str,

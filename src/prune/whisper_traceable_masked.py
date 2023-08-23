@@ -953,6 +953,7 @@ class WhisperAttention(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
         #self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.v_proj = MaskedLinear(
@@ -962,6 +963,7 @@ class WhisperAttention(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
         #self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.q_proj = MaskedLinear(
@@ -971,6 +973,7 @@ class WhisperAttention(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
         #self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = MaskedLinear(
@@ -980,6 +983,7 @@ class WhisperAttention(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention._shape with BART->whisper
@@ -1134,7 +1138,8 @@ class WhisperEncoderLayer(nn.Module):
             config.encoder_ffn_dim,
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
-            mask_scale=config.mask_scale
+            mask_scale=config.mask_scale,
+            config=config,
         )
         #self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)  # masked linear
         self.fc2 = MaskedLinear(
@@ -1142,7 +1147,8 @@ class WhisperEncoderLayer(nn.Module):
             self.embed_dim,
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
-            mask_scale=config.mask_scale
+            mask_scale=config.mask_scale,
+            config=config,
         )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 
@@ -1233,6 +1239,7 @@ class WhisperDecoderLayer(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
         #self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
         self.fc2 = MaskedLinear(
@@ -1241,6 +1248,7 @@ class WhisperDecoderLayer(nn.Module):
             pruning_method=config.pruning_method,
             mask_init=config.mask_init,
             mask_scale=config.mask_scale,
+            config=config,
         )
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
 

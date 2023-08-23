@@ -20,9 +20,12 @@ as a standard :class:`~transformers.BertForSequenceClassification`.
 import argparse
 import os
 import shutil
+import warnings
 
 import torch
 from binarizer import MagnitudeBinarizer, ThresholdBinarizer, TopKBinarizer
+
+from configuration_whisper import MaskedWhisperConfig
 
 
 def main(args):
@@ -34,10 +37,11 @@ def main(args):
 
     print(f"Load fine-pruned model from {model_name_or_path}")
     model = torch.load(os.path.join(model_name_or_path, "pytorch_model.bin"), map_location=torch.device('cpu'))
+    config = MaskedWhisperConfig.from_pretrained(model_name_or_path)
     pruned_model = {}
 
     for name, tensor in model.items():
-        if "embed" in name or "layer_norm" in name or "conv" or "proj_out" in name:
+        if "embed" in name or "layer_norm" in name or "conv" in name or "proj_out" in name:
             pruned_model[name] = tensor
             print(f"Copied layer {name}")
         elif "bias" in name:
@@ -78,6 +82,8 @@ def main(args):
             else:
                 raise ValueError("Unknown pruning method")
 
+    config.mask_pasted = True
+
     if target_model_path is None:
         target_model_path = os.path.join(
             os.path.dirname(model_name_or_path), f"pasted_{os.path.basename(model_name_or_path)}"
@@ -88,6 +94,7 @@ def main(args):
         print(f"\nCreated folder {target_model_path}")
 
     torch.save(pruned_model, os.path.join(target_model_path, "pytorch_model.bin"))
+    config.save_pretrained(target_model_path)
     print("\nPruned model saved")
 
 
@@ -129,5 +136,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    warnings.warn('Make sure to pass in correct threshold and pruning method')
 
     main(args)
