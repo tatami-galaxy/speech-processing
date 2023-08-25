@@ -6189,7 +6189,7 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
     def __init__(self, config: MaskedWhisperConfig):
         super().__init__(config)
         self.model = MaskedWhisperModel(config)
-        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)  # MaskedLinear ?
         self.loss_fct = CrossEntropyLoss()
 
         warnings.warn(
