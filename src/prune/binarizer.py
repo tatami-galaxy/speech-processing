@@ -21,6 +21,15 @@ import torch
 from torch import autograd
 
 
+def expand_mask(global_mask, in_features, out_features, block_size, sparsity_threshold):
+
+    assert (out_features * in_features) % block_size == 0, "attention matrices need to be divisible by block size squared"
+    num_blocks = int((out_features * in_features) / (block_size ** 2))
+    for block in num_blocks:
+        
+
+
+
 class ThresholdBinarizer(autograd.Function):
     """
     Thresholdd binarizer. pruning method : threshold, sigmoied_threshold
@@ -34,7 +43,16 @@ class ThresholdBinarizer(autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, inputs: torch.tensor, threshold: float, sigmoid: bool):
+    def forward(
+        ctx, 
+        in_features: int,
+        out_features: int,
+        inputs: torch.tensor, 
+        threshold: float, 
+        sparsity_threshold: float, 
+        block_size: int, 
+        sigmoid: bool
+        ):
         """
         Args:
             inputs (`torch.FloatTensor`)
@@ -53,6 +71,10 @@ class ThresholdBinarizer(autograd.Function):
         nb_min = int(0.005 * nb_elems) + 1  # 0.5%
         if sigmoid:
             mask = (torch.sigmoid(inputs) > threshold).type(inputs.type())
+
+            if sparsity_threshold is not None:
+                mask = expand_mask(mask, in_features, out_features, block_size, sparsity_threshold)
+
         else:
             mask = (inputs > threshold).type(inputs.type())
         if mask.sum() < nb_min:

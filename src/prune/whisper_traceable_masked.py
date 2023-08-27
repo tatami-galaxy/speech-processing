@@ -1000,6 +1000,8 @@ class WhisperAttention(nn.Module):
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         threshold = None,
+        sparsity_threshold=None,
+        block_size=None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -1010,7 +1012,12 @@ class WhisperAttention(nn.Module):
         bsz, tgt_len, _ = hidden_states.size()
 
         # get query proj
-        query_states = self.q_proj(hidden_states, threshold=threshold) * self.scaling
+        query_states = self.q_proj(
+            hidden_states,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size
+        ) * self.scaling
         # get key, value proj
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
@@ -1025,18 +1032,48 @@ class WhisperAttention(nn.Module):
             value_states = past_key_value[1]
         elif is_cross_attention:
             # cross_attentions
-            key_states = self._shape(self.k_proj(key_value_states, threshold=threshold), -1, bsz)
-            value_states = self._shape(self.v_proj(key_value_states, threshold=threshold), -1, bsz)
+            key_states = self._shape(self.k_proj(
+                key_value_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size, 
+            ), -1, bsz)
+            value_states = self._shape(self.v_proj(
+                key_value_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size, 
+            ), -1, bsz)
         elif past_key_value is not None:
             # reuse k, v, self_attention
-            key_states = self._shape(self.k_proj(hidden_states, threshold=threshold), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states, threshold=threshold), -1, bsz)
+            key_states = self._shape(self.k_proj(
+                hidden_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,
+            ), -1, bsz)
+            value_states = self._shape(self.v_proj(
+                hidden_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,
+            ), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
             # self_attention
-            key_states = self._shape(self.k_proj(hidden_states, threshold=threshold), -1, bsz)
-            value_states = self._shape(self.v_proj(hidden_states, threshold=threshold), -1, bsz)
+            key_states = self._shape(self.k_proj(
+                hidden_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size, 
+            ), -1, bsz)
+            value_states = self._shape(self.v_proj(
+                hidden_states,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,
+            ), -1, bsz)
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -1112,7 +1149,12 @@ class WhisperAttention(nn.Module):
         # partitioned across GPUs when using tensor-parallelism.
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
 
-        attn_output = self.out_proj(attn_output, threshold=threshold)
+        attn_output = self.out_proj(
+            attn_output,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size, 
+        )
 
         return attn_output, attn_weights_reshaped, past_key_value
 
@@ -1159,6 +1201,8 @@ class WhisperEncoderLayer(nn.Module):
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
         threshold = None,
+        sparsity_threshold=None,
+        block_size=None,
     ) -> torch.Tensor:
         """
         Args:
@@ -1179,15 +1223,27 @@ class WhisperEncoderLayer(nn.Module):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
             threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size, 
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states, threshold=threshold))
+        hidden_states = self.activation_fn(self.fc1(
+            hidden_states,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size,
+        ))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states, threshold=threshold)
+        hidden_states = self.fc2(
+            hidden_states,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size,
+        )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -1264,6 +1320,8 @@ class WhisperDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
         threshold = None,
+        sparsity_threshold=None,
+        block_size=None,
     ) -> torch.Tensor:
         """
         Args:
@@ -1297,6 +1355,8 @@ class WhisperDecoderLayer(nn.Module):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
             threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -1318,6 +1378,8 @@ class WhisperDecoderLayer(nn.Module):
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
                 threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,  
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -1328,9 +1390,19 @@ class WhisperDecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states, threshold=threshold))
+        hidden_states = self.activation_fn(self.fc1(
+            hidden_states,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size, 
+        ))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states, threshold=threshold)
+        hidden_states = self.fc2(
+            hidden_states,
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size, 
+        )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -1494,7 +1566,13 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
             return torch.ones(inputs.shape[:2], dtype=torch.long, device=inputs.device)
 
     def _prepare_encoder_decoder_kwargs_for_generation(
-        self, inputs_tensor: torch.Tensor, model_kwargs, model_input_name: Optional[str] = None, threshold = None,
+        self,
+        inputs_tensor: torch.Tensor,
+        model_kwargs,
+        model_input_name: Optional[str] = None,
+        threshold = None,
+        sparsity_threshold = None,
+        block_size= None,
     ) -> Dict[str, Any]:
         # 1. get encoder
         encoder = self.get_encoder()
@@ -1523,6 +1601,8 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
         encoder_kwargs[model_input_name] = inputs_tensor
         # prune threshold
         encoder_kwargs['threshold'] = threshold
+        encoder_kwargs['sparsity_threshol'] = sparsity_threshold
+        encoder_kwargs['block_size'] = block_size
         model_kwargs["encoder_outputs"]: ModelOutput = encoder(**encoder_kwargs)
 
         return model_kwargs
@@ -2176,6 +2256,8 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
         negative_prompt_ids: Optional[torch.Tensor] = None,
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         threshold = None,
+        sparsity_threshold = None,
+        block_size= None, 
         **kwargs,
     ) -> Union[GenerateOutput, torch.LongTensor]:
         r"""
@@ -2356,7 +2438,12 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
             # if model is encoder decoder encoder_outputs are created
             # and added to `model_kwargs`
             model_kwargs = self._prepare_encoder_decoder_kwargs_for_generation(
-                inputs_tensor, model_kwargs, model_input_name, threshold=threshold,
+                inputs_tensor,
+                model_kwargs,
+                model_input_name,
+                threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,  
             )
 
         # 5. Prepare `input_ids` which will be used for auto-regressive generation
@@ -2443,7 +2530,12 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
                     inputs_tensor, assistant_model.generation_config.bos_token_id, assistant_model_kwargs
                 )
                 assistant_model_kwargs = assistant_model._prepare_encoder_decoder_kwargs_for_generation(
-                    inputs_tensor, assistant_model_kwargs, model_input_name, threshold=threshold,
+                    inputs_tensor,
+                    assistant_model_kwargs,
+                    model_input_name,
+                    threshold=threshold,
+                    sparsity_threshold=sparsity_threshold,
+                    block_size=block_size,
                 )
                 model_kwargs["assistant_encoder_outputs"] = assistant_model_kwargs["encoder_outputs"]
 
@@ -2476,6 +2568,8 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
                 synced_gpus=synced_gpus,
                 streamer=streamer,
                 threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,
                 **model_kwargs,
             )
 
@@ -3161,6 +3255,8 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
         synced_gpus: bool = False,
         streamer: Optional["BaseStreamer"] = None,
         threshold = None,
+        sparsity_threshold = None,
+        block_size = None,
         **model_kwargs,
     ) -> Union[GreedySearchOutput, torch.LongTensor]:
         r"""
@@ -3321,6 +3417,8 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 threshold=threshold,
+                sparsity_threshold=sparsity_threshold,
+                block_size=block_size,
             )
 
             if synced_gpus and this_peer_finished:
@@ -5669,6 +5767,8 @@ class WhisperEncoder(MaskedWhisperPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
         threshold=None,
+        sparsity_threshold=None,
+        block_size=None,
     ):
         r"""
         Args:
@@ -5736,7 +5836,9 @@ class WhisperEncoder(MaskedWhisperPreTrainedModel):
                     None,
                     layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                     output_attentions=output_attentions,
-                    threshold=threshold,
+                    threshold=threshold, # for masking
+                    sparsity_threshold=sparsity_threshold, # for masking
+                    block_size=block_size,  # for masking
                 )
 
                 hidden_states = layer_outputs[0]
@@ -5827,6 +5929,8 @@ class WhisperDecoder(MaskedWhisperPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
         threshold=None,
+        sparsity_threshold=None,
+        block_size=None,
     ):
         r"""
         Args:
@@ -5965,6 +6069,8 @@ class WhisperDecoder(MaskedWhisperPreTrainedModel):
                 output_attentions=output_attentions,
                 use_cache=use_cache,
                 threshold=threshold,
+                sparsity_threshold=sparsity_threshold, # for masking
+                block_size=block_size,  # for masking
             )
             hidden_states = layer_outputs[0]
 
@@ -6097,7 +6203,9 @@ class MaskedWhisperModel(MaskedWhisperPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        threshold = None,
+        threshold = None,  # for masking
+        sparsity_threshold = None, # for masking
+        block_size= None,  # for masking
     ) -> Union[Tuple[torch.Tensor], Seq2SeqModelOutput]:
         r"""
         Returns:
@@ -6135,6 +6243,8 @@ class MaskedWhisperModel(MaskedWhisperPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 threshold=threshold,
+                sparsity_threshold=sparsity_threshold, # for masking
+                block_size=block_size,  # for masking
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
         # disabled for tracing. ensure manually
@@ -6159,6 +6269,8 @@ class MaskedWhisperModel(MaskedWhisperPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             threshold=threshold,
+            sparsity_threshold=sparsity_threshold, # for masking
+            block_size=block_size,  # for masking
         )
 
         if not return_dict:
@@ -6281,6 +6393,8 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         threshold = None,  # for masking
+        sparsity_threshold = None, # for masking
+        block_size= None,  # for masking
     ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -6335,6 +6449,8 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             threshold=threshold,  # for masking
+            sparsity_threshold=sparsity_threshold,  # for masking
+            block_size=block_size,  # for masking
         )
         lm_logits = self.proj_out(outputs[0])
 
@@ -6377,6 +6493,8 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         prompt_ids: Optional[torch.Tensor] = None,
         return_token_timestamps=None,
         threshold=None,
+        sparsity_threshold = None,
+        block_size= None,
         **kwargs,
     ):
         """
@@ -6601,6 +6719,8 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
             prefix_allowed_tokens_fn,
             synced_gpus,
             threshold=threshold,
+            sparsity_threshold=sparsity_threshold,
+            block_size=block_size,
             **kwargs,
         )
 

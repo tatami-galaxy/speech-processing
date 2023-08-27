@@ -70,12 +70,15 @@ class MaskedLinear(nn.Linear):
         self.pruning_method = pruning_method
 
         self.config = config
+        self.in_features = in_features
+        self.out_features = out_features
 
         if self.pruning_method in ["topK", "threshold", "sigmoied_threshold", "l0"]:
             self.mask_scale = mask_scale
             self.mask_init = mask_init
             self.mask_scores = nn.Parameter(torch.empty(self.weight.size()))
             self.init_mask()
+
 
     def init_mask(self):
         if self.mask_init == "constant":
@@ -85,16 +88,25 @@ class MaskedLinear(nn.Linear):
         elif self.mask_init == "kaiming":
             init.kaiming_uniform_(self.mask_scores, a=math.sqrt(5))
 
-    def forward(self, input: torch.tensor, threshold: float):
+
+    def forward(self, input: torch.tensor, threshold: float, sparsity_threshold: float, block_size: int):
 
         # mask not pasted
         if not self.config.mask_pasted:
             # Get the mask
             if self.pruning_method == "topK":
                 mask = TopKBinarizer.apply(self.mask_scores, threshold)
-            elif self.pruning_method in ["threshold", "sigmoied_threshold"]:
+            elif self.pruning_method in ["threshold", "sigmoied_threshold"]:  # block pruning here
                 sig = "sigmoied" in self.pruning_method
-                mask = ThresholdBinarizer.apply(self.mask_scores, threshold, sig)
+                mask = ThresholdBinarizer.apply(
+                    self.in_features,
+                    self.out_features,
+                    self.mask_scores,
+                    threshold, 
+                    sparsity_threshold, 
+                    block_size,
+                    sig
+                )
             elif self.pruning_method == "magnitude":
                 mask = MagnitudeBinarizer.apply(self.weight, threshold)
             elif self.pruning_method == "l0":
@@ -105,7 +117,8 @@ class MaskedLinear(nn.Linear):
                 else:
                     s = torch.sigmoid(self.mask_scores)
                 s_bar = s * (r - l) + l
-                mask = s_bar.clamp(min=0.0, max=1.0)
+                mask = s_bar.clamp(min=0.0, max=1.0)            
+
             # Mask weights with computed mask
             weight_thresholded = mask * self.weight
             # Compute output (linear layer) with masked weights
@@ -113,3 +126,4 @@ class MaskedLinear(nn.Linear):
         # mask pasted
         else:
             return nn.functional.linear(input, self.weight, self.bias)
+        

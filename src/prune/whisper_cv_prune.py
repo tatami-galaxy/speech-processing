@@ -164,6 +164,7 @@ def train(args, accelerator):
         mask_init=args.mask_init,
         mask_scale=args.mask_scale,
     )
+
     # model
     model = MaskedWhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
@@ -413,6 +414,12 @@ def train(args, accelerator):
     generation_config = make_generation_config()
 
 
+    # sparsity threshold and block size
+    # can be potentially made learnable and adaptive
+    sparsity_threshold = args.sparsity_threshold
+    block_size = args.block_size
+
+
     # Training
 
     # main progress bar
@@ -458,6 +465,8 @@ def train(args, accelerator):
             with accelerator.accumulate(model):
 
                 batch["threshold"] = threshold
+                batch["sparsity_threshold"] = sparsity_threshold
+                batch["block_size"] = block_size
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.detach().item() # for tensorboard 
@@ -494,6 +503,8 @@ def train(args, accelerator):
 
                         #batch["threshold"] = args.final_threshold
                         batch["threshold"] = threshold
+                        batch["sparsity_threshold"] = sparsity_threshold
+                        batch["block_size"] = block_size
 
                         if args.global_topk:
                             if threshold_mem is None:
@@ -518,6 +529,8 @@ def train(args, accelerator):
                         is_multilingual=True,
                         #threshold = args.final_threshold
                         threshold=threshold,
+                        sparsity_threshold = sparsity_threshold,
+                        block_size = block_size,
                         **gen_kwargs
                     )
                     # pad_acrss_processes recursively pads the tensors 
@@ -752,10 +765,27 @@ def main():
         help="The Adam initial learning rate of the mask scores.",
     )
     parser.add_argument(
-        "--initial_threshold", default=1.0, type=float, help="Initial value of the threshold (for scheduling)."
+        "--initial_threshold",
+        default=0.0,  # 0 for sigmoied
+        type=float,
+        help="Initial value of the threshold (for scheduling)."
     )
     parser.add_argument(
-        "--final_threshold", default=0.7, type=float, help="Final value of the threshold (for scheduling)."
+        "--final_threshold",
+        default=0.1,  # 0.1 for sigmoied
+        type=float,
+        help="Final value of the threshold (for scheduling)."
+    )
+    parser.add_argument(
+        "--block_size",
+        default=32,
+        type=int,
+    )
+    parser.add_argument(
+        "--block_sparsity",
+        default=0.7,
+        type=float,
+        help="At what block sparsity to mask the whole block"
     )
     parser.add_argument(
         "--initial_warmup",
@@ -868,6 +898,8 @@ def main():
         "train_batch_size": args.train_batch_size,
         "initial_threshold": args.initial_threshold,
         "final_threshold": args.final_threshold,
+        "sparsity_threshold": args.sparsity_threshold,
+        "block_size": args.block_size,
         "initial_warmup": args.initial_warmup,
         "final_warmup": args.final_warmup,
         "pruning_method": args.pruning_method,
