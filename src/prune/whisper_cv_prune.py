@@ -136,13 +136,11 @@ def regularization(model: nn.Module, mode: str):
     return regu / counter
 
 
-## flatten mask after training
-## store final threshold value?
-## store final mask?
-## check sparsity
-## soft pruning
-## block sparsity
-## how to remove matrices after block sparsity?
+## block sparsity -> how to expand mask
+## separate reg for attn, ffn
+## hybrid filled, struct
+## min variance?
+## how to remove matrices after block sparsity -> prune heads
 ## relation to MOE?
 ## combine with static quantization
     
@@ -477,6 +475,7 @@ def train(args, accelerator):
 
                 # Regularization
                 # encourages the importance scores to decrease over time
+                ## separate regularization for ffn and attn
                 if args.regularization is not None:
                     regu_ = regularization(model=model, mode=args.regularization)
                     loss = loss + regu_lambda * regu_
