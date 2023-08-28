@@ -26,7 +26,7 @@ def expand_mask(global_mask, in_features, out_features, block_size, sparsity_thr
 
     assert (out_features * in_features) % block_size == 0, "attention matrices need to be divisible by block size squared"
     # total blocks
-    num_blocks = int((out_features * in_features) / (block_size ** 2))
+    #num_blocks = int((out_features * in_features) / (block_size ** 2))
     # row indices where a block starts
     row_ids = [b*block_size for b in range(out_features//block_size)]
     # column indices where a block starts
@@ -44,8 +44,7 @@ def expand_mask(global_mask, in_features, out_features, block_size, sparsity_thr
         sparsity = zeros/total
         # if block is sparse enough 'prune' entire block
         if sparsity >= sparsity_threshold:
-            block = 0
-            print('block pruned')
+            global_mask[starts[0]:starts[0]+block_size, starts[1]:starts[1]+block_size] = 0  # prune actual mask not 'block'
 
     return global_mask
 

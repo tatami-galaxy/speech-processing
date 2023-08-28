@@ -73,6 +73,8 @@ class MaskedLinear(nn.Linear):
         self.in_features = in_features
         self.out_features = out_features
 
+        # memory to store block masks?
+
         if self.pruning_method in ["topK", "threshold", "sigmoied_threshold", "l0"]:
             self.mask_scale = mask_scale
             self.mask_init = mask_init

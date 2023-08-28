@@ -467,9 +467,9 @@ def train(args, accelerator):
 
                 batch["threshold"] = threshold
 
-                if global_step >= args.block_prune_steps:
-                    batch["sparsity_threshold"] = sparsity_threshold
-                    batch["block_size"] = block_size
+                #if global_step >= args.block_prune_steps:  # expand_mask very slow
+                batch["sparsity_threshold"] = sparsity_threshold
+                batch["block_size"] = block_size
                     
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -511,9 +511,9 @@ def train(args, accelerator):
                         #batch["threshold"] = args.final_threshold
                         batch["threshold"] = threshold
 
-                        if global_step >= args.block_prune_steps:
-                            batch["sparsity_threshold"] = sparsity_threshold
-                            batch["block_size"] = block_size
+                        #if global_step >= args.block_prune_steps:  # expand_mask very slow
+                        batch["sparsity_threshold"] = sparsity_threshold
+                        batch["block_size"] = block_size
 
                         if args.global_topk:
                             if threshold_mem is None:
