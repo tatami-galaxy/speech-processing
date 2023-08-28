@@ -1601,7 +1601,7 @@ class MaskedWhisperPreTrainedModel(PreTrainedModel):
         encoder_kwargs[model_input_name] = inputs_tensor
         # prune threshold
         encoder_kwargs['threshold'] = threshold
-        encoder_kwargs['sparsity_threshol'] = sparsity_threshold
+        encoder_kwargs['sparsity_threshold'] = sparsity_threshold
         encoder_kwargs['block_size'] = block_size
         model_kwargs["encoder_outputs"]: ModelOutput = encoder(**encoder_kwargs)
 
@@ -6392,9 +6392,9 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        threshold = None,  # for masking
-        sparsity_threshold = None, # for masking
-        block_size= None,  # for masking
+        threshold = None,
+        sparsity_threshold = None, 
+        block_size= None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -6448,9 +6448,9 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            threshold=threshold,  # for masking
-            sparsity_threshold=sparsity_threshold,  # for masking
-            block_size=block_size,  # for masking
+            threshold=threshold,
+            sparsity_threshold=sparsity_threshold, 
+            block_size=block_size, 
         )
         lm_logits = self.proj_out(outputs[0])
 

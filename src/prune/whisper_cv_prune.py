@@ -121,7 +121,7 @@ def schedule_threshold(
     regu_lambda = final_lambda * threshold / final_threshold
     return threshold, regu_lambda
 
-
+# encourages the importance scores to decrease over time
 def regularization(model: nn.Module, mode: str):
     regu, counter = 0, 0
     for name, param in model.named_parameters():
@@ -164,6 +164,7 @@ def train(args, accelerator):
         mask_init=args.mask_init,
         mask_scale=args.mask_scale,
     )
+
 
     # model
     model = MaskedWhisperForConditionalGeneration.from_pretrained(
@@ -465,16 +466,22 @@ def train(args, accelerator):
             with accelerator.accumulate(model):
 
                 batch["threshold"] = threshold
-                batch["sparsity_threshold"] = sparsity_threshold
-                batch["block_size"] = block_size
+
+                if global_step >= args.block_prune_steps:
+                    batch["sparsity_threshold"] = sparsity_threshold
+                    batch["block_size"] = block_size
+                    
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.detach().item() # for tensorboard 
 
                 # Regularization
+                # encourages the importance scores to decrease over time
                 if args.regularization is not None:
                     regu_ = regularization(model=model, mode=args.regularization)
                     loss = loss + regu_lambda * regu_
+
+                # minimize variance of blocks?
 
                 accelerator.backward(loss)
 
@@ -503,8 +510,10 @@ def train(args, accelerator):
 
                         #batch["threshold"] = args.final_threshold
                         batch["threshold"] = threshold
-                        batch["sparsity_threshold"] = sparsity_threshold
-                        batch["block_size"] = block_size
+
+                        if global_step >= args.block_prune_steps:
+                            batch["sparsity_threshold"] = sparsity_threshold
+                            batch["block_size"] = block_size
 
                         if args.global_topk:
                             if threshold_mem is None:
@@ -782,10 +791,16 @@ def main():
         type=int,
     )
     parser.add_argument(
-        "--block_sparsity",
+        "--sparsity_threshold",
         default=0.7,
         type=float,
         help="At what block sparsity to mask the whole block"
+    )
+    parser.add_argument(
+        "--block_prune_steps",
+        default=300,
+        type=int,
+        help="At what steps to check for sparse blocks and 'prune'"
     )
     parser.add_argument(
         "--initial_warmup",

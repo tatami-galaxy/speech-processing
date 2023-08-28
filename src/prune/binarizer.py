@@ -19,14 +19,36 @@ Binarizers take a (real value) matrix as input and produce a binary (values in {
 
 import torch
 from torch import autograd
+import itertools
 
 
 def expand_mask(global_mask, in_features, out_features, block_size, sparsity_threshold):
 
     assert (out_features * in_features) % block_size == 0, "attention matrices need to be divisible by block size squared"
+    # total blocks
     num_blocks = int((out_features * in_features) / (block_size ** 2))
-    for block in num_blocks:
-        
+    # row indices where a block starts
+    row_ids = [b*block_size for b in range(out_features//block_size)]
+    # column indices where a block starts
+    col_ids = [b*block_size for b in range(in_features//block_size)]
+    # cartesian product
+    # each element is a tuple containing the top left position of each block
+    block_starts = list(itertools.product(row_ids, col_ids))
+    for starts in block_starts:
+        # get a block
+        block = global_mask[starts[0]:starts[0]+block_size, starts[1]:starts[1]+block_size]
+        # count 0's in block
+        # block is binary mask
+        total = block.numel()
+        zeros = total - torch.count_nonzero(block)
+        sparsity = zeros/total
+        # if block is sparse enough 'prune' entire block
+        if sparsity >= sparsity_threshold:
+            block = 0
+            print('block pruned')
+
+    return global_mask
+
 
 
 
@@ -45,9 +67,9 @@ class ThresholdBinarizer(autograd.Function):
     @staticmethod
     def forward(
         ctx, 
+        inputs: torch.tensor,
         in_features: int,
-        out_features: int,
-        inputs: torch.tensor, 
+        out_features: int, 
         threshold: float, 
         sparsity_threshold: float, 
         block_size: int, 
@@ -86,7 +108,7 @@ class ThresholdBinarizer(autograd.Function):
 
     @staticmethod
     def backward(ctx, gradOutput):
-        return gradOutput, None, None
+        return gradOutput, None, None, None, None, None, None
 
 
 class TopKBinarizer(autograd.Function):

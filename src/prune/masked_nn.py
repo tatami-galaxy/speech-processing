@@ -99,13 +99,13 @@ class MaskedLinear(nn.Linear):
             elif self.pruning_method in ["threshold", "sigmoied_threshold"]:  # block pruning here
                 sig = "sigmoied" in self.pruning_method
                 mask = ThresholdBinarizer.apply(
+                    self.mask_scores,
                     self.in_features,
                     self.out_features,
-                    self.mask_scores,
                     threshold, 
                     sparsity_threshold, 
                     block_size,
-                    sig
+                    sig,
                 )
             elif self.pruning_method == "magnitude":
                 mask = MagnitudeBinarizer.apply(self.weight, threshold)
