@@ -143,10 +143,15 @@ def regularization(model: nn.Module, mode: str):
 ## hybrid filled, struct
 ## min variance?
 ## how to remove matrices after block sparsity -> prune heads
-## relation to MOE?
-## test with relu instead of gelu
-## combine with static quantization
 ## want to conc sparsity on blocks/heads
+
+
+## relation to MOE?
+## test with relu instead of gelu (ft with gelu maybe)
+
+
+## combine with static quantization
+
     
 
 
