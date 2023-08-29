@@ -137,12 +137,16 @@ def regularization(model: nn.Module, mode: str):
 
 
 ## block sparsity -> how to expand mask
+## check if head 'pruned' during training
 ## separate reg for attn, ffn
+## dim reduction depends on activation function
 ## hybrid filled, struct
 ## min variance?
 ## how to remove matrices after block sparsity -> prune heads
 ## relation to MOE?
+## test with relu instead of gelu
 ## combine with static quantization
+## want to conc sparsity on blocks/heads
     
 
 
@@ -791,7 +795,7 @@ def main():
     )
     parser.add_argument(
         "--sparsity_threshold",
-        default=0.7,
+        default=0.9,
         type=float,
         help="At what block sparsity to mask the whole block"
     )

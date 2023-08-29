@@ -98,11 +98,12 @@ class ThresholdBinarizer(autograd.Function):
 
         else:
             mask = (inputs > threshold).type(inputs.type())
-        if mask.sum() < nb_min:
+
+        # need to change for block pruning #
+        #if mask.sum() < nb_min:
             # We limit the pruning so that at least 0.5% (half a percent) of the weights are remaining
-            # why?
-            k_threshold = inputs.flatten().kthvalue(max(nb_elems - nb_min, 1)).values
-            mask = (inputs > k_threshold).type(inputs.type())
+            #k_threshold = inputs.flatten().kthvalue(max(nb_elems - nb_min, 1)).values
+            #mask = (inputs > k_threshold).type(inputs.type())
         return mask
 
     @staticmethod

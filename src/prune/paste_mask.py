@@ -65,7 +65,15 @@ def main(args):
                     continue
                 prefix_ = name[:-6]
                 scores = model[f"{prefix_}mask_scores"]
-                mask = ThresholdBinarizer.apply(scores, threshold, True)
+                mask = ThresholdBinarizer.apply(
+                    scores,
+                    config.d_model,  # in_features
+                    config.d_model,  # out_features
+                    threshold,
+                    args.sparsity_threshold,
+                    args.block_size,
+                    True
+                )
                 pruned_model[name] = tensor * mask
                 print(f"Pruned layer {name}")
             elif pruning_method == "l0":
@@ -118,8 +126,20 @@ if __name__ == "__main__":
         help=(
             "For `magnitude` and `topK`, it is the level of remaining weights (in %) in the fine-pruned model."
             "For `sigmoied_threshold`, it is the threshold \tau against which the (sigmoied) scores are compared."
-            "Not needed for `l0`"
+            "check last threshold value from tensorboard"
         ),
+    )
+    parser.add_argument(
+        "--sparsity_threshold",
+        type=float,
+        required=False,
+        help="For blocked `sigmoied_threshold`",
+    )
+    parser.add_argument(
+        "--block_size",
+        type=int,
+        required=False,
+        help="For blocked `sigmoied_threshold`",
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -137,6 +157,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    warnings.warn('Make sure to pass in correct threshold and pruning method')
+    warnings.warn('Make sure to pass in correct thresholds and pruning method')
 
     main(args)
