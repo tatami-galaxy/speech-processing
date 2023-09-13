@@ -933,16 +933,16 @@ class WhisperAttention(nn.Module):
     ):
         super().__init__()
         self.embed_dim = embed_dim
-        self.num_heads = num_heads
+        self.num_heads = num_heads  # number of heads
         self.dropout = dropout
-        self.head_dim = embed_dim // num_heads
+        self.head_dim = embed_dim // num_heads  # head dimension -> embedding dim divided by number of heads
 
         if (self.head_dim * num_heads) != self.embed_dim:
             raise ValueError(
                 f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim}"
                 f" and `num_heads`: {num_heads})."
             )
-        self.scaling = self.head_dim**-0.5
+        self.scaling = self.head_dim**-0.5  # scale head dimension
         self.is_decoder = is_decoder
 
         #self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
@@ -1009,6 +1009,7 @@ class WhisperAttention(nn.Module):
         # for the decoder
         is_cross_attention = key_value_states is not None
 
+        # bsz is batch size
         bsz, tgt_len, _ = hidden_states.size()
 
         # get query proj
