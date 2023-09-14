@@ -1009,16 +1009,21 @@ class WhisperAttention(nn.Module):
         # for the decoder
         is_cross_attention = key_value_states is not None
 
-        # bsz is batch size
+        # bsz is batch size, tgt_len -> sequence length
         bsz, tgt_len, _ = hidden_states.size()
 
+        # hidden_states -> b x seq_len x embed_dim
+
         # get query proj
+        # key matrix after X @ Q
+        # shape -> b x seq_len x embed_dim
         query_states = self.q_proj(
             hidden_states,
             threshold=threshold,
             sparsity_threshold=sparsity_threshold,
             block_size=block_size
         ) * self.scaling
+
         # get key, value proj
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
@@ -1063,12 +1068,18 @@ class WhisperAttention(nn.Module):
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
         else:
             # self_attention
+
+            # key matrix after X @ K
+            # shape -> b x num_heads x seq_len x head_dim
             key_states = self._shape(self.k_proj(
                 hidden_states,
                 threshold=threshold,
                 sparsity_threshold=sparsity_threshold,
                 block_size=block_size, 
             ), -1, bsz)
+
+            # value matrix after X @ V
+            # shape -> b x num_heads x seq_len x head_dim
             value_states = self._shape(self.v_proj(
                 hidden_states,
                 threshold=threshold,
@@ -1087,11 +1098,16 @@ class WhisperAttention(nn.Module):
             past_key_value = (key_states, value_states)
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
+
+        # b*num_heads x seq_len x head_dim
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        # b*num_heads x seq_len x head_dim
         key_states = key_states.reshape(*proj_shape)
+        # b*num_heads x seq_len x head_dim
         value_states = value_states.reshape(*proj_shape)
 
         src_len = key_states.size(1)
+        # b*num_heads x seq_len x seq_len
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
         # disabled for tracing
@@ -1110,6 +1126,7 @@ class WhisperAttention(nn.Module):
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
+        # b*num_heads x seq_len x seq_len
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         if layer_head_mask is not None:
@@ -1134,6 +1151,7 @@ class WhisperAttention(nn.Module):
 
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
 
+        # b*num_heads x seq_len x head_dim
         attn_output = torch.bmm(attn_probs, value_states)
 
         # disabled for tracing
@@ -1148,8 +1166,10 @@ class WhisperAttention(nn.Module):
 
         # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
         # partitioned across GPUs when using tensor-parallelism.
+        # b x seq_len x embed_dim
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
 
+        # b x seq_len x embed_dim
         attn_output = self.out_proj(
             attn_output,
             threshold=threshold,
