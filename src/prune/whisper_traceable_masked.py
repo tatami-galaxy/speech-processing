@@ -989,6 +989,19 @@ class WhisperAttention(nn.Module):
     # Copied from transformers.models.bart.modeling_bart.BartAttention._shape with BART->whisper
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+    
+
+    def get_indices_from_heads():
+        pass
+
+
+    def prune_zero_heads(self):
+        
+        # find zero heads
+
+        pass
+
+
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention.forward with BART->whisper
     def forward(
