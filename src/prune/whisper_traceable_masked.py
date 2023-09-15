@@ -945,6 +945,9 @@ class WhisperAttention(nn.Module):
         self.scaling = self.head_dim**-0.5  # scale head dimension
         self.is_decoder = is_decoder
 
+        # pruning
+
+        self.pruned_heads = set()
         #self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
         self.k_proj = MaskedLinear(
             embed_dim,
@@ -991,15 +994,58 @@ class WhisperAttention(nn.Module):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
     
 
-    def get_indices_from_heads():
-        pass
-
-
-    def prune_zero_heads(self):
+    def prune_linear(self, linear: nn.Linear, index: torch.LongTensor, dim: int = 0) -> nn.Linear:
         
-        # find zero heads
+        index = index.to(linear.weight.device)
+        W = linear.weight.index_select(dim, index).clone().detach()
+        if linear.bias is not None:
+            if dim == 1:
+                b = linear.bias.clone().detach()
+            else:
+                b = linear.bias[index].clone().detach()
+        new_size = list(linear.weight.size())
+        new_size[dim] = len(index)
+        new_linear = nn.Linear(new_size[1], new_size[0], bias=linear.bias is not None).to(linear.weight.device)
+        new_linear.weight.requires_grad = False
+        new_linear.weight.copy_(W.contiguous())
+        new_linear.weight.requires_grad = True
+        if linear.bias is not None:
+            new_linear.bias.requires_grad = False
+            new_linear.bias.copy_(b.contiguous())
+            new_linear.bias.requires_grad = True
 
-        pass
+        return new_linear
+
+
+    def _prune_heads(self, linear: nn.Linear):
+
+        # mask to compute indices to keep
+        mask = torch.ones(self.num_heads, self.head_dim)
+        # do not consider already pruned heads
+        heads = set([h for h in range(self.num_heads)]) - self.pruned_heads
+        
+        for h in heads:
+            head = linear.weight[h*self.head_dim:(h+1)*self.head_dim, :]
+            total = head.numel()
+            zeros = total - torch.count_nonzero(head)
+            sparsity = zeros/total
+            if sparsity == 1:
+                mask[h] = 0
+        
+        mask = mask.view(-1).contiguous().eq(1)
+        # indices to keep
+        index: torch.LongTensor = torch.arange(len(mask))[mask].long()
+        self.prune_linear(linear, index)
+
+    ## prune q and k together ##
+    ## how to store pruned heads when all q,k,v might not be pruned? ##
+
+    def prune_heads(self):
+
+        self._prune_heads(self.q_proj)
+        self._prune_heads(self.k_proj)
+        self._prune_heads(self.v_proj)
+        self._prune_heads(self.out_proj)
 
 
 
