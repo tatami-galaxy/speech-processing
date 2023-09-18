@@ -994,6 +994,7 @@ class WhisperAttention(nn.Module):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
     
 
+    # prune a linear weight (and bias)
     def prune_linear(self, linear: nn.Linear, index: torch.LongTensor, dim: int = 0) -> nn.Linear:
         
         index = index.to(linear.weight.device)
@@ -1017,37 +1018,61 @@ class WhisperAttention(nn.Module):
         return new_linear
 
 
-    def _prune_heads(self, linear: nn.Linear):
-
+    # get indices to remove for heads to remove
+    def get_index(self, M: nn.Linear, rem_heads: set):
         # mask to compute indices to keep
         mask = torch.ones(self.num_heads, self.head_dim)
         # do not consider already pruned heads
         heads = set([h for h in range(self.num_heads)]) - self.pruned_heads
         
         for h in heads:
-            head = linear.weight[h*self.head_dim:(h+1)*self.head_dim, :]
-            total = head.numel()
-            zeros = total - torch.count_nonzero(head)
-            sparsity = zeros/total
-            if sparsity == 1:
+            if h in rem_heads:
                 mask[h] = 0
         
         mask = mask.view(-1).contiguous().eq(1)
         # indices to keep
         index: torch.LongTensor = torch.arange(len(mask))[mask].long()
-        self.prune_linear(linear, index)
+        return index
+
+
+    # returns heads to remove
+    def get_heads(self, M: nn.Linear):
+        # do not consider already pruned heads
+        heads = set([h for h in range(self.num_heads)]) - self.pruned_heads
+        # heads to return based on sparsity
+        ret_heads = []
+        
+        for h in heads:
+            head = M.weight[h*self.head_dim:(h+1)*self.head_dim, :]
+            total = head.numel()
+            zeros = total - torch.count_nonzero(head)
+            sparsity = zeros/total
+            if sparsity == 1:  # for now only remove zero heads
+                ret_heads.append(h)
+        
+        return ret_heads
 
     ## prune q and k together ##
-    ## how to store pruned heads when all q,k,v might not be pruned? ##
+    ## how to store pruned heads when all of q,k,v might not be pruned for a head? ##
 
     def prune_heads(self):
 
-        self._prune_heads(self.q_proj)
-        self._prune_heads(self.k_proj)
-        self._prune_heads(self.v_proj)
-        self._prune_heads(self.out_proj)
+        # heads to prune
+        heads = set()
 
+        # get all heads to remove by looking at sparsity
+        heads.update(self.get_heads(self.q_proj))
+        heads.update(self.get_heads(self.k_proj))
+        heads.update(self.get_heads(self.v_proj))
+        heads.update(self.get_heads(self.out_proj))
 
+        # get index and prune head
+        self.q_proj = self.prune_linear(self.q_proj, self.get_index(self.q_proj, heads))
+        self.k_proj = self.prune_linear(self.k_proj, self.get_index(self.k_proj, heads))
+        self.v_proj = self.prune_linear(self.v_proj, self.get_index(self.v_proj, heads))
+        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads))
+
+        
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention.forward with BART->whisper
     def forward(
@@ -1129,7 +1154,7 @@ class WhisperAttention(nn.Module):
             # self_attention
 
             # key matrix after X @ K
-            # shape -> b x num_heads x seq_len x head_dim
+            # b x num_heads x seq_len x head_dim
             key_states = self._shape(self.k_proj(
                 hidden_states,
                 threshold=threshold,
@@ -1138,7 +1163,7 @@ class WhisperAttention(nn.Module):
             ), -1, bsz)
 
             # value matrix after X @ V
-            # shape -> b x num_heads x seq_len x head_dim
+            # b x num_heads x seq_len x head_dim
             value_states = self._shape(self.v_proj(
                 hidden_states,
                 threshold=threshold,
