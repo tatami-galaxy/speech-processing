@@ -26,13 +26,13 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import AutoModelForSpeechSeq2Seq
+from whisper_pt_prune import WhisperForConditionalGeneration
 from torch.utils.data.dataloader import DataLoader
 from transformers import set_seed
 import argparse
 from accelerate import Accelerator
 
-torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
+#torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
@@ -95,7 +95,7 @@ def train(args, accelerator):
 
     with accelerator.main_process_first():
         # remove unused columns
-        common_voice = common_voice.remove_columns(
+        raw_datasets = raw_datasets.remove_columns(
             [
                 "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
             ]
@@ -164,7 +164,7 @@ def train(args, accelerator):
         tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
 
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         config=model_config,
         #cache_dir=args.cache_dir,
