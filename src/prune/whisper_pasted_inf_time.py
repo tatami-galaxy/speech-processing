@@ -10,38 +10,57 @@
 
 """
 
-import re
-import torch
+import os, re
+import datetime
+import timeit
+from os.path import dirname, abspath
 from tqdm.auto import tqdm
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
+import transformers, datasets
 from transformers import AutoConfig
 from transformers import AutoFeatureExtractor
 from transformers import AutoTokenizer
 from transformers import AutoProcessor
 from transformers import GenerationConfig
-from typing import List
-from transformers import AutoModelForSpeechSeq2Seq
-from optimum.bettertransformer import BetterTransformer
+import torch
+from dataclasses import dataclass
+from typing import Any, Dict, List, Union
+import evaluate
+from whisper_pt_prune import WhisperForConditionalGeneration
+from torch.utils.data.dataloader import DataLoader
 from transformers import set_seed
 import argparse
-import timeit
-# Intel Extension for PyTorch
-import intel_extension_for_pytorch as ipex
-# neural comressor
-#from neural_compressor.compression.pruner import model_slim
+from accelerate import Accelerator
 
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
 
+# get root directory
+root = abspath(__file__)
+while root.split('/')[-1] != 'speech-processing':
+    root = dirname(root)
+    
 
-def train(args):
+
+def train(args, accelerator):
 
     # load dataset
-    print('loading dataset from {}'.format(args.data_dir))
+    accelerator.print('loading dataset from {}'.format(args.data_dir))
 
-    raw_datasets = load_dataset(args.data_dir)
+    # dataset
+    raw_datasets = DatasetDict()
+    raw_datasets["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
+    raw_datasets["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
+
+    with accelerator.main_process_first():
+        # remove unused columns
+        raw_datasets = raw_datasets.remove_columns(
+            [
+                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
+            ]
+        )
 
     # check audio column, text column names
     if args.audio_column not in raw_datasets["test"].column_names:
@@ -58,8 +77,9 @@ def train(args):
             f"{', '.join(raw_datasets['test'].column_names)}."
         )
 
-    if args.max_test_samples is not None:
-        raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
+    with accelerator.main_process_first():
+        if args.max_test_samples is not None:
+            raw_datasets["test"] = raw_datasets["test"].select(range(args.max_test_samples))
 
 
 
@@ -68,10 +88,13 @@ def train(args):
         batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
     
-    raw_datasets = raw_datasets.map(
-        remove_special_characters,
-        desc="remove special characters from datasets",
-    )
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.map(
+            remove_special_characters,
+            desc="remove special characters from datasets",
+        )
+
+    dataset = raw_datasets['test']
 
 
     # model, tokenizer, feature extractor, processor
@@ -104,7 +127,7 @@ def train(args):
         tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
 
 
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         config=model_config,
         #cache_dir=args.cache_dir,
@@ -125,44 +148,37 @@ def train(args):
 
 
 
-    # filter data that is shorter than min_input_length or longer than
-    # max_input_length
-    def is_audio_in_length_range(duration):
-        return duration > args.min_duration and duration < args.max_duration
+    # resample speech dataset if necessary
+    #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
+    #if dataset_sampling_rate != feature_extractor.sampling_rate:
+    with accelerator.main_process_first():
+        raw_datasets = raw_datasets.cast_column(
+            args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
+        )
 
-    raw_datasets = raw_datasets.filter(
-        is_audio_in_length_range,
-        num_proc=args.preprocessing_num_workers,
-        input_columns=["duration"],
-        #keep_in_memory=True
-    )
-
-    dataset = raw_datasets['test']
-
-
-    # better transformer 
-    model = BetterTransformer.transform(model, keep_original_model=False)
+    # preprocess dataset
+    max_input_length = args.max_duration * feature_extractor.sampling_rate
+    min_input_length = args.min_duration * feature_extractor.sampling_rate
+    audio_column_name = args.audio_column
+    num_workers = args.preprocessing_num_workers
+    text_column_name = args.text_column
+    model_input_name = feature_extractor.model_input_names[0]
 
 
-    # Intel Extention
-    # Apply some fusions at the front end
-    #model = ipex.optimize(model, dtype=torch.float32)
-    #model = ipex.optimize(model)
+
+    # prepare everything for accelerator
+    # any instruction using your training dataloader length,
+    # for instance if you need the number of total training steps
+    # to create a learning rate scheduler) should go after the call to prepare()
+    model, test_dataloader = accelerator.prepare(model, test_dataloader)
 
 
-    ## dynamic quant ##
-
-    # The easiest method of quantization PyTorch supports is called dynamic quantization.
-    # This involves not just converting the weights to int8 - as happens in all quantization variants -
-    # but also converting the activations to int8 on the fly, just before doing the computation (hence “dynamic”).
-    # The computations will thus be performed using efficient int8 matrix multiplication
-    # and convolution implementations, resulting in faster compute.
-    # However, the activations are read and written to memory in floating point format
-    
-    
-    model = torch.quantization.quantize_dynamic(
-        model, {torch.nn.Linear}, dtype=torch.qint8
-    )
+    # load from checkpoint
+    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
+    # check if checkpoint directory passed in
+    if args.checkpoint is not None:
+        accelerator.print(f"loaded from checkpoint: {args.checkpoint}")
+        accelerator.load_state(args.checkpoint)
 
 
 
@@ -198,40 +214,21 @@ def train(args):
     # generation config
     generation_config = make_generation_config()
 
+    # prune zero heads
+    if args.prune:
+        model.prune_heads()
+        accelerator.print('heads pruned')
 
-    #model = model_slim(model)
-
-    # compile
-    model = torch.compile(model)
-
-
-    model.eval()
-
-    # warm up for compile
-    #warmup_samples = 10
-    #warmup_dataset = dataset.select(range(warmup_samples))
-
-    #print('warmup')
-    #for sample in warmup_dataset:
-        #inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
-        #input_features = inputs.input_features
-        #output_ids = model.generate(
-            #input_features,
-            #generation_config=generation_config,
-            #task=args.task,
-            #language=args.model_lang,
-            #is_multilingual=True,
-            #**gen_kwargs
-        #)
-    #print('warmup done')
 
     # eval bar
     eval_bar = tqdm(range(len(dataset)), position=0)
 
     per_sec_inf_times = []
 
+    model.eval()
+
     for sample in dataset:
-        inputs = processor(sample["audio"]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        inputs = processor(sample[audio_column_name]["array"], sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
         input_features = inputs.input_features
         # start timer
         start_time = timeit.default_timer()
@@ -247,11 +244,11 @@ def train(args):
         # end timer
         elapsed = timeit.default_timer() - start_time
         per_sec_inf_times.append(elapsed / sample["duration"])
+
         eval_bar.update(1)
 
 
     print("average per sec inference time : {}".format(sum(per_sec_inf_times)/len(dataset)))
-
 
 
 
@@ -292,8 +289,14 @@ def run():
         help="Whether to freeze the transformer encoder of the model."
     )
     parser.add_argument(
+        '--prune',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Whether to prune heads of the model."
+    )
+    parser.add_argument(
         "--data_dir",
-        default=None,  # mozilla-foundation/common_voice_11_0"
+        default="mozilla-foundation/common_voice_13_0",  # mozilla-foundation/common_voice_11_0"
         type=str,
         help="Dataset",
     )
@@ -311,7 +314,7 @@ def run():
     parser.add_argument(
         '--text_column',
         type=str,
-        default="transcript",
+        default="sentence",
         help="The name of the dataset column containing the text data. Defaults to sentence for cv."
     )
     parser.add_argument(
@@ -336,7 +339,7 @@ def run():
     parser.add_argument(
         '--preprocessing_num_workers',
         type=int,
-        default=None,  # os.cpu_count(), # None, 32
+        default=os.cpu_count(), # None, 32
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
@@ -347,7 +350,12 @@ def run():
     )
     parser.add_argument(
         "--model_lang",
-        default='chinese',
+        default='hindi',
+        type=str,
+    )
+    parser.add_argument(
+        "--data_lang",
+        default='hi',
         type=str,
     )
     parser.add_argument(
@@ -395,9 +403,33 @@ def run():
             f"pass in model_name_or_path"
         )
 
-    # train function
-    train(args)
+    # initialize accelerator
+    accelerator = Accelerator(
+        mixed_precision=args.mixed_precision,
+        log_with="tensorboard",
+        project_dir='./outputs'
+    )
+    # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
+    # to INFO for the main process only.
+    if accelerator.is_main_process:
+        datasets.utils.logging.set_verbosity_warning()
+        transformers.utils.logging.set_verbosity_info()
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
+    # we need to initialize the trackers we use, and also store our configuration
+    track_config = {
+        "seed": args.seed,
+        "test_batch_size": args.test_batch_size,
+    }
+    #run = os.path.split(__file__)[-1].split(".")[0]
+    accelerator.init_trackers('runs', track_config)
 
+    # train function
+    train(args, accelerator)
+
+    # end logging
+    accelerator.end_training()
 
 
             
