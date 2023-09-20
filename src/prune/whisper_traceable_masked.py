@@ -6511,9 +6511,10 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
 
     def prune_heads(self):
 
-        # layers to skip
-        e_layers = []
-        d_layers = []
+        # attentions to skip
+        en_self_attns = []
+        de_self_attns = []
+        de_cross_attns = []
 
         # prune self attention as well as encoder_attention #
 
@@ -6521,11 +6522,14 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         for l in range(self.config.encoder_layers):
             skip_attn = self.model.encoder.layers[l].self_attn.prune_heads()
             if skip_attn:
-                e_layers.append(l)
+                en_self_attns.append(l)
         for l in range(self.config.decoder_layers):
             skip_attn = self.model.decoder.layers[l].self_attn.prune_heads()
             if skip_attn:
-                d_layers.append(l)
+                de_self_attns.append(l)
+            skip_attn = self.model.decoder.layers[l].encoder_attn.prune_heads()
+            if skip_attn:
+                de_cross_attns.append(l)
 
         # remove those attention computations from encoder
         if len(e_layers) > 0:
