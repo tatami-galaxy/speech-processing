@@ -170,7 +170,7 @@ def train(args, accelerator):
     # any instruction using your training dataloader length,
     # for instance if you need the number of total training steps
     # to create a learning rate scheduler) should go after the call to prepare()
-    model, test_dataloader = accelerator.prepare(model, test_dataloader)
+    mode = accelerator.prepare(model)
 
 
     # load from checkpoint
@@ -243,7 +243,7 @@ def train(args, accelerator):
         predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)[0]
         # end timer
         elapsed = timeit.default_timer() - start_time
-        per_sec_inf_times.append(elapsed / sample["duration"])
+        per_sec_inf_times.append(elapsed / (len(sample[audio_column_name]["array"])/feature_extractor.sampling_rate))
 
         eval_bar.update(1)
 
