@@ -24,6 +24,7 @@ import itertools
 
 def expand_mask(global_mask, in_features, out_features, block_size, sparsity_threshold):
 
+    # change this for rectangular blocks / heads
     assert (out_features * in_features) % block_size == 0, "attention matrices need to be divisible by block size squared"
     # total blocks
     #num_blocks = int((out_features * in_features) / (block_size ** 2))

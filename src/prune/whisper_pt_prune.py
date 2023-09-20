@@ -442,7 +442,7 @@ class WhisperAttention(nn.Module):
         self.q_proj = self.prune_linear(self.q_proj, self.get_index(self.q_proj, heads))
         self.k_proj = self.prune_linear(self.k_proj, self.get_index(self.k_proj, heads))
         self.v_proj = self.prune_linear(self.v_proj, self.get_index(self.v_proj, heads))
-        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)
+        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)  # is this correct?
 
         # add to pruned_heads
         self.pruned_heads.update(heads)
@@ -1512,6 +1512,8 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         super().__init__(config)
         self.model = WhisperModel(config)
         self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        warnings.warn('inferring last dim in WhisperAttention.forward before out.proj')
 
         # Initialize weights and apply final processing
         self.post_init()

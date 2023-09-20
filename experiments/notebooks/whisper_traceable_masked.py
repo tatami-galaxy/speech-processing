@@ -6471,6 +6471,7 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
                 layer_head_mask.size() != (self.num_heads,)
             in WhisperAttention.forward"""
         )
+        warnings.warn('inferring last dim in WhisperAttention.forward before out.proj')
         warnings.warn('prefix tuning disabled in WhisperAttention.forward')
         warnings.warn('_prepare_decoder_attention_mask wraped')
         warnings.warn('gradient checkpointing not supported')

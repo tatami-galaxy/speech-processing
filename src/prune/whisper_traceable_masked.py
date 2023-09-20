@@ -947,7 +947,7 @@ class WhisperAttention(nn.Module):
 
         # pruning
 
-        self.skip_layer = False
+        self.skip_attn = False
         self.config = config
         self.pruned_heads = set()
         #self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)
@@ -1078,9 +1078,9 @@ class WhisperAttention(nn.Module):
         heads.update(self.get_heads(self.v_proj))
         heads.update(self.get_heads(self.out_proj))
 
-        # all heads removed, skip layer
+        # all heads removed, skip attention
         if len(heads) == self.num_heads:
-            self.skip_layer = True
+            self.skip_attn = True
 
         # get index and prune head
         self.q_proj = self.prune_linear(self.q_proj, self.get_index(self.q_proj, heads))
@@ -1094,7 +1094,7 @@ class WhisperAttention(nn.Module):
         # update number of heads
         self.num_heads = self.num_heads - len(heads)
 
-        return self.skip_layer
+        return self.skip_attn
 
         
 
@@ -6471,6 +6471,7 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
                 layer_head_mask.size() != (self.num_heads,)
             in WhisperAttention.forward"""
         )
+        warnings.warn('inferring last dim in WhisperAttention.forward before out.proj')
         warnings.warn('prefix tuning disabled in WhisperAttention.forward')
         warnings.warn('_prepare_decoder_attention_mask wraped')
         warnings.warn('gradient checkpointing not supported')
@@ -6514,17 +6515,19 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
         e_layers = []
         d_layers = []
 
-        # check if pruning deleted any layers
+        # prune self attention as well as encoder_attention #
+
+        # check if pruning deleted all attention heads from a layer
         for l in range(self.config.encoder_layers):
-            skip_layer = self.model.encoder.layers[l].self_attn.prune_heads()
-            if skip_layer:
+            skip_attn = self.model.encoder.layers[l].self_attn.prune_heads()
+            if skip_attn:
                 e_layers.append(l)
         for l in range(self.config.decoder_layers):
-            skip_layer = self.model.decoder.layers[l].self_attn.prune_heads()
-            if skip_layer:
+            skip_attn = self.model.decoder.layers[l].self_attn.prune_heads()
+            if skip_attn:
                 d_layers.append(l)
 
-        # remove those layers from encoder
+        # remove those attention computations from encoder
         if len(e_layers) > 0:
             encoder_list = self.model.encoder.layers
             new_encoder_list = nn.ModuleList()
@@ -6534,7 +6537,7 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
             # update number of layers in encoder
             self.config.encoder_layers = self.config.encoder_layers - len(e_layers)
 
-        # remove those layers from decoder
+        # remove those attention computations from decoder
         if len(d_layers) > 0:
             decoder_list = self.model.decoder.layers
             new_decoder_list = nn.ModuleList()
