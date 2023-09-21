@@ -334,7 +334,7 @@ class WhisperAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
 
         # pruning #
-        self.skip_layer = False
+        self.skip_attn = False
         self.pruned_heads = set()
 
 
@@ -434,15 +434,15 @@ class WhisperAttention(nn.Module):
         heads.update(self.get_heads(self.v_proj))
         heads.update(self.get_heads(self.out_proj))
 
-        # all heads removed, skip layer
+        # all heads removed, skip attention
         if len(heads) == self.num_heads:
-            self.skip_layer = True
+            self.skip_attn = True
 
         # get index and prune head
         self.q_proj = self.prune_linear(self.q_proj, self.get_index(self.q_proj, heads))
         self.k_proj = self.prune_linear(self.k_proj, self.get_index(self.k_proj, heads))
         self.v_proj = self.prune_linear(self.v_proj, self.get_index(self.v_proj, heads))
-        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)  # is this correct?
+        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)
 
         # add to pruned_heads
         self.pruned_heads.update(heads)
@@ -450,7 +450,7 @@ class WhisperAttention(nn.Module):
         # update number of heads
         self.num_heads = self.num_heads - len(heads)
 
-        return self.skip_layer
+        return self.skip_attn
     
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention.forward with BART->whisper
@@ -574,6 +574,28 @@ class WhisperAttention(nn.Module):
         attn_output = self.out_proj(attn_output)
 
         return attn_output, attn_weights_reshaped, past_key_value
+    
+
+class DummyAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __init__(
+        self,
+    ):
+        super().__init__()
+
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+       
+        return hidden_states, None, past_key_value
 
 
 # Copied from transformers.models.mbart.modeling_mbart.MBartEncoderLayer with MBart->Whisper
@@ -1543,45 +1565,54 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
 
     def prune_heads(self):
 
-        # layers to skip
-        e_layers = []
-        d_layers = []
+        # attentions to skip
+        en_self_attns = []
+        de_self_attns = []
+        de_cross_attns = []
 
-        # check if pruning deleted any layers
+        # prune self attention as well as encoder_attention #
+
+        # check if pruning deleted all attention heads from a layer
         for l in range(self.config.encoder_layers):
-            skip_layer = self.model.encoder.layers[l].self_attn.prune_heads()
-            if skip_layer:
-                e_layers.append(l)
+            skip_attn = self.model.encoder.layers[l].self_attn.prune_heads()
+            if skip_attn:
+                en_self_attns.append(l)
         for l in range(self.config.decoder_layers):
-            skip_layer = self.model.decoder.layers[l].self_attn.prune_heads()
-            if skip_layer:
-                d_layers.append(l)
+            skip_attn = self.model.decoder.layers[l].self_attn.prune_heads()
+            if skip_attn:
+                de_self_attns.append(l)
+            skip_attn = self.model.decoder.layers[l].encoder_attn.prune_heads()
+            if skip_attn:
+                de_cross_attns.append(l)
 
-        # remove those layers from encoder
-        if len(e_layers) > 0:
+        # remove those attention computations from encoder
+        if len(en_self_attns) > 0:
             encoder_list = self.model.encoder.layers
             new_encoder_list = nn.ModuleList()
             for l in range(self.config.encoder_layers):
-                if l not in e_layers:
-                    new_encoder_list.append(encoder_list[l])
-            # update number of layers in encoder
-            self.config.encoder_layers = self.config.encoder_layers - len(e_layers)
+                layer = encoder_list[l]
+                if l in en_self_attns:
+                    layer.self_attn = DummyAttention()
+                new_encoder_list.append(layer)
 
-        # remove those layers from decoder
-        if len(d_layers) > 0:
+        # remove those attention computations from decoder
+        if len(de_self_attns) > 0 or len(de_self_attns) > 0:
             decoder_list = self.model.decoder.layers
             new_decoder_list = nn.ModuleList()
             for l in range(self.config.decoder_layers):
-                if l not in d_layers:
-                    new_decoder_list.append(decoder_list[l])
-            # update number of layers in decoder
-            self.config.decoder_layers = self.config.decoder_layers - len(d_layers)
+                layer = decoder_list[l]
+                if l in de_self_attns:
+                    layer.self_attn = DummyAttention()
+                if l in de_cross_attns:
+                    layer.encoder_attn = DummyAttention()
+                new_decoder_list.append(layer)
 
-        if len(e_layers) > 0 or len(d_layers) > 0:
+        # integrate modified layers into model
+        if len(en_self_attns) > 0 or len(de_self_attns) > 0 or len(de_cross_attns) > 0:
             model_copy = copy.deepcopy(self.model)
-            if len(e_layers) > 0:
+            if len(en_self_attns) > 0:
                 model_copy.encoder.layers = new_encoder_list
-            if len(d_layers) > 0:
+            if len(de_self_attns) > 0 or len(de_cross_attns) > 0:
                 model_copy.decoder.layers = new_decoder_list
             self.model = model_copy
 
