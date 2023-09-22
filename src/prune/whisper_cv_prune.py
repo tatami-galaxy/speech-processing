@@ -122,6 +122,7 @@ def schedule_threshold(
     return threshold, regu_lambda
 
 # encourages the importance scores to decrease over time
+# split regularization for block pruning #
 def regularization(model: nn.Module, mode: str):
     regu, counter = 0, 0
     for name, param in model.named_parameters():
