@@ -10,42 +10,30 @@
 
 """
 
-import os
+from functools import partial
+import os, re
+import datetime
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
+from datasets import load_dataset, DatasetDict, Audio
+
+from transformers import WhisperFeatureExtractor
+from transformers import WhisperTokenizer
+from transformers import WhisperProcessor
+from transformers import GenerationConfig
+import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
-import argparse
-
-import transformers, datasets
-
-from datasets import(
-    load_dataset,
-    DatasetDict,
-    Audio,
-)
-
-from transformers import (
-    WhisperFeatureExtractor,
-    WhisperTokenizer,
-    WhisperProcessor,
-    GenerationConfig,
-    get_linear_schedule_with_warmup,
-    AdamW,
-    set_seed
-)
-from whisper_traceable_masked import MaskedWhisperForConditionalGeneration
-from configuration_whisper import MaskedWhisperConfig
-
-import numpy as np
-
-import torch
-import torch.nn as nn
-from torch.utils.data.dataloader import DataLoader
-
 import evaluate
-
+from transformers import WhisperForConditionalGeneration, WhisperConfig
+from torch.utils.data.dataloader import DataLoader
+from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
+import argparse
 from accelerate import Accelerator
+
+#torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
+
+chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
 
 # get root directory
@@ -97,61 +85,6 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         batch["labels"] = labels
 
         return batch
-    
-
-def schedule_threshold(
-    step: int,
-    total_step: int,
-    warmup_steps: int,
-    initial_threshold: float,
-    final_threshold: float,
-    initial_warmup: int,
-    final_warmup: int,
-    final_lambda: float,
-):
-    if step <= initial_warmup * warmup_steps:
-        threshold = initial_threshold
-    elif step > (total_step - final_warmup * warmup_steps):
-        threshold = final_threshold
-    else:
-        spars_warmup_steps = initial_warmup * warmup_steps
-        spars_schedu_steps = (final_warmup + initial_warmup) * warmup_steps
-        mul_coeff = 1 - (step - spars_warmup_steps) / (total_step - spars_schedu_steps)
-        threshold = final_threshold + (initial_threshold - final_threshold) * (mul_coeff**3)
-    regu_lambda = final_lambda * threshold / final_threshold
-    return threshold, regu_lambda
-
-# encourages the importance scores to decrease over time
-# split regularization for block pruning #
-def regularization(model: nn.Module, mode: str):
-    regu, counter = 0, 0
-    for name, param in model.named_parameters():
-        if "mask_scores" in name:
-            if mode == "l1":
-                regu += torch.norm(torch.sigmoid(param), p=1) / param.numel()
-            elif mode == "l0":
-                regu += torch.sigmoid(param - 2 / 3 * np.log(0.1 / 1.1)).sum() / param.numel()
-            else:
-                ValueError("Don't know this mode.")
-            counter += 1
-    return regu / counter
-
-
-## block sparsity -> how to expand mask
-## check if head 'pruned' during training
-## separate reg for attn, ffn
-## dim reduction depends on activation function
-## hybrid filled, struct
-## min variance?
-## how to remove matrices after block sparsity -> prune heads
-## want to conc sparsity on blocks/heads
-
-
-## relation to MOE?
-## test with relu instead of gelu (ft with gelu maybe)
-
-
-## combine with static quantization
 
     
 
@@ -165,17 +98,18 @@ def train(args, accelerator):
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
-    config = MaskedWhisperConfig.from_pretrained(
+    config = WhisperConfig.from_pretrained(
         args.model_name_or_path,
         #cache_dir=args.cache_dir if args.cache_dir else None,
-        pruning_method=args.pruning_method,
-        mask_init=args.mask_init,
-        mask_scale=args.mask_scale,
     )
 
+    # change activation function (some gelus are hardcoded. might need to change them)
+    if args.activation is not None:
+        config.activation_function = args.activation
+        print('activation changed to {}'.format(config.activation_function))
 
     # model
-    model = MaskedWhisperForConditionalGeneration.from_pretrained(
+    model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         config=config,
         #cache_dir=args.cache_dir if args.cache_dir else None,
@@ -190,9 +124,6 @@ def train(args, accelerator):
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
-
-
-    # teacher #
 
 
     # dataset
@@ -293,9 +224,8 @@ def train(args, accelerator):
 
 
 
-    # cer and wer
-    cer_metric = evaluate.load("cer")
-    wer_metric = evaluate.load("wer")
+    # cer
+    metric = evaluate.load("cer")
 
     # data collator
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(
@@ -321,30 +251,15 @@ def train(args, accelerator):
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
-            "params": [p for n, p in model.named_parameters() if "mask_score" in n and p.requires_grad],
-            "lr": args.mask_scores_learning_rate,
-        },
-        {
-            "params": [
-                p
-                for n, p in model.named_parameters()
-                if "mask_score" not in n and p.requires_grad and not any(nd in n for nd in no_decay)
-            ],
-            "lr": args.lr,
+            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
             "weight_decay": args.weight_decay,
         },
         {
-            "params": [
-                p
-                for n, p in model.named_parameters()
-                if "mask_score" not in n and p.requires_grad and any(nd in n for nd in no_decay)
-            ],
-            "lr": args.lr,
+            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
             "weight_decay": 0.0,
         },
     ]
-
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.lr, eps=args.adam_epsilon)
+    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.lr)
 
     # scheduler
     lr_scheduler = get_linear_schedule_with_warmup(
@@ -362,10 +277,10 @@ def train(args, accelerator):
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
+
     global_step = 0  # tracks total steps
-    if args.global_topk:
-        threshold_mem = None
     total_loss = 0  # total loss before each eval
+
 
     accelerator.log({
         "train_batch_size": args.train_batch_size,
@@ -376,21 +291,22 @@ def train(args, accelerator):
     )
 
     # load from checkpoint
+    ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
     # check if checkpoint directory passed in
     if args.resume_from_checkpoint is not None:
         accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
         accelerator.load_state(args.resume_from_checkpoint)
         # if resumed from checkpoint
         # we need to skip steps until we reach the current step
-            # ../checkpoint-123 -> int(123)
+        # ../checkpoint-123 -> int(123)
         steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
         global_step = steps_completed
         if args.skip_steps:
             train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
-            
 
-    
-    def make_generation_config(supress_en=False):
+
+
+    def make_generation_config():
 
         generation_config = GenerationConfig.from_pretrained(args.model_name_or_path)
         gen_dict = generation_config.to_dict()
@@ -398,16 +314,16 @@ def train(args, accelerator):
         # generation_config does not have "langauge", but generate() tries to use it
         # can be empty dict here since being set in generate_step
         gen_dict["language"] = args.model_lang
-        if supress_en:
+        #if supress_en:
             # en tokens to suppress from multilingual vocab
-            en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
-            suppress_en_list = []
-            for key in en_tokenizer.encoder.keys():
-                if key in tokenizer.encoder.keys() and key.isalpha():
-                    suppress_en_list.append(key)
+            #en_tokenizer = WhisperTokenizer.from_pretrained("openai/whisper-tiny.en")  # change if loaded locally
+            #suppress_en_list = []
+            #for key in en_tokenizer.encoder.keys():
+                #if key in tokenizer.encoder.keys() and key.isalpha():
+                    #suppress_en_list.append(key)
             # supress english tokens
-            gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
-        # add any other args here   
+            #gen_dict['suppress_tokens'].extend(tokenizer.encode(suppress_en_list, add_special_tokens=False))
+        # add any other args here
         # reload with new attributes
         generation_config = GenerationConfig.from_dict(gen_dict)
 
@@ -423,143 +339,56 @@ def train(args, accelerator):
     generation_config = make_generation_config()
 
 
-    # sparsity threshold and block size
-    # can be potentially made learnable and adaptive
-    sparsity_threshold = args.sparsity_threshold
-    block_size = args.block_size
-
-
     # Training
 
     # main progress bar
     progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    # eval bar
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
-
-    model.zero_grad()
 
     while True:
 
         model.train()
 
         for batch in train_dataloader:
-
-            threshold, regu_lambda = schedule_threshold(
-                step=global_step,
-                total_step=args.train_steps,
-                warmup_steps=args.warmup_steps,
-                final_threshold=args.final_threshold,
-                initial_threshold=args.initial_threshold,
-                final_warmup=args.final_warmup,
-                initial_warmup=args.initial_warmup,
-                final_lambda=args.final_lambda,
-            )
-
-            # Global TopK
-            if args.global_topk:
-                if threshold == 1.0:
-                    threshold = -1e2  # or an indefinitely low quantity
-                else:
-                    if (threshold_mem is None) or (global_step % args.global_topk_frequency_compute == 0):
-                        # Sort all the values to get the global topK
-                        concat = torch.cat(
-                            [param.view(-1) for name, param in model.named_parameters() if "mask_scores" in name]
-                        )
-                        n = concat.numel()
-                        kth = max(n - (int(n * threshold) + 1), 1)
-                        threshold_mem = concat.kthvalue(kth).values.item()
-                        threshold = threshold_mem
-                    else:
-                        threshold = threshold_mem
-
             with accelerator.accumulate(model):
-
-                batch["threshold"] = threshold
-
-                #if global_step >= args.block_prune_steps:  # expand_mask very slow
-                batch["sparsity_threshold"] = sparsity_threshold
-                batch["block_size"] = block_size
-                    
                 outputs = model(**batch)
                 loss = outputs.loss
                 total_loss += loss.detach().item() # for tensorboard 
-
-                # Regularization
-                # encourages the importance scores to decrease over time
-                ## separate regularization for ffn and attn
-                if args.regularization is not None:
-                    regu_ = regularization(model=model, mode=args.regularization)
-                    loss = loss + regu_lambda * regu_
-
-                # minimize variance of blocks?
-
                 accelerator.backward(loss)
-
-                # clip grad norm?
-
                 optimizer.step()
                 lr_scheduler.step()
-                model.zero_grad()
                 optimizer.zero_grad()
 
             progress_bar.update(1)
 
+
             if (global_step + 1) % args.eval_steps == 0:
-                # eval progress bar
-                #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
-
-                # Global TopK
-                if args.global_topk:
-                    threshold_mem = None
-
                 model.eval()
                 val_loss = 0
-
                 for batch in eval_dataloader:
                     with torch.no_grad():
-
-                        #batch["threshold"] = args.final_threshold
-                        batch["threshold"] = threshold
-
-                        #if global_step >= args.block_prune_steps:  # expand_mask very slow
-                        batch["sparsity_threshold"] = sparsity_threshold
-                        batch["block_size"] = block_size
-
-                        if args.global_topk:
-                            if threshold_mem is None:
-                                concat = torch.cat(
-                                    [param.view(-1) for name, param in model.named_parameters() if "mask_scores" in name]
-                                )
-                                n = concat.numel()
-                                kth = max(n - (int(n * args.final_threshold) + 1), 1)
-                                threshold_mem = concat.kthvalue(kth).values.item()
-                            batch["threshold"] = threshold_mem
-
                         outputs = model(**batch)
                         val_loss += outputs.loss.item()
 
                     # compute metric
-                    # generate and calculate cer, wer
+                    # generate and calculate cer 
                     output_ids = accelerator.unwrap_model(model).generate(
                         batch["input_features"],
                         generation_config=generation_config,
                         task=args.task,
                         language=args.model_lang,
                         is_multilingual=True,
-                        #threshold = args.final_threshold
-                        threshold=threshold,
-                        sparsity_threshold = sparsity_threshold,
-                        block_size = block_size,
                         **gen_kwargs
                     )
-                    # pad_acrss_processes recursively pads the tensors 
-                    # in a nested list/tuple/dictionary of tensors from all devices 
-                    # to the same size so they can safely be gathered
+
+                    # pad_acrss_processes to get equal length for each processs
                     output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
                     label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-                    # gather from all devices
+
                     output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
                     label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
-                    # decode ids
+                    
                     label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
                     predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
@@ -569,39 +398,22 @@ def train(args, accelerator):
                         skip_special_tokens=True,
                         clean_up_tokenization_spaces=True
                     )
-                    cer_metric.add_batch(predictions=predictions, references=references)
-                    wer_metric.add_batch(predictions=predictions, references=references)
+                    metric.add_batch(predictions=predictions, references=references)
 
                     eval_bar.update(1)
+
 
                 eval_bar.refresh()
                 eval_bar.reset()
 
-                cer_result = cer_metric.compute()
-                wer_result = wer_metric.compute()
-
-                accelerator.print('step : {}, threshold : {}, cer : {}, wer: {}'.format(global_step + 1, threshold, cer_result, wer_result))
+                cer_result = metric.compute()
+                # add wer for hindi
+                accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
                 accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                 accelerator.log({
                     "cer": cer_result,
-                    "wer": wer_result,
                     "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                    "val_loss": val_loss / len(eval_dataloader),
-                    "threshold": threshold,
-                    "lr": args.lr,
-                    "train_steps": args.train_steps,
-                    "eval_steps": args.eval_steps,
-                    "train_batch_size": args.train_batch_size,
-                    "initial_threshold": args.initial_threshold,
-                    "final_threshold": args.final_threshold,
-                    "sparsity_threshold": args.sparsity_threshold,
-                    "block_size": args.block_size,
-                    "initial_warmup": args.initial_warmup,
-                    "final_warmup": args.final_warmup,
-                    "pruning_method": args.pruning_method,
-                    "mask_init": args.mask_init,
-                    "mask_scale": args.mask_scale,
-                    "final_lambda": args.final_lambda,
+                    "val_loss": val_loss / len(eval_dataloader)
                 },
                 step=global_step + 1,
                 )
@@ -633,7 +445,7 @@ def train(args, accelerator):
 
 
 
-def main():
+def run():
 
 
     parser = argparse.ArgumentParser()
@@ -643,14 +455,17 @@ def main():
         default=42,
         type=int,
     )
-
-
-    # model and data
     parser.add_argument(
         "--model_name_or_path",
         default="openai/whisper-small",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--activation",
+        default=None,
+        type=str,
+        help="change model activation function",
     )
     parser.add_argument(
         "--freeze_encoder",
@@ -710,9 +525,20 @@ def main():
         type=float,
         default=0.0
     )
-
-
-    # train and eval
+    parser.add_argument(
+        '--forced_decoder_ids',
+        type=List[List[int]],
+        default=None,
+        help="""A list of pairs of integers which indicates a mapping from generation indices to token indices
+                that will be forced before sampling. For example, [[0, 123]] means the first generated token
+                will always be a token of index 123."""
+    )
+    parser.add_argument(
+        '--suppress_tokens',
+        type=List[int],
+        default=None,
+        help="A list of tokens that will be suppressed at generation."
+    )
     parser.add_argument(
         '--max_train_samples',
         type=int,
@@ -724,13 +550,31 @@ def main():
         default=None
     )
     parser.add_argument(
+        '--audio_column',
+        type=str,
+        default="audio",
+        help="The name of the dataset column containing the audio data. Defaults to audio for cv."
+    )
+    parser.add_argument(
+        '--text_column',
+        type=str,
+        default="sentence",
+        help="The name of the dataset column containing the text data. Defaults to sentence for cv."
+    )
+    parser.add_argument(
+        '--num_workers',
+        type=int,
+        default=os.cpu_count(), # 1, None, 32
+        help="The number of processes to use for the preprocessing."
+    )
+    parser.add_argument(
         "--train_batch_size",
         default=4,
         type=int,
     )
     parser.add_argument(
         "--eval_batch_size",
-        default=4,
+        default=8,
         type=int,
     )
     parser.add_argument(
@@ -754,17 +598,16 @@ def main():
         type=int,
     )
     parser.add_argument(
-        '--num_workers',
-        type=int,
-        default=os.cpu_count(), # os.cpu_count()
-        help="The number of processes to use for the preprocessing."
-    )
-    parser.add_argument(
         "--lr",
         default=1e-5,
         type=float,
     )
-    parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
+    parser.add_argument(
+        "--weight_decay",
+        default=0.0,
+        type=float,
+        help="Weight decay if we apply some."
+    )
     parser.add_argument(
         "--adam_epsilon",
         default=1e-8,
@@ -788,97 +631,6 @@ def main():
     )
 
 
-    # prune
-    parser.add_argument(
-        "--mask_scores_learning_rate",
-        default=1e-2,
-        type=float,
-        help="The Adam initial learning rate of the mask scores.",
-    )
-    parser.add_argument(
-        "--initial_threshold",
-        default=0.0,  # 0 for sigmoied
-        type=float,
-        help="Initial value of the threshold (for scheduling)."
-    )
-    parser.add_argument(
-        "--final_threshold",
-        default=0.1,  # 0.1 for sigmoied
-        type=float,
-        help="Final value of the threshold (for scheduling)."
-    )
-    parser.add_argument(
-        "--block_size",
-        default=32,
-        type=int,
-    )
-    parser.add_argument(
-        "--sparsity_threshold",
-        default=0.9,
-        type=float,
-        help="At what block sparsity to mask the whole block"
-    )
-    parser.add_argument(
-        "--block_prune_steps",
-        default=300,
-        type=int,
-        help="At what steps to check for sparse blocks and 'prune'"
-    )
-    parser.add_argument(
-        "--initial_warmup",
-        default=1,
-        type=int,
-        help=(
-            "Run `initial_warmup` * `warmup_steps` steps of threshold warmup during which threshold stays"
-            "at its `initial_threshold` value (sparsity schedule)."
-        ),
-    )
-    parser.add_argument(
-        "--final_warmup",
-        default=2,
-        type=int,
-        help=(
-            "Run `final_warmup` * `warmup_steps` steps of threshold cool-down during which threshold stays"
-            "at its final_threshold value (sparsity schedule)."
-        ),
-    )
-
-    parser.add_argument(
-        "--pruning_method",
-        default="topK",
-        type=str,
-        help=(
-            "Pruning Method (l0 = L0 regularization, magnitude = Magnitude pruning, topK = Movement pruning,"
-            " sigmoied_threshold = Soft movement pruning)."
-        ),
-    )
-    parser.add_argument(
-        "--mask_init",
-        default="constant",
-        type=str,
-        help="Initialization method for the mask scores. Choices: constant, uniform, kaiming.",
-    )
-    parser.add_argument(
-        "--mask_scale", default=0.0, type=float, help="Initialization parameter for the chosen initialization method."
-    )
-
-    parser.add_argument("--regularization", default=None, help="Add L0 or L1 regularization to the mask scores.")
-    parser.add_argument(
-        "--final_lambda",
-        default=0.0,
-        type=float,
-        help="Regularization intensity (used in conjunction with `regularization`.",
-    )
-
-    parser.add_argument("--global_topk", action="store_true", help="Global TopK on the Scores.")
-    parser.add_argument(
-        "--global_topk_frequency_compute",
-        default=25,
-        type=int,
-        help="Frequency at which we compute the TopK global threshold.",
-    )
-
-
 
     # parse args
     args = parser.parse_args()
@@ -886,36 +638,22 @@ def main():
     # set seed
     set_seed(args.seed)
 
-    # Regularization
-    if args.regularization == "null":
-        args.regularization = None
-
     # check if data path exists
     if args.data_dir is None:
         raise ValueError(
             f"pass in dataset directory"
         )
-    ##args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
-    #if not os.path.isdir(args.data_dir):
-        #raise ValueError(
-            #f"data directory does not exist"
-        #)
-
-    # check if output directory is passed in
+    # check if model path is None
+    if args.model_name_or_path is None:
+        raise ValueError(
+            f"pass in model_name_or_path"
+        )
+   # check if output directory is passed in
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        prune_str = args.pruning_method
-        args.output_dir = root+'/models/whisper/'+model_str+'-'+data_str+'-'+prune_str+'-pruned'
-    #print('output directory set to : {}'.format(args.output_dir))
-    ##if not os.path.isdir(args.output_dir):
-        ##os.mkdir(args.output_dir)
-
-    # check if model path is None
-    #if args.model_name_or_path is None:
-        #raise ValueError(
-            #f"pass in model_name_or_path"
-        #)
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+    print('output directory set to : {}'.format(args.output_dir))
     
 
     # initialize accelerator
@@ -923,32 +661,17 @@ def main():
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        project_dir=args.output_dir  # project_dir 
+        project_dir=args.output_dir
     )
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "seed": args.seed,
-        "gpus": accelerator.state.num_processes,
         "lr": args.lr,
         "train_steps": args.train_steps,
-        "eval_steps": args.eval_steps,
+        "seed": args.seed,
         "train_batch_size": args.train_batch_size,
-        "initial_threshold": args.initial_threshold,
-        "final_threshold": args.final_threshold,
-        "sparsity_threshold": args.sparsity_threshold,
-        "block_size": args.block_size,
-        "initial_warmup": args.initial_warmup,
-        "final_warmup": args.final_warmup,
-        "pruning_method": args.pruning_method,
-        "mask_init": args.mask_init,
-        "mask_scale": args.mask_scale,
-        "final_lambda": args.final_lambda,
     }
-
     #run = os.path.split(__file__)[-1].split(".")[0]
-    accelerator.init_trackers('runs', config=track_config)
-
-    accelerator.print('conv, embed, layer_norm not pruned')
+    accelerator.init_trackers('runs', track_config)
 
     # train function
     train(args, accelerator)
@@ -962,5 +685,5 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    run()
 

@@ -917,6 +917,29 @@ class WhisperPositionalEmbedding(nn.Embedding):
 
     def forward(self, input_ids, past_key_values_length=0):
         return self.weight[past_key_values_length : past_key_values_length + input_ids.shape[1]]
+    
+
+class DummyAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __init__(
+        self,
+    ):
+        super().__init__()
+
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        key_value_states: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        layer_head_mask: Optional[torch.Tensor] = None,
+        output_attentions: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+       
+        return hidden_states, None, past_key_value
+    
 
 
 class WhisperAttention(nn.Module):
@@ -1086,7 +1109,7 @@ class WhisperAttention(nn.Module):
         self.q_proj = self.prune_linear(self.q_proj, self.get_index(self.q_proj, heads))
         self.k_proj = self.prune_linear(self.k_proj, self.get_index(self.k_proj, heads))
         self.v_proj = self.prune_linear(self.v_proj, self.get_index(self.v_proj, heads))
-        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)
+        self.out_proj = self.prune_linear(self.out_proj, self.get_index(self.out_proj, heads), dim=1)  ## ins this correct?
 
         # add to pruned_heads
         self.pruned_heads.update(heads)
@@ -5930,8 +5953,8 @@ class WhisperEncoder(MaskedWhisperPreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        inputs_embeds = nn.functional.gelu(self.conv1(input_features))
-        inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))
+        inputs_embeds = nn.functional.gelu(self.conv1(input_features))  # relu?
+        inputs_embeds = nn.functional.gelu(self.conv2(inputs_embeds))   # relu?
 
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
         embed_pos = self.embed_positions.weight
@@ -6532,30 +6555,33 @@ class MaskedWhisperForConditionalGeneration(MaskedWhisperPreTrainedModel):
                 de_cross_attns.append(l)
 
         # remove those attention computations from encoder
-        if len(e_layers) > 0:
+        if len(en_self_attns) > 0:
             encoder_list = self.model.encoder.layers
             new_encoder_list = nn.ModuleList()
             for l in range(self.config.encoder_layers):
-                if l not in e_layers:
-                    new_encoder_list.append(encoder_list[l])
-            # update number of layers in encoder
-            self.config.encoder_layers = self.config.encoder_layers - len(e_layers)
+                layer = encoder_list[l]
+                if l in en_self_attns:
+                    layer.self_attn = DummyAttention()
+                new_encoder_list.append(layer)
 
         # remove those attention computations from decoder
-        if len(d_layers) > 0:
+        if len(de_self_attns) > 0 or len(de_self_attns) > 0:
             decoder_list = self.model.decoder.layers
             new_decoder_list = nn.ModuleList()
             for l in range(self.config.decoder_layers):
-                if l not in d_layers:
-                    new_decoder_list.append(decoder_list[l])
-            # update number of layers in decoder
-            self.config.decoder_layers = self.config.decoder_layers - len(d_layers)
+                layer = decoder_list[l]
+                if l in de_self_attns:
+                    layer.self_attn = DummyAttention()
+                if l in de_cross_attns:
+                    layer.encoder_attn = DummyAttention()
+                new_decoder_list.append(layer)
 
-        if len(e_layers) > 0 or len(d_layers) > 0:
+        # integrate modified layers into model
+        if len(en_self_attns) > 0 or len(de_self_attns) > 0 or len(de_cross_attns) > 0:
             model_copy = copy.deepcopy(self.model)
-            if len(e_layers) > 0:
+            if len(en_self_attns) > 0:
                 model_copy.encoder.layers = new_encoder_list
-            if len(d_layers) > 0:
+            if len(de_self_attns) > 0 or len(de_cross_attns) > 0:
                 model_copy.decoder.layers = new_decoder_list
             self.model = model_copy
 
