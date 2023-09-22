@@ -103,7 +103,7 @@ def train(args, accelerator):
         #cache_dir=args.cache_dir if args.cache_dir else None,
     )
 
-    # change activation function (some gelus are hardcoded. might need to change them)
+    # working. detect sparse activation. try changing hardcoded gelus to relu
     if args.activation is not None:
         config.activation_function = args.activation
         print('activation changed to {}'.format(config.activation_function))
