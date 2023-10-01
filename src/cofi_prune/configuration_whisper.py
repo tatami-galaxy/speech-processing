@@ -59,7 +59,7 @@ NON_SPEECH_TOKENS_MULTI = [
 # fmt: on
 
 
-class WhisperConfig(PretrainedConfig):
+class SparseWhisperConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`WhisperModel`]. It is used to instantiate a
     Whisper model according to the specified arguments, defining the model architecture. Instantiating a configuration

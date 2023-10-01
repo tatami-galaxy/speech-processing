@@ -39,7 +39,7 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from configuration_whisper import WhisperConfig
+from configuration_whisper import SparseWhisperConfig
 from transformers.models.whisper.tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
 
 from masked_nn import MaskedLinear
@@ -468,7 +468,7 @@ class WhisperAttention(nn.Module):
 
 # Copied from transformers.models.mbart.modeling_mbart.MBartEncoderLayer with MBart->Whisper
 class WhisperEncoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__()
         self.embed_dim = config.d_model
         self.self_attn = WhisperAttention(
@@ -537,7 +537,7 @@ class WhisperEncoderLayer(nn.Module):
 
 # Copied from transformers.models.mbart.modeling_mbart.MBartDecoderLayer with MBart->Whisper
 class WhisperDecoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__()
         self.embed_dim = config.d_model
 
@@ -654,7 +654,7 @@ class WhisperDecoderLayer(nn.Module):
 
 
 class WhisperPreTrainedModel(PreTrainedModel):
-    config_class = WhisperConfig
+    config_class = SparseWhisperConfig
     base_model_prefix = "model"
     main_input_name = "input_features"
     supports_gradient_checkpointing = True
@@ -822,7 +822,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
         config: WhisperConfig
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.encoder_layerdrop
@@ -972,7 +972,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
         config: WhisperConfig
     """
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__(config)
         self.dropout = config.dropout
         self.layerdrop = config.decoder_layerdrop
@@ -1227,7 +1227,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
     WHISPER_START_DOCSTRING,
 )
 class WhisperModel(WhisperPreTrainedModel):
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__(config)
 
         self.encoder = WhisperEncoder(config)
@@ -1398,7 +1398,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
     base_model_prefix = "model"
     _tied_weights_keys = ["proj_out.weight"]
 
-    def __init__(self, config: WhisperConfig):
+    def __init__(self, config: SparseWhisperConfig):
         super().__init__(config)
         self.model = WhisperModel(config)
         self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)

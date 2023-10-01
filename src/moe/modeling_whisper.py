@@ -522,7 +522,15 @@ class WhisperEncoderLayer(nn.Module):
 
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
+
+        # break into two steps to see effect of activation
+        fc1_hidden_states = self.fc1(hidden_states)
+
+        # before activation
+        # activation
+        hidden_states = self.activation_fn(fc1_hidden_states)
+        # after activation
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -643,7 +651,18 @@ class WhisperDecoderLayer(nn.Module):
         # Fully Connected
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
+
+        # break into two steps to see effect of activation
+        fc1_hidden_states = self.fc1(hidden_states)
+
+        # before activation
+        # activation
+        hidden_states = self.activation_fn(fc1_hidden_states)
+        # after activation
+
+
+        #print('decoder activation')
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
