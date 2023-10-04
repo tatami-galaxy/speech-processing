@@ -25,7 +25,7 @@ import torch
 from torch import nn
 from torch.nn import init
 
-from .binarizer import MagnitudeBinarizer, ThresholdBinarizer, TopKBinarizer
+from binarizer import MagnitudeBinarizer, ThresholdBinarizer, TopKBinarizer
 
 
 class MaskedLinear(nn.Linear):

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from transformers.feature_extraction_utils import FeatureExtractionMixin
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
     from transformers.utils import TensorType
-    from ...utils import TensorType
+    from transformers.utils import TensorType
 
 logger = logging.get_logger(__name__)
 
