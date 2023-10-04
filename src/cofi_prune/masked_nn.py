@@ -65,41 +65,22 @@ class MaskedLinear(nn.Linear):
                 Default: ``topK``
         """
         super(MaskedLinear, self).__init__(in_features=in_features, out_features=out_features, bias=bias)
-        assert pruning_method in ["topK", "threshold", "sigmoied_threshold", "magnitude", "l0"]
-        self.pruning_method = pruning_method
 
-        if self.pruning_method in ["topK", "threshold", "sigmoied_threshold", "l0"]:
-            self.mask_scale = mask_scale
-            self.mask_init = mask_init
-            self.mask_scores = nn.Parameter(torch.empty(self.weight.size()))
-            self.init_mask()
+        self.mask_scale = mask_scale
+        self.mask_init = mask_init
+        self.mask_scores = nn.Parameter(torch.empty(self.weight.size()))
+        self.init_mask()
 
     def init_mask(self):
-        if self.mask_init == "constant":
-            init.constant_(self.mask_scores, val=self.mask_scale)
-        elif self.mask_init == "uniform":
-            init.uniform_(self.mask_scores, a=-self.mask_scale, b=self.mask_scale)
-        elif self.mask_init == "kaiming":
-            init.kaiming_uniform_(self.mask_scores, a=math.sqrt(5))
+        init.constant_(self.mask_scores, val=self.mask_scale)  # scale = 0
+
 
     def forward(self, input: torch.tensor, threshold: float):
         # Get the mask
-        if self.pruning_method == "topK":
-            mask = TopKBinarizer.apply(self.mask_scores, threshold)
-        elif self.pruning_method in ["threshold", "sigmoied_threshold"]:
-            sig = "sigmoied" in self.pruning_method
-            mask = ThresholdBinarizer.apply(self.mask_scores, threshold, sig)
-        elif self.pruning_method == "magnitude":
-            mask = MagnitudeBinarizer.apply(self.weight, threshold)
-        elif self.pruning_method == "l0":
-            l, r, b = -0.1, 1.1, 2 / 3
-            if self.training:
-                u = torch.zeros_like(self.mask_scores).uniform_().clamp(0.0001, 0.9999)
-                s = torch.sigmoid((u.log() - (1 - u).log() + self.mask_scores) / b)
-            else:
-                s = torch.sigmoid(self.mask_scores)
-            s_bar = s * (r - l) + l
-            mask = s_bar.clamp(min=0.0, max=1.0)
+
+        sig = "sigmoied" in self.pruning_method
+        mask = ThresholdBinarizer.apply(self.mask_scores, threshold, sig)
+       
         # Mask weights with computed mask
         weight_thresholded = mask * self.weight
         # Compute output (linear layer) with masked weights

@@ -51,14 +51,14 @@ class ThresholdBinarizer(autograd.Function):
         """
         nb_elems = inputs.numel()
         nb_min = int(0.005 * nb_elems) + 1
-        if sigmoid:
-            mask = (torch.sigmoid(inputs) > threshold).type(inputs.type())
-        else:
-            mask = (inputs > threshold).type(inputs.type())
+
+        mask = (torch.sigmoid(inputs) > threshold).type(inputs.type())
+
         if mask.sum() < nb_min:
             # We limit the pruning so that at least 0.5% (half a percent) of the weights are remaining
             k_threshold = inputs.flatten().kthvalue(max(nb_elems - nb_min, 1)).values
             mask = (inputs > k_threshold).type(inputs.type())
+            
         return mask
 
     @staticmethod

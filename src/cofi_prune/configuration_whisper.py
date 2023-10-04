@@ -458,11 +458,6 @@ class SparseWhisperConfig(PretrainedConfig):
         mask_feature_length=10,
         mask_feature_min_masks=0,
         median_filter_width=7,
-        # pruning args 
-        pruning_method="topK",
-        mask_init="constant",
-        mask_scale=0.0,
-
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -501,11 +496,6 @@ class SparseWhisperConfig(PretrainedConfig):
         self.mask_feature_min_masks = mask_feature_min_masks
 
         self.median_filter_width = median_filter_width
-
-        # pruning
-        self.pruning_method = pruning_method
-        self.mask_init = mask_init
-        self.mask_scale = mask_scale
 
         super().__init__(
             pad_token_id=pad_token_id,
