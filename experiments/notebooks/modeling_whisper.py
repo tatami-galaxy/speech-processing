@@ -592,31 +592,42 @@ class SparseWhisperAttention(nn.Module):
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
+        # past_key_value len = 2
         if (
             is_cross_attention
             and past_key_value is not None
             and past_key_value[0].shape[2] == key_value_states.shape[1]
         ):
             # reuse k,v, cross_attentions
+            #print('reuse k v cross attn')
+            #if past_key_value is not None: 
+                #print(past_key_value[0].shape)
+                #print(past_key_value[1].shape)
             key_states = past_key_value[0]
             value_states = past_key_value[1]
         elif is_cross_attention:
             # cross_attentions
+            #print('is cross attn')
+            #if past_key_value is not None: 
+                #print(past_key_value[0].shape)
+                #print(past_key_value[1].shape)
             key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
             value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
         elif past_key_value is not None:
             # reuse k, v, self_attention
+            #print('reuse k v self attn')
+            #print(past_key_value[0].shape)
+            #print(past_key_value[1].shape)
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            #print(key_states.shape)
+            #print(value_states.shape)
+            #print(is_cross_attention)
         else:
             # self_attention
-            # key matrix after X @ K
-            # b x num_heads x seq_len x head_dim
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
-            # value matrix after X @ V
-            # b x num_heads x seq_len x head_dim
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
         if self.is_decoder:
@@ -630,16 +641,19 @@ class SparseWhisperAttention(nn.Module):
             past_key_value = (key_states, value_states)
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
-        # b*num_heads x seq_len x head_dim
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
-        # b*num_heads x seq_len x head_dim
         key_states = key_states.reshape(*proj_shape)
-        # b*num_heads x seq_len x head_dim
         value_states = value_states.reshape(*proj_shape)
 
         src_len = key_states.size(1)
-        # b*num_heads x seq_len x seq_len
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
+
+        if not is_cross_attention and past_key_value is not None:
+            #print('query : {}'.format(query_states.shape)) # same
+            print('key : {}'.format(key_states.shape))
+            print('value : {}'.format(value_states.shape))
+            print('attn : {}'.format(attn_weights.shape))
+            print(self.is_decoder)
 
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
             raise ValueError(
@@ -655,7 +669,6 @@ class SparseWhisperAttention(nn.Module):
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        # b*num_heads x seq_len x seq_len
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         if layer_head_mask is not None:
@@ -679,7 +692,6 @@ class SparseWhisperAttention(nn.Module):
 
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
 
-        # b*num_heads x seq_len x head_dim
         attn_output = torch.bmm(attn_probs, value_states)
 
         if attn_output.size() != (bsz * self.num_heads, tgt_len, self.head_dim):
@@ -693,11 +705,8 @@ class SparseWhisperAttention(nn.Module):
 
         # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
         # partitioned across GPUs when using tensor-parallelism.
-        # b x seq_len x embed_dim
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
-        # attn_output = attn_output.reshape(bsz, tgt_len, -1)
 
-        # b x seq_len x embed_dim
         attn_output = self.out_proj(attn_output)
 
         return attn_output, attn_weights_reshaped, past_key_value
@@ -1936,6 +1945,8 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        #print('input embeds : {}'.format(inputs_embeds.shape))
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None and inputs_embeds is not None:
