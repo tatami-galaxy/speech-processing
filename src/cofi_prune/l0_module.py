@@ -27,21 +27,28 @@ class L0Module(Module):
         super(L0Module, self).__init__()
         self.all_types = ["hidden_z", "intermediate_z", "mlp_z", "head_layer_z", "head_z"]
         self.pruning_type = pruning_type
-
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size 
-        self.num_attention_heads = config.num_attention_heads
-        self.mlp_num_per_layer = 1
-        self.dim_per_head = self.hidden_size // self.num_attention_heads 
-        self.num_hidden_layers = config.num_hidden_layers
-        self.vocab_size = config.vocab_size
-
-        self.params_per_head_layer = self.hidden_size * self.hidden_size * 4 + self.hidden_size * 4
-        self.params_per_head =  self.params_per_head_layer // self.num_attention_heads
         
+        # model parameters
+        self.vocab_size = config.vocab_size
+        self.d_model = config.d_model  # hidden_size
+        self.encoder_layers = config.encoder_layers
+        self.encoder_attention_heads = config.encoder_attention_heads  # num_attention_heads
+        self.decoder_layers = config.decoder_layers
+        self.decoder_attention_heads = config.decoder_attention_heads  # num_attention_heads
+        self.decoder_ffn_dim = config.decoder_ffn_dim  # intermediate_size
+        self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size
+        self.num_hidden_layers = config.encoder_layers
+        self.mlp_num_per_layer = 1  # linear -> activation -> linear
+        self.dim_per_encoder_head = self.d_model // self.encoder_attention_heads
+        self.dim_per_decoder_head = self.d_model // self.decoder_attention_heads
 
-        self.params_per_mlp_layer = self.hidden_size * self.intermediate_size * 2 + self.hidden_size + self.hidden_size * 4
-        self.params_per_intermediate_dim = self.params_per_mlp_layer // self.intermediate_size
+        # same number of heads, head size for encoder, decoder 
+        self.params_per_head_layer = self.d_model * self.d_model * 4  # + self.d_model * 4
+        self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads
+        
+        # same intermediate size for encoder, decoder
+        self.params_per_mlp_layer = self.d_model * config.encoder_ffn_dim * 2  # + self.d_model + self.d_model * 4
+        self.params_per_encoder_ffn_dim = self.params_per_mlp_layer // self.encoder_ffn_dim
 
         # we ignore the parameters in normalization layers (it takes a very small amount)
         self.full_model_size = (self.params_per_head_layer + self.params_per_mlp_layer) * self.num_hidden_layers
@@ -110,21 +117,21 @@ class L0Module(Module):
             return Parameter(torch.Tensor(size))
 
     def initialize_hidden(self):
-        self.hidden_loga = self.initialize_parameters(self.hidden_size)
+        self.hidden_loga = self.initialize_parameters(self.d_model)
         self.add_one_module(self.hidden_loga, type="hidden", 
-                            parameter_per_dim=self.hidden_size * 4 + self.hidden_size * 4 * 2,
-                            size=self.hidden_size, shape=[self.hidden_size])
+                            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,
+                            size=self.d_model, shape=[self.d_model])
         self.reset_loga(self.hidden_loga, mean=10)
         logger.info(f"Initialized hidden loga! Prunable_model_size = {self.prunable_model_size}")
 
     def initialize_structured_head(self, add_prunable_model_size=True):
-        self.head_loga = self.initialize_parameters(self.num_attention_heads, self.num_hidden_layers)
+        self.head_loga = self.initialize_parameters(self.encoder_attention_heads, self.num_hidden_layers)
         self.reset_loga(self.head_loga, mean=10)
         self.add_one_module(self.head_loga, type="head", 
-                            parameter_per_dim=self.params_per_head, size=self.num_attention_heads,
-                            shape=[self.num_hidden_layers, 1, self.num_attention_heads, 1, 1])
+                            parameter_per_dim=self.params_per_head, size=self.encoder_attention_heads,
+                            shape=[self.num_hidden_layers, 1, self.encoder_attention_heads, 1, 1])
         if add_prunable_model_size:
-            self.prunable_model_size += self.params_per_head * self.num_hidden_layers * self.num_attention_heads
+            self.prunable_model_size += self.params_per_head * self.num_hidden_layers * self.encoder_attention_heads
         logger.info(f"Initialized structured heads! Prunable_model_size = {self.prunable_model_size}")
 
     def initialized_layer_structured_heads(self):
@@ -132,16 +139,16 @@ class L0Module(Module):
         self.headlayer_loga = self.initialize_parameters(n_layer)
         self.reset_loga(self.headlayer_loga, mean=10)
         self.add_one_module(self.headlayer_loga, type="head_layer", 
-                            parameter_per_dim=self.params_per_head * self.num_attention_heads, size=1,
+                            parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
                             shape=[n_layer])
         logger.info(f"Initialized layerwise structured heads! Prunable_model_size = {self.prunable_model_size}")
 
     def initialize_structured_mlp(self):
-        self.int_loga = self.initialize_parameters(self.intermediate_size, self.num_hidden_layers)
+        self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
 
         self.add_one_module(self.int_loga, type="intermediate", 
-                            parameter_per_dim=self.params_per_intermediate_dim, size=self.intermediate_size,
-                            shape=[self.num_hidden_layers, 1, 1, self.intermediate_size])
+                            parameter_per_dim=self.params_per_encoder_ffn_dim, size=self.encoder_ffn_dim,
+                            shape=[self.num_hidden_layers, 1, 1, self.encoder_ffn_dim])
         self.prunable_model_size += self.params_per_mlp_layer * self.num_hidden_layers
         self.reset_loga(self.int_loga)
         logger.info(f"Initialized structured mlp! Prunable_model_size = {self.prunable_model_size}")
@@ -224,7 +231,7 @@ class L0Module(Module):
         else:
             head_score = head_score.reshape(-1)
         num_parameters += \
-            torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.hidden_size
+            torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.d_model
 
         intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga)  # 12
         int_score = 1 - self.cdf_qz(0, self.int_loga)  # 12 * 3072
@@ -322,13 +329,13 @@ class L0Module(Module):
         head_layer_z = numpified_zs["head_layer"].reshape(-1, 1)
 
         remaining_hidden_dims = hidden_z.sum().item()
-        remaining_intermediate_nums = intermediate_z.reshape(self.num_hidden_layers, self.intermediate_size).sum(-1).tolist()
-        remaining_head_nums = head_z.reshape(self.num_hidden_layers, self.num_attention_heads).sum(-1).tolist()
+        remaining_intermediate_nums = intermediate_z.reshape(self.num_hidden_layers, self.encoder_ffn_dim).sum(-1).tolist()
+        remaining_head_nums = head_z.reshape(self.num_hidden_layers, self.encoder_attention_heads).sum(-1).tolist()
 
         head_nums = np.outer((head_z * head_layer_z).reshape(-1), hidden_z).sum().item()
         intermediate_nums = np.outer((intermediate_z * mlp_z).reshape(-1), hidden_z).sum().item()
 
-        remaining_model_size = head_nums * self.dim_per_head * 4 + intermediate_nums * 2
+        remaining_model_size = head_nums * self.dim_per_encoder_head * 4 + intermediate_nums * 2
         pruned_model_size = self.prunable_model_size - remaining_model_size
 
         results = {}
@@ -378,10 +385,4 @@ class L0Module(Module):
                 if type != "hidden_z":
                     zs[type] = torch.stack(zs[type])
         return zs 
-
-if __name__ == "__main__":
-
-    from transformers import AutoConfig
-    
-    config = AutoConfig.from_pretrained("openai/whisper-small")
-    l0_module = L0Module(config, lagrangian_warmup=200, target_sparsity=0.5)
+ 
