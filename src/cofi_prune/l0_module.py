@@ -21,12 +21,22 @@ class L0Module(Module):
                  lagrangian_warmup=0,
                  start_sparsity=0.0,
                  target_sparsity=0.0,
-                 pruning_type="structured_heads+structured_mlp+hidden+layer",
                  magical_number=0.8, # from Wang et al. 2020
                  ):
+        
         super(L0Module, self).__init__()
-        self.all_types = ["hidden_z", "intermediate_z", "mlp_z", "head_layer_z", "head_z"]
-        self.pruning_type = pruning_type
+
+        self.all_types = [
+            "hidden_z",  # same for both encoder, decoder
+            "encoder_ffn_z",
+            "decoder_ffn_z",
+            "encoder_all_ffn_z",
+            "decoder_all_ffn_z",
+            "encoder_head_layer_z",
+            "decoder_head_layer_z",
+            "encoder_head_z",
+            "decoder_head_z",
+        ]
         
         # model parameters
         self.vocab_size = config.vocab_size
@@ -38,7 +48,7 @@ class L0Module(Module):
         self.decoder_ffn_dim = config.decoder_ffn_dim  # intermediate_size
         self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size
         self.num_hidden_layers = config.encoder_layers
-        self.mlp_num_per_layer = 1  # linear -> activation -> linear
+        self.ffn_num_per_layer = 1  # linear -> activation -> linear
         self.dim_per_encoder_head = self.d_model // self.encoder_attention_heads
         self.dim_per_decoder_head = self.d_model // self.decoder_attention_heads
 
@@ -47,11 +57,11 @@ class L0Module(Module):
         self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads
         
         # same intermediate size for encoder, decoder
-        self.params_per_mlp_layer = self.d_model * config.encoder_ffn_dim * 2  # + self.d_model + self.d_model * 4
-        self.params_per_encoder_ffn_dim = self.params_per_mlp_layer // self.encoder_ffn_dim
+        self.params_per_ffn_layer = self.d_model * config.encoder_ffn_dim * 2  # + self.d_model + self.d_model * 4
+        self.params_per_encoder_ffn_dim = self.params_per_ffn_layer // self.encoder_ffn_dim
 
         # we ignore the parameters in normalization layers (it takes a very small amount)
-        self.full_model_size = (self.params_per_head_layer + self.params_per_mlp_layer) * self.num_hidden_layers
+        self.full_model_size = (self.params_per_head_layer + self.params_per_ffn_layer) * self.num_hidden_layers
         self.prunable_model_size = 0 
 
         self.temperature = temperature
@@ -66,12 +76,13 @@ class L0Module(Module):
         self.hidden_loga = None
         self.hidden_type = None
 
-        types = self.pruning_type.split("+")
-        for type in types:
-            if type != "layer":
-                self.initialize_one_module(type)
-        if "layer" in types:
-            self.initialize_one_module("layer")
+        # initialize all zs
+        self.initialize_hidden()
+        self.initialize_head()
+        self.initialize_mha()
+        self.initialize_ffn()
+        self.initialize_all_ffn()
+        
 
         self.magical_number = magical_number
 
@@ -83,7 +94,7 @@ class L0Module(Module):
         self.target_sparsity = target_sparsity
 
         logger.info("********** Initializing L0 Module **********") 
-        for type in self.types:
+        for type in self.all_types:
             logger.info(f"***** {type} *****")
             logger.info(f"z.shape", self.z_logas[type].shape)
             logger.info(f"size", self.sizes[type])
@@ -92,16 +103,6 @@ class L0Module(Module):
     def set_lagrangian_warmup_steps(self, lagrangian_warmup):
         self.lagrangian_warmup = lagrangian_warmup
 
-    def initialize_one_module(self, module_name):
-        if module_name == "structured_mlp":
-            self.initialize_structured_mlp()
-        elif module_name == "structured_heads":
-            self.initialize_structured_head()
-        elif module_name == "hidden":
-            self.initialize_hidden()
-        elif module_name == "layer":
-            self.initialize_whole_mlp()
-            self.initialized_layer_structured_heads()
             
     def add_one_module(self, z_loga, type, parameter_per_dim, size, shape): #! init the z_logas
         self.types.append(type)
@@ -119,12 +120,12 @@ class L0Module(Module):
     def initialize_hidden(self):
         self.hidden_loga = self.initialize_parameters(self.d_model)
         self.add_one_module(self.hidden_loga, type="hidden", 
-                            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,
+                            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
                             size=self.d_model, shape=[self.d_model])
         self.reset_loga(self.hidden_loga, mean=10)
         logger.info(f"Initialized hidden loga! Prunable_model_size = {self.prunable_model_size}")
 
-    def initialize_structured_head(self, add_prunable_model_size=True):
+    def initialize_head(self, add_prunable_model_size=True):
         self.head_loga = self.initialize_parameters(self.encoder_attention_heads, self.num_hidden_layers)
         self.reset_loga(self.head_loga, mean=10)
         self.add_one_module(self.head_loga, type="head", 
@@ -134,7 +135,7 @@ class L0Module(Module):
             self.prunable_model_size += self.params_per_head * self.num_hidden_layers * self.encoder_attention_heads
         logger.info(f"Initialized structured heads! Prunable_model_size = {self.prunable_model_size}")
 
-    def initialized_layer_structured_heads(self):
+    def initialize_mha(self):
         n_layer = self.num_hidden_layers
         self.headlayer_loga = self.initialize_parameters(n_layer)
         self.reset_loga(self.headlayer_loga, mean=10)
@@ -143,25 +144,25 @@ class L0Module(Module):
                             shape=[n_layer])
         logger.info(f"Initialized layerwise structured heads! Prunable_model_size = {self.prunable_model_size}")
 
-    def initialize_structured_mlp(self):
+    def initialize_ffn(self):
         self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
 
         self.add_one_module(self.int_loga, type="intermediate", 
                             parameter_per_dim=self.params_per_encoder_ffn_dim, size=self.encoder_ffn_dim,
                             shape=[self.num_hidden_layers, 1, 1, self.encoder_ffn_dim])
-        self.prunable_model_size += self.params_per_mlp_layer * self.num_hidden_layers
+        self.prunable_model_size += self.params_per_ffn_layer * self.num_hidden_layers
         self.reset_loga(self.int_loga)
-        logger.info(f"Initialized structured mlp! Prunable_model_size = {self.prunable_model_size}")
+        logger.info(f"Initialized structured ffn! Prunable_model_size = {self.prunable_model_size}")
 
 
-    def initialize_whole_mlp(self):
+    def initialize_all_ffn(self):
         n_layer = self.num_hidden_layers
         self.intlayer_loga = self.initialize_parameters(n_layer)
-        self.add_one_module(self.intlayer_loga, type="mlp", 
-                            parameter_per_dim=self.params_per_mlp_layer, size=self.mlp_num_per_layer,
+        self.add_one_module(self.intlayer_loga, type="ffn", 
+                            parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
                             shape=[n_layer])
         self.reset_loga(self.intlayer_loga, mean=10)
-        logger.info(f"Initialized whole mlps! Prunable_model_size = {self.prunable_model_size}")
+        logger.info(f"Initialized whole ffns! Prunable_model_size = {self.prunable_model_size}")
 
 
     def reset_loga(self, tensor, mean=None):
@@ -171,7 +172,7 @@ class L0Module(Module):
 
     def reset_qz_logas(self):
         for key in self.z_logas:
-            if key in ["head_layer", "mlp", "head"]:
+            if key in ["head_layer", "ffn", "head"]:
                 self.reset_loga(self.z_logas[key], 10)
             else:
                 self.reset_loga(self.z_logas[key])
@@ -210,7 +211,7 @@ class L0Module(Module):
        
         return all_head_score, head_score
 
-    def get_num_parameters_for_mlp(self):
+    def get_num_parameters_for_ffn(self):
         intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga) # 12
         int_score = 1 - self.cdf_qz(0, self.int_loga) # 12 * 3072
         intlayer_score = intlayer_score.unsqueeze(-1)
@@ -324,7 +325,7 @@ class L0Module(Module):
         numpified_zs = self.get_z_from_zs(zs)
         hidden_z = numpified_zs["hidden"]
         intermediate_z = numpified_zs["intermediate"]
-        mlp_z = numpified_zs["mlp"].reshape(-1, 1)
+        ffn_z = numpified_zs["ffn"].reshape(-1, 1)
         head_z = numpified_zs["head"]
         head_layer_z = numpified_zs["head_layer"].reshape(-1, 1)
 
@@ -333,7 +334,7 @@ class L0Module(Module):
         remaining_head_nums = head_z.reshape(self.num_hidden_layers, self.encoder_attention_heads).sum(-1).tolist()
 
         head_nums = np.outer((head_z * head_layer_z).reshape(-1), hidden_z).sum().item()
-        intermediate_nums = np.outer((intermediate_z * mlp_z).reshape(-1), hidden_z).sum().item()
+        intermediate_nums = np.outer((intermediate_z * ffn_z).reshape(-1), hidden_z).sum().item()
 
         remaining_model_size = head_nums * self.dim_per_encoder_head * 4 + intermediate_nums * 2
         pruned_model_size = self.prunable_model_size - remaining_model_size
@@ -341,7 +342,7 @@ class L0Module(Module):
         results = {}
         # Not multiplied with each other
         results["head_layers"] = head_layer_z.reshape(-1).astype(int).tolist()
-        results["mlp_layers"] = mlp_z.reshape(-1).astype(int).tolist()
+        results["ffn_layers"] = ffn_z.reshape(-1).astype(int).tolist()
         results["hidden_dims"] = remaining_hidden_dims
         results["intermediate_dims"] = remaining_intermediate_nums
         results["head_nums"] = remaining_head_nums
@@ -350,7 +351,7 @@ class L0Module(Module):
         results["pruned_model_sparsity"] = pruned_model_size / self.prunable_model_size
         
         logger.info(f"remaining_head_layers: {head_layer_z}")
-        logger.info(f"remaining_mlp_layers: {mlp_z}")
+        logger.info(f"remaining_ffn_layers: {ffn_z}")
         logger.info(f"remaining_hidden_dims: {remaining_hidden_dims}")
         logger.info(f"remaining_intermediate_nums: {remaining_intermediate_nums}")
         logger.info(f"remaining_head_nums: {remaining_head_nums}")
