@@ -81,7 +81,7 @@ class L0Module(Module):
         self.initialize_head()
         self.initialize_mha()
         self.initialize_ffn()
-        self.initialize_all_ffn()
+        self.initialize_layer() 
         
 
         self.magical_number = magical_number
@@ -118,10 +118,16 @@ class L0Module(Module):
             return Parameter(torch.Tensor(size))
 
     def initialize_hidden(self):
+
+        # shape -> d_model
         self.hidden_loga = self.initialize_parameters(self.d_model)
-        self.add_one_module(self.hidden_loga, type="hidden", 
-                            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
-                            size=self.d_model, shape=[self.d_model])
+
+        self.add_one_module(
+            self.hidden_loga,
+            type="hidden", 
+            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
+            size=self.d_model, shape=[self.d_model]
+        )
         self.reset_loga(self.hidden_loga, mean=10)
         logger.info(f"Initialized hidden loga! Prunable_model_size = {self.prunable_model_size}")
 
@@ -155,7 +161,7 @@ class L0Module(Module):
         logger.info(f"Initialized structured ffn! Prunable_model_size = {self.prunable_model_size}")
 
 
-    def initialize_all_ffn(self):
+    def initialize_layer(self):
         n_layer = self.num_hidden_layers
         self.intlayer_loga = self.initialize_parameters(n_layer)
         self.add_one_module(self.intlayer_loga, type="ffn", 
@@ -386,4 +392,11 @@ class L0Module(Module):
                 if type != "hidden_z":
                     zs[type] = torch.stack(zs[type])
         return zs 
+    
+
+if __name__ == "__main__":
+
+    from transformers import AutoConfig
+    config = AutoConfig.from_pretrained("openai/whisper-small")
+    l0_module = L0Module(config, lagrangian_warmup=200, target_sparsity=0.5)
  
