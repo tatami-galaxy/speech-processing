@@ -107,8 +107,6 @@ def train(args, accelerator):
         model.model.encoder.gradient_checkpointing = False
 
 
-    ## save config ##
-
 
     # dataset
     common_voice = DatasetDict()
@@ -444,7 +442,7 @@ def main():
     )
     parser.add_argument(
         "--data_dir",
-        default="mozilla-foundation/common_voice_11_0",
+        default="mozilla-foundation/common_voice_13_0",
         type=str,
         help="Dataset",
     )
@@ -456,7 +454,7 @@ def main():
     )
     parser.add_argument(
         "--output_dir",
-        default=root+'/models/whisper/'+'whisper_small_cv11',
+        default=root+'/models/whisper/'+'whisper_small_cv13',
         type=str,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
@@ -571,38 +569,23 @@ def main():
     set_seed(args.seed)
 
     # check if data path exists
-    #if args.data_dir is None:
-        #raise ValueError(
-            #f"pass in dataset directory"
-        #)
-    ##args.processed_data_dir = root+'/data/processed/'+args.processed_data_dir+'/'
-    #if not os.path.isdir(args.data_dir):
-        #raise ValueError(
-            #f"data directory does not exist"
-        #)
-
+    if args.data_dir is None:
+        raise ValueError(
+            f"pass in dataset directory"
+        )
     # check if output directory is passed in
-    #if args.output_dir is None:
-        #model_str = args.model_name_or_path.split('/')[-1]
-        #data_str = 'cv11'
-        #args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
-    #print('output directory set to : {}'.format(args.output_dir))
-    ##if not os.path.isdir(args.output_dir):
-        ##os.mkdir(args.output_dir)
-
-    # check if model path is None
-    #if args.model_name_or_path is None:
-        #raise ValueError(
-            #f"pass in model_name_or_path"
-        #)
-    
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        data_str = args.data_dir.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+    print('output directory set to : {}'.format(args.output_dir))
 
     # initialize accelerator
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         log_with="tensorboard",
-        project_dir=args.output_dir  # project_dir 
+        project_dir=args.output_dir  
     )
     # to have only one message per logs of Transformers or Datasets, we set the logging verbosity
     # to INFO for the main process only.
