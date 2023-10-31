@@ -125,6 +125,7 @@ class CoFiTrainer:
         self.l0_module = l0_module
         self.l0_optimizer = None
         self.lagrangian_optimizer = None
+        self.lr_scheduler = None
         self.model = model
         self.teacher_model = teacher_model    
 
@@ -133,6 +134,304 @@ class CoFiTrainer:
         self.data_collator = data_collator
 
         self.metrics = metrics
+
+
+    def create_optimizer_and_scheduler(self, num_training_steps: int, build_l0_optimizer:bool=True):
+
+        if self.optimizer is None:
+            no_decay = ["bias", "LayerNorm.weight"]
+            freeze_keywords = ["embeddings"]
+
+            main_model_params = [
+                {
+                    "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)],
+                    "weight_decay": self.args.weight_decay,
+                    "lr": self.args.learning_rate
+                },
+                {
+                    "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)],
+                    "weight_decay": 0.0,
+                    "lr": self.args.learning_rate
+                },
+            ]
+            #log_params(main_model_params, "main params")
+            self.optimizer = AdamW(
+                main_model_params,
+                betas=(self.args.adam_beta1, self.args.adam_beta2),
+                eps=self.args.adam_epsilon,
+            )
+
+            if build_l0_optimizer and self.l0_module is not None:
+                l0_params = [{
+                    "params": [p for n, p in self.l0_module.named_parameters() if "lambda" not in n],
+                    "weight_decay": 0.0,
+                    "lr": self.additional_args.reg_learning_rate
+                }]
+                #log_params(l0_params, "l0 reg params")
+                self.l0_optimizer = AdamW(l0_params,
+                                          betas=(self.args.adam_beta1,
+                                                 self.args.adam_beta2),
+                                          eps=self.args.adam_epsilon, )
+
+                lagrangian_params = [{
+                    "params": [p for n, p in self.l0_module.named_parameters() if "lambda" in n],
+                    "weight_decay": 0.0,
+                    "lr": -self.additional_args.reg_learning_rate
+                }]
+                #log_params(lagrangian_params, "l0 reg lagrangian params")
+                self.lagrangian_optimizer = AdamW(lagrangian_params,
+                                                    betas=(self.args.adam_beta1,
+                                                            self.args.adam_beta2),
+                                                    eps=self.args.adam_epsilon)
+
+        if self.lr_scheduler is None:
+            if self.additional_args.scheduler_type == "linear":
+                self.lr_scheduler = get_linear_schedule_with_warmup(
+                    self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
+                )
+            else:
+                self.lr_scheduler = None
+
+
+    def fill_inputs_with_zs(self, zs, inputs):
+        for key in zs:
+            inputs[key] = zs[key]
+
+
+    def train_step(self, model, inputs, accelerator):
+
+        with accelerator.accumulate(model):
+                outputs = model(**batch)
+                loss = outputs.loss
+                total_loss += loss.detach().item() # for tensorboard 
+                accelerator.backward(loss)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+
+                tr_loss_step = loss_terms["loss"]
+                lag_loss_step = loss_terms["lagrangian_loss"]
+
+                tr_loss += tr_loss_step
+                lag_loss += lag_loss_step if lag_loss_step is not None else 0.0
+
+                torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), self.args.max_grad_norm)
+
+                self.optimizer.step()
+
+                if self.l0_module is not None and self.l0_optimizer is not None:
+                    self.l0_optimizer.step()
+                    self.lagrangian_optimizer.step()
+
+                if self.lr_scheduler is not None:
+                    self.lr_scheduler.step()
+
+                if self.l0_module is not None:
+                    self.l0_module.constrain_parameters()
+
+                model.zero_grad()
+                if self.l0_module is not None:
+                    self.l0_module.zero_grad()
+                self.optimizer.zero_grad()
+                if self.l0_optimizer is not None:
+                    self.l0_optimizer.zero_grad()
+                if self.lagrangian_optimizer is not None:
+                    self.lagrangian_optimizer.zero_grad()
+
+                self.global_step += 1
+                self.epoch = epoch + (step + 1) / len(epoch_iterator)
+
+                if (self.args.logging_steps > 0 and self.global_step % self.args.logging_steps == 0) or (
+                        self.global_step == 1 and self.args.logging_first_step
+                ):
+                    logs: Dict[str, float] = {}
+                    tr_loss_scalar = tr_loss.item()
+                    reg_loss_scalar = reg_loss.item()
+                    lag_loss_scalar = lag_loss.item()
+
+                    logs["loss"] = (
+                        tr_loss_scalar - logging_loss_scalar) / self.args.logging_steps
+                    logs["reg_loss"] = (
+                        reg_loss_scalar - logging_reg_loss_scalar) / self.args.logging_steps
+                    logs["lag_loss"] = (
+                        lag_loss_scalar - logging_lag_loss_scalar) / self.args.logging_steps
+
+                    # backward compatibility for pytorch schedulers
+                    if self.lr_scheduler is not None:
+                        lr = self.lr_scheduler.get_last_lr()[0] if version.parse(
+                            torch.__version__) >= version.parse("1.4") else self.lr_scheduler.get_lr()[0]
+                    else:
+                        lr = self.args.learning_rate
+
+                    logs["learning_rate"] = lr
+                    logging_loss_scalar = tr_loss_scalar
+                    logging_reg_loss_scalar = reg_loss_scalar
+                    logging_lag_loss_scalar = lag_loss_scalar
+
+                    self.log(logs)
+
+
+    def evaluate(self, eval_dataset: Optional[Dataset] = None) -> Tuple[Dict[str, float], List]:
+        eval_dataloader = self.get_eval_dataloader(eval_dataset)
+        output = self.prediction_loop(
+            eval_dataloader, description="Evaluation")
+
+        self.log(output.metrics)
+        # wandb.log(output.metrics)
+        output.metrics["step"] = self.global_step
+
+        logger.info(f"Evaluating: {output.metrics}")
+
+        eval_score = 0
+
+        name = glue_tasks[self.model.config.finetuning_task]
+        if isinstance(name, str):
+            if name in output.metrics:
+                eval_score = output.metrics[name]
+        else:
+            for na in name:
+                if na in output.metrics:
+                    eval_score = output.metrics[na]
+                    break
+
+        # logger.info(f"starting saving best: {self.global_step} {self.start_saving_best}")
+
+        if self.start_saving_best:
+            best_so_far = self.eval_counter.update(
+                self.epoch, self.global_step, eval_score)
+            if best_so_far:
+                best_dir = os.path.join(self.args.output_dir, "best")
+                if not os.path.exists(best_dir):
+                    os.makedirs(best_dir)
+
+                if self.l0_module is not None:
+                    zs = self.l0_module.forward(training=False)
+                    torch.save(zs, os.path.join(best_dir, "zs.pt"))
+                    torch.save(self.l0_module, os.path.join(
+                        best_dir, "l0_module.pt"))
+                logger.info(f"Saving the best model so far: [Epoch {int(self.epoch)} | Step: {self.global_step} | Model size: {output.metrics['remaining_params'] if 'remaining_params' in output.metrics else 'Full' } | Score: {round(eval_score, 5)}]")
+                self.model.save_pretrained(best_dir)
+
+        return output.metrics
+    
+
+    def prediction_loop(self, dataloader: DataLoader, description: str, prediction_loss_only: Optional[bool] = None) -> PredictionOutput:
+        prediction_loss_only = (
+            prediction_loss_only if prediction_loss_only is not None else self.args.prediction_loss_only
+        )
+
+        # disable output hidden states and attention during evaluation
+        self.model.config.output_hidden_states = False
+        self.model.config.output_attentions = False
+
+        model = self.model
+
+        # multi-gpu eval
+        model = self.model
+
+        batch_size = dataloader.batch_size
+        logger.info("***** Running %s *****", description)
+        logger.info("  Num examples = %d", self.num_examples(dataloader))
+        logger.info("  Batch size = %d", batch_size)
+
+        # Initialize containers
+        # losses/preds/labels on GPU/TPU (accumulated for eval_accumulation_steps)
+        losses_host = None
+        preds_host = None
+        labels_host = None
+        # losses/preds/labels on CPU (final containers)
+        all_losses = None
+        all_preds = None
+        all_labels = None
+        model.eval()
+
+        if self.args.past_index >= 0:
+            self._past = None
+
+        disable_tqdm = not self.is_local_process_zero() or self.args.disable_tqdm
+
+        zs = None
+        if self.start_prune:
+            self.l0_module.eval()
+            zs = self.l0_module.forward(training=False)
+
+        if zs is not None:
+            pruned_model_size_info = self.l0_module.calculate_model_size(zs)
+
+        for ii, inputs in enumerate(tqdm(dataloader, desc=description, disable=disable_tqdm)):
+            if zs is not None:
+                if ii == 0:
+                    logger.info(f"Putting zs {zs.keys()} into inputs:")
+                self.fill_inputs_with_zs(zs, inputs) #! use the zs
+            loss, logits, labels = self.prediction_step(
+                model, inputs, prediction_loss_only)
+
+            batch_size = inputs[list(inputs.keys())[0]].shape[0]
+
+            if logits is not None:
+                preds_host = logits if preds_host is None else nested_concat(
+                    preds_host, logits)
+            if labels is not None:
+                labels_host = labels if labels_host is None else nested_concat(
+                    labels_host, labels)
+            if loss is not None:
+                if type(loss) == float:
+                    losses = [loss] * batch_size
+                    if losses_host is None:
+                        losses_host = losses
+                    else:
+                        losses_host.extend(losses)
+                else:
+                    losses = loss.repeat(batch_size)
+                    losses_host = losses if losses_host is None else torch.cat(
+                        (losses_host, losses), dim=0)
+
+        if self.args.past_index and hasattr(self, "_past"):
+            # Clean the state at the end of the evaluation.py loop
+            delattr(self, "_past")
+
+        if losses_host is not None:
+            if not torch.is_tensor(losses_host):
+                losses_host = torch.tensor(losses_host)
+            losses = nested_numpify(losses_host)
+            all_losses = losses if all_losses is None else np.concatenate(
+                (all_losses, losses), axis=0)
+        if preds_host is not None:
+            logits = nested_numpify(preds_host)
+            all_preds = logits if all_preds is None else nested_concat(
+                all_preds, logits, padding_index=-100)
+        if labels_host is not None:
+            labels = nested_numpify(labels_host)
+            all_labels = labels if all_labels is None else nested_concat(
+                all_labels, labels, padding_index=-100)
+
+        if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
+            metrics = self.compute_metrics(EvalPrediction(
+                predictions=all_preds, label_ids=all_labels))
+        else:
+            metrics = {}
+
+        if all_losses is not None and len(all_losses) > 0:
+            metrics["eval_loss"] = np.mean(all_losses)
+
+        if zs is not None:
+            lag_loss, expected_sparsity, target_sparsity = self.l0_module.lagrangian_regularization(
+                self.global_step - self.prepruning_finetune_steps)
+
+            expected_sparsity = round(expected_sparsity.item(), 5)
+            metrics.update(pruned_model_size_info)
+            metrics["expected_sparsity"] = expected_sparsity
+            metrics["target_sparsity"] = target_sparsity
+
+            if (not self.start_saving_best) and (expected_sparsity - self.additional_args.target_sparsity >= -self.additional_args.sparsity_epsilon):
+                self.start_saving_best = True
+                logger.info(f"Starting saving the best from epoch {int(self.epoch)} and step {self.global_step}")
+
+        self.model.config.output_hidden_states = True
+        self.model.config.output_attentions = True
+
+        return PredictionOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics)
 
 
     def train(self, args, accelerator):
@@ -154,38 +453,19 @@ class CoFiTrainer:
         num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
         lagrangian_warmup_steps = args.lagrangian_warmup_epochs * num_update_steps_per_epoch #! 24544
         # self.prepruning_finetune_steps = self.additional_args.prepruning_finetune_epochs * num_update_steps_per_epoch
-        l0_module.set_lagrangian_warmup_steps(lagrangian_warmup_steps)
+        self.l0_module.set_lagrangian_warmup_steps(lagrangian_warmup_steps)
 
-        create_optimizer_and_scheduler(num_training_steps=args.train_steps, build_l0_optimizer = args.start_prune)
+        self.create_optimizer_and_scheduler(num_training_steps=args.train_steps, build_l0_optimizer = self.start_prune)
 
-        # prepare optimizer and schedule (linear warmup and decay)
-        no_decay = ["bias", "LayerNorm.weight"]
-        optimizer_grouped_parameters = [
-            {
-                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-                "weight_decay": 0.0,
-            },
-        ]
-        optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.lr)
-
-        # scheduler
-        lr_scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=args.warmup_steps,
-            num_training_steps=args.train_steps
-        )
-
+        # model
+        model = self.model
 
         # prepare everything for accelerator
         # any instruction using your training dataloader length,
         # for instance if you need the number of total training steps
         # to create a learning rate scheduler) should go after the call to prepare()
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-            model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+        model, self.optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = accelerator.prepare(
+            model, self.optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
 
@@ -252,6 +532,20 @@ class CoFiTrainer:
 
         # Training
 
+        tr_loss = torch.tensor(0.0).to(self.args.device)
+        reg_loss = torch.tensor(0.0).to(self.args.device)
+        lag_loss = torch.tensor(0.0).to(self.args.device)
+
+        model.zero_grad()
+        if self.l0_module is not None:
+            self.l0_module.zero_grad()
+
+        self.optimizer.zero_grad()
+        if self.l0_optimizer is not None:
+            self.l0_optimizer.zero_grad()
+        if self.lagrangian_optimizer is not None:
+            self.lagrangian_optimizer.zero_grad()
+
         # main progress bar
         progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
         # eval bar
@@ -262,14 +556,24 @@ class CoFiTrainer:
             model.train()
 
             for batch in train_dataloader:
-                with accelerator.accumulate(model):
-                    outputs = model(**batch)
-                    loss = outputs.loss
-                    total_loss += loss.detach().item() # for tensorboard 
-                    accelerator.backward(loss)
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
+
+                if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
+                    self.start_prune = True
+
+                    self.optimizer = None
+                    self.lr_scheduler = None
+                    lr_steps = self.t_total - self.global_step
+
+                    # reset the optimizer
+                    self.create_optimizer_and_scheduler(lr_steps, self.start_prune)
+                    accelerator.print("starting l0 regularization")
+
+                if self.start_prune:
+                    zs = self.l0_module.forward(training=True) #! get the zs
+                    self.fill_inputs_with_zs(zs, batch) #! use the zs
+
+                loss_terms = self.train_step(model, batch, accelerator)
+
 
                 progress_bar.update(1)
 
