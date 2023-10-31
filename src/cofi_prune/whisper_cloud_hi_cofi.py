@@ -121,6 +121,7 @@ class CoFiTrainer:
 
         self.start_prune = False
         self.prepruning_finetune_steps = args.prepruning_finetune_steps
+        self.train_steps = args.train_steps
 
         self.l0_module = l0_module
         self.l0_optimizer = None
@@ -455,7 +456,7 @@ class CoFiTrainer:
         # self.prepruning_finetune_steps = self.additional_args.prepruning_finetune_epochs * num_update_steps_per_epoch
         self.l0_module.set_lagrangian_warmup_steps(lagrangian_warmup_steps)
 
-        self.create_optimizer_and_scheduler(num_training_steps=args.train_steps, build_l0_optimizer = self.start_prune)
+        self.create_optimizer_and_scheduler(num_training_steps=self.train_steps, build_l0_optimizer = self.start_prune)
 
         # model
         model = self.model
@@ -547,7 +548,7 @@ class CoFiTrainer:
             self.lagrangian_optimizer.zero_grad()
 
         # main progress bar
-        progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+        progress_bar = tqdm(range(global_step, self.train_steps), disable=not accelerator.is_main_process, position=0)
         # eval bar
         eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
@@ -556,6 +557,9 @@ class CoFiTrainer:
             model.train()
 
             for batch in train_dataloader:
+
+                print(batch)
+                quit()
 
                 if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
                     self.start_prune = True
@@ -569,8 +573,8 @@ class CoFiTrainer:
                     accelerator.print("starting l0 regularization")
 
                 if self.start_prune:
-                    zs = self.l0_module.forward(training=True) #! get the zs
-                    self.fill_inputs_with_zs(zs, batch) #! use the zs
+                    zs = self.l0_module.forward(training=True) # get the zs
+                    self.fill_inputs_with_zs(zs, batch) # use the zs
 
                 loss_terms = self.train_step(model, batch, accelerator)
 
@@ -654,7 +658,7 @@ class CoFiTrainer:
 
                 global_step += 1
 
-                if global_step >= args.train_steps : return
+                if global_step >= self.train_steps : return
 
 
 

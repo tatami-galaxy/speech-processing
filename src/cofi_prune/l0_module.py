@@ -10,8 +10,10 @@ from torch.nn.parameter import Parameter
 from torch.autograd import Variable
 from transformers.utils import logging
 
+
 limit_a, limit_b, epsilon = -.1, 1.1, 1e-6
 logger = logging.get_logger(__name__)
+
 
 class L0Module(Module):
     def __init__(self,
@@ -93,8 +95,9 @@ class L0Module(Module):
     def set_lagrangian_warmup_steps(self, lagrangian_warmup):
         self.lagrangian_warmup = lagrangian_warmup
 
-            
-    def add_one_module(self, z_loga, type, parameter_per_dim, size, shape): #! init the z_logas
+    
+    # init the z_logas
+    def add_one_module(self, z_loga, type, parameter_per_dim, size, shape):
         self.z_logas[type] = z_loga
         self.parameters_per_dim[type] = parameter_per_dim
         self.sizes[type] = size
