@@ -51,11 +51,14 @@ class L0Module(Module):
         self.dim_per_decoder_head = self.d_model // self.decoder_attention_heads
 
         # same number of heads, head size for encoder, decoder 
-        self.params_per_head_layer = self.d_model * self.d_model * 4  # + self.d_model * 4
+        # 4 self attention weight matrices. 4 weights, 3 biases
+        # no bias for self_attn.k_proj
+        self.params_per_head_layer = self.d_model * self.d_model * 4  + self.d_model * 3
         self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads
         
         # same intermediate size for encoder, decoder
-        self.params_per_ffn_layer = self.d_model * config.encoder_ffn_dim * 2  # + self.d_model + self.d_model * 4
+        # weights, biases for each ffn layer
+        self.params_per_ffn_layer = self.d_model * config.encoder_ffn_dim * 2  + self.d_model + config.encoder_ffn_dim 
         self.params_per_encoder_ffn_dim = self.params_per_ffn_layer // self.encoder_ffn_dim
 
         # we ignore the parameters in normalization layers (it takes a very small amount)
@@ -110,10 +113,8 @@ class L0Module(Module):
             return Parameter(torch.Tensor(size))
 
     def initialize_hidden(self):
-
         # shape -> d_model
         self.hidden_loga = self.initialize_parameters(self.d_model)
-
         self.add_one_module(
             self.hidden_loga,
             type="hidden", 
@@ -121,8 +122,7 @@ class L0Module(Module):
             parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
             size=self.d_model, shape=[self.d_model]
         )
-        # mean 10 ??
-        self.reset_loga(self.hidden_loga, mean=10)
+        self.reset_loga(self.hidden_loga, mean=10)  # different mean?
         logger.info(f"Initialized hidden loga. Prunable_model_size = {self.prunable_model_size}")
 
 
@@ -149,7 +149,7 @@ class L0Module(Module):
                             shape=[n_layer])
         logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
 
-
+    ## change to ffn dimensions ##
     def initialize_ffn(self):
         self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
 
@@ -160,7 +160,7 @@ class L0Module(Module):
         self.reset_loga(self.int_loga)
         logger.info(f"Initialized ffn. Prunable_model_size = {self.prunable_model_size}")
 
-
+    ## change to ffn. dont drop entire layer ##
     def initialize_layer(self):
         n_layer = self.num_hidden_layers
         self.intlayer_loga = self.initialize_parameters(n_layer)
@@ -324,7 +324,7 @@ class L0Module(Module):
 
     def get_z_from_zs(self, zs):
         numpified_zs = {} 
-        for type in self.all_types:
+        for type in self.types:
             name = type[:-2]
             z = zs.get(type, np.ones(self.shapes[name]))
             if torch.is_tensor(z): 
