@@ -32,8 +32,8 @@ class L0Module(Module):
             "hidden", 
             "head",
             "mha",
+            "ffn_dim",
             "ffn",
-            "layer",
         ]
         
         # model parameters
@@ -81,8 +81,8 @@ class L0Module(Module):
         self.initialize_hidden()
         self.initialize_head()
         self.initialize_mha()
-        self.initialize_ffn()
-        self.initialize_layer() 
+        self.initialize_ffn_dim()
+        self.initialize_ffn() 
         
 
         self.magical_number = magical_number
@@ -119,11 +119,13 @@ class L0Module(Module):
             self.hidden_loga,
             type="hidden", 
             ## check ##
+            # is parameters_per_dim being used anywhere?
             parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
+            # how is size used?
             size=self.d_model, shape=[self.d_model]
         )
         self.reset_loga(self.hidden_loga, mean=10)  # different mean?
-        logger.info(f"Initialized hidden loga. Prunable_model_size = {self.prunable_model_size}")
+        #logger.info(f"Initialized hidden loga. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_head(self, add_prunable_model_size=True):
@@ -134,10 +136,11 @@ class L0Module(Module):
                             #  both encoder and decoder attentions heads
                             size=self.encoder_attention_heads+self.decoder_attention_heads,
                             # head size same across encoder, decoder
+                            # how is size used?
                             shape=[self.num_hidden_layers, 1, self.encoder_attention_heads, 1, 1])
         if add_prunable_model_size:
             self.prunable_model_size += self.params_per_head * self.num_hidden_layers * (self.encoder_attention_heads + self.decoder_attention_heads)
-        logger.info(f"Initialized heads. Prunable_model_size = {self.prunable_model_size}")
+        #logger.info(f"Initialized heads. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_mha(self):
@@ -147,28 +150,28 @@ class L0Module(Module):
         self.add_one_module(self.headlayer_loga, type="mha", 
                             parameter_per_dim=self.params_per_head * (self.encoder_attention_heads + self.decoder_attention_heads), size=1,
                             shape=[n_layer])
-        logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
+        #logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
 
     ## change to ffn dimensions ##
-    def initialize_ffn(self):
+    def initialize_ffn_dim(self):
         self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
 
-        self.add_one_module(self.int_loga, type="ffn", 
+        self.add_one_module(self.int_loga, type="ffn_dim", 
                             parameter_per_dim=self.params_per_encoder_ffn_dim, size=self.encoder_ffn_dim,
                             shape=[self.num_hidden_layers, 1, 1, self.encoder_ffn_dim])
         self.prunable_model_size += self.params_per_ffn_layer * self.num_hidden_layers
         self.reset_loga(self.int_loga)
-        logger.info(f"Initialized ffn. Prunable_model_size = {self.prunable_model_size}")
+        #logger.info(f"Initialized ffn dim. Prunable_model_size = {self.prunable_model_size}")
 
     ## change to ffn. dont drop entire layer ##
-    def initialize_layer(self):
+    def initialize_ffn(self):
         n_layer = self.num_hidden_layers
         self.intlayer_loga = self.initialize_parameters(n_layer)
-        self.add_one_module(self.intlayer_loga, type="layer", 
+        self.add_one_module(self.intlayer_loga, type="ffn", 
                             parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
                             shape=[n_layer])
         self.reset_loga(self.intlayer_loga, mean=10)
-        logger.info(f"Initialized layer. Prunable_model_size = {self.prunable_model_size}")
+        #logger.info(f"Initialized ffn. Prunable_model_size = {self.prunable_model_size}")
 
 
     def reset_loga(self, tensor, mean=None):
