@@ -32,7 +32,6 @@ from transformers import(
     get_linear_schedule_with_warmup, 
     set_seed,
 )
-from transformers.modeling_utils import PreTrainedModel
 
 from datasets import(
     load_dataset,
