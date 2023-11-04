@@ -95,6 +95,7 @@ class L0Module(Module):
         self.target_sparsity = target_sparsity
 
 
+    # called after init
     def set_lagrangian_warmup_steps(self, lagrangian_warmup):
         self.lagrangian_warmup = lagrangian_warmup
 
@@ -118,10 +119,10 @@ class L0Module(Module):
         self.add_one_module(
             self.hidden_loga,
             type="hidden", 
-            ## check ##
-            # is parameters_per_dim being used anywhere?
-            parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,  # ??
-            # how is size used?
+            # what does this mean?
+            #parameter_per_dim=self.d_model * 4 + self.d_model* 4 * 2,
+            parameter_per_dim=None,
+            # how is size and shape used?
             size=self.d_model, shape=[self.d_model]
         )
         self.reset_loga(self.hidden_loga, mean=10)  # different mean?
@@ -135,8 +136,7 @@ class L0Module(Module):
                             parameter_per_dim=self.params_per_head,
                             #  both encoder and decoder attentions heads
                             size=self.encoder_attention_heads+self.decoder_attention_heads,
-                            # head size same across encoder, decoder
-                            # how is size used?
+                            # how is size and shape used?
                             shape=[self.num_hidden_layers, 1, self.encoder_attention_heads, 1, 1])
         if add_prunable_model_size:
             self.prunable_model_size += self.params_per_head * self.num_hidden_layers * (self.encoder_attention_heads + self.decoder_attention_heads)
@@ -152,7 +152,7 @@ class L0Module(Module):
                             shape=[n_layer])
         #logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
 
-    ## change to ffn dimensions ##
+
     def initialize_ffn_dim(self):
         self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
 
@@ -163,7 +163,7 @@ class L0Module(Module):
         self.reset_loga(self.int_loga)
         #logger.info(f"Initialized ffn dim. Prunable_model_size = {self.prunable_model_size}")
 
-    ## change to ffn. dont drop entire layer ##
+
     def initialize_ffn(self):
         n_layer = self.num_hidden_layers
         self.intlayer_loga = self.initialize_parameters(n_layer)
@@ -376,6 +376,7 @@ class L0Module(Module):
         return results
         
 
+    # called after init and set_lagrangian_warmup_steps
     def forward(self, training=True,):
         zs = {f"{type}_z": [] for type in self.types}
 
