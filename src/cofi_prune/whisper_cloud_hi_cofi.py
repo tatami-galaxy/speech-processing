@@ -122,13 +122,16 @@ class CoFiTrainer:
         self.start_prune = False
         self.prepruning_finetune_steps = args.prepruning_finetune_steps
         self.train_steps = args.train_steps
+        self.global_step = 0  # tracks total steps
 
+        self.model = model
+        self.teacher_model = teacher_model 
         self.l0_module = l0_module
+
+        self.optimizer = None
         self.l0_optimizer = None
         self.lagrangian_optimizer = None
-        self.lr_scheduler = None
-        self.model = model
-        self.teacher_model = teacher_model    
+        self.lr_scheduler = None   
 
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -166,7 +169,7 @@ class CoFiTrainer:
                 l0_params = [{
                     "params": [p for n, p in self.l0_module.named_parameters() if "lambda" not in n],
                     "weight_decay": 0.0,
-                    "lr": self.additional_args.reg_learning_rate
+                    "lr": self.args.reg_learning_rate
                 }]
                 #log_params(l0_params, "l0 reg params")
                 self.l0_optimizer = AdamW(l0_params,
@@ -177,7 +180,7 @@ class CoFiTrainer:
                 lagrangian_params = [{
                     "params": [p for n, p in self.l0_module.named_parameters() if "lambda" in n],
                     "weight_decay": 0.0,
-                    "lr": -self.additional_args.reg_learning_rate
+                    "lr": -self.args.reg_learning_rate
                 }]
                 #log_params(lagrangian_params, "l0 reg lagrangian params")
                 self.lagrangian_optimizer = AdamW(lagrangian_params,
@@ -186,12 +189,12 @@ class CoFiTrainer:
                                                     eps=self.args.adam_epsilon)
 
         if self.lr_scheduler is None:
-            if self.additional_args.scheduler_type == "linear":
-                self.lr_scheduler = get_linear_schedule_with_warmup(
-                    self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
-                )
-            else:
-                self.lr_scheduler = None
+            # scheduler_type == "linear"
+            self.lr_scheduler = get_linear_schedule_with_warmup(
+                self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
+            )
+            #else:
+                #self.lr_scheduler = None
 
 
     def fill_inputs_with_zs(self, zs, inputs):
@@ -273,7 +276,7 @@ class CoFiTrainer:
                     self.log(logs)
 
 
-    def evaluate(self, eval_dataset: Optional[Dataset] = None) -> Tuple[Dict[str, float], List]:
+    def evaluate(self, eval_dataset=None):
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         output = self.prediction_loop(
             eval_dataloader, description="Evaluation")
@@ -317,7 +320,7 @@ class CoFiTrainer:
         return output.metrics
     
 
-    def prediction_loop(self, dataloader: DataLoader, description: str, prediction_loss_only: Optional[bool] = None) -> PredictionOutput:
+    def prediction_loop(self, dataloader, description, prediction_loss_only=None):
         prediction_loss_only = (
             prediction_loss_only if prediction_loss_only is not None else self.args.prediction_loss_only
         )
@@ -445,7 +448,7 @@ class CoFiTrainer:
             batch_size=args.train_batch_size,
         )
         eval_dataloader = DataLoader(
-            self.test_dataset,
+            self.eval_dataset,
             collate_fn=self.data_collator,
             batch_size=args.eval_batch_size,
         )
@@ -465,21 +468,19 @@ class CoFiTrainer:
         # any instruction using your training dataloader length,
         # for instance if you need the number of total training steps
         # to create a learning rate scheduler) should go after the call to prepare()
-        model, self.optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = accelerator.prepare(
-            model, self.optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
+        # works with none teacher
+        model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = accelerator.prepare(
+            model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
-
-        global_step = 0  # tracks total steps
         total_loss = 0  # total loss before each eval
-
 
         accelerator.log({
             "train_batch_size": args.train_batch_size,
             "eval_batch_size": args.eval_batch_size,
             "gpus": accelerator.state.num_processes
             },
-            step=global_step + 1,
+            step=self.global_step + 1,
         )
 
         # load from checkpoint
@@ -492,7 +493,7 @@ class CoFiTrainer:
             # we need to skip steps until we reach the current step
             # ../checkpoint-123 -> int(123)
             steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
-            global_step = steps_completed
+            self.global_step = steps_completed
             if args.skip_steps:
                 train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
 
@@ -533,9 +534,9 @@ class CoFiTrainer:
 
         # Training
 
-        tr_loss = torch.tensor(0.0).to(self.args.device)
-        reg_loss = torch.tensor(0.0).to(self.args.device)
-        lag_loss = torch.tensor(0.0).to(self.args.device)
+        #tr_loss = torch.tensor(0.0).to(self.args.device)
+        #reg_loss = torch.tensor(0.0).to(self.args.device)
+        #lag_loss = torch.tensor(0.0).to(self.args.device)
 
         model.zero_grad()
         if self.l0_module is not None:
@@ -548,7 +549,7 @@ class CoFiTrainer:
             self.lagrangian_optimizer.zero_grad()
 
         # main progress bar
-        progress_bar = tqdm(range(global_step, self.train_steps), disable=not accelerator.is_main_process, position=0)
+        progress_bar = tqdm(range(self.global_step, self.train_steps), disable=not accelerator.is_main_process, position=0)
         # eval bar
         eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
@@ -558,15 +559,18 @@ class CoFiTrainer:
 
             for batch in train_dataloader:
 
-                print(batch)
-                quit()
+                print('inputs')
+                print(batch['input_features'].shape)
+                print(batch['attention_mask'].shape)
+                print(batch['labels'].shape)
 
-                if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
+                #if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
+                if self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
                     self.start_prune = True
 
                     self.optimizer = None
                     self.lr_scheduler = None
-                    lr_steps = self.t_total - self.global_step
+                    lr_steps = self.train_steps - self.global_step
 
                     # reset the optimizer
                     self.create_optimizer_and_scheduler(lr_steps, self.start_prune)
@@ -574,6 +578,16 @@ class CoFiTrainer:
 
                 if self.start_prune:
                     zs = self.l0_module.forward(training=True) # get the zs
+
+                    print('zs')
+                    print(zs["hidden_z"].shape)
+                    print(zs["head_z"].shape)
+                    print(zs["mha_z"].shape)
+                    print(zs["ffn_dim_z"].shape)
+                    print(zs["ffn_z"].shape)
+        
+                    quit()
+
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
                 loss_terms = self.train_step(model, batch, accelerator)
@@ -582,7 +596,7 @@ class CoFiTrainer:
                 progress_bar.update(1)
 
 
-                if (global_step + 1) % args.eval_steps == 0:
+                if (self.global_step + 1) % args.eval_steps == 0:
                     model.eval()
                     val_loss = 0
                     for batch in eval_dataloader:
@@ -627,21 +641,21 @@ class CoFiTrainer:
 
                     cer_result = metric.compute()
                     # add wer for hindi
-                    accelerator.print('step : {}, cer : {}'.format(global_step + 1, cer_result))
+                    accelerator.print('step : {}, cer : {}'.format(self.global_step + 1, cer_result))
                     accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
                     accelerator.log({
                         "cer": cer_result,
                         "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
                         "val_loss": val_loss / len(eval_dataloader)
                     },
-                    step=global_step + 1,
+                    step=self.global_step + 1,
                     )
 
                     # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
                     # saved to folders named `checkpoint-{global_step}`
                     # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
                     # if mixed precision was used, will also save a "scalar.bin" file
-                    output_dir = f"checkpoint-{global_step + 1}"
+                    output_dir = f"checkpoint-{self.global_step + 1}"
                     if args.output_dir is not None:
                         output_dir = os.path.join(args.output_dir, output_dir)
                         accelerator.save_state(output_dir)
@@ -656,9 +670,9 @@ class CoFiTrainer:
                     model.train()
                     total_loss = 0
 
-                global_step += 1
+                self.global_step += 1
 
-                if global_step >= self.train_steps : return
+                if self.global_step >= self.train_steps : return
 
 
 
@@ -669,11 +683,14 @@ def run():
 
     parser = argparse.ArgumentParser()
 
+    # seed
     parser.add_argument(
         "--seed",
         default=42,
         type=int,
     )
+
+    # whisper args
     parser.add_argument(
         "--model_name_or_path",
         default="openai/whisper-small",
@@ -817,7 +834,7 @@ def run():
         type=int,
     )
     parser.add_argument(
-        "--lr",
+        "--learning_rate",
         default=1e-5,
         type=float,
     )
@@ -834,6 +851,16 @@ def run():
         help="Epsilon for Adam optimizer."
     )
     parser.add_argument(
+        "--adam_beta1",
+        default=0.9,
+        type=float,
+    )
+    parser.add_argument(
+        "--adam_beta2",
+        default=0.999,
+        type=float,
+    )
+    parser.add_argument(
         "--mixed_precision",
         default='fp16',
         type=str,
@@ -848,6 +875,8 @@ def run():
         type=int,
         default=1
     )
+
+    # cofi args
     parser.add_argument(
         '--droprate_init',
         type=float,
@@ -867,6 +896,12 @@ def run():
         '--prepruning_finetune_steps',
         type=int,
         default=100,
+    )
+    parser.add_argument(
+        '--reg_learning_rate',
+        type=float,
+        default=0.1,
+        help="learning rate for regularization."
     )
     parser.add_argument(
         '--lagrangian_warmup_epochs',
@@ -912,7 +947,7 @@ def run():
     )
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.lr,
+        "lr": args.learning_rate,
         "train_steps": args.train_steps,
         "seed": args.seed,
         "train_batch_size": args.train_batch_size,
@@ -952,6 +987,7 @@ def run():
         model.model.encoder.gradient_checkpointing = False
 
     # teacher #
+    teacher_model = None
 
     # distil setup #
 
@@ -1058,7 +1094,7 @@ def run():
         tokenizer=tokenizer,
         processor=processor,
         l0_module=l0_module,
-        #teacher_model=teacher_model
+        teacher_model=teacher_model,
         data_collator=data_collator,
         train_dataset=common_voice['train'],
         eval_dataset= common_voice['test'],
