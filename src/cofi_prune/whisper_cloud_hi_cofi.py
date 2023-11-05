@@ -573,9 +573,10 @@ class CoFiTrainer:
                     # zs
                     # hidden, en_head, en_mha, en_ffn_dim, en_ffn, de_head, de_mha, de_ffn_dim, de_ffn
                     zs = self.l0_module.forward(training=True) # get the zs
-                    # return?
+                    # modifies batch in place
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
+                # here #
                 loss_terms = self.train_step(model, batch, accelerator)
 
 
