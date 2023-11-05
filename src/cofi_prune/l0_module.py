@@ -29,40 +29,50 @@ class L0Module(Module):
         super(L0Module, self).__init__()
 
         self.types = [
-            "hidden", 
-            "head",
-            "mha",
-            "ffn_dim",
-            "ffn",
+            "hidden",  # common for encoder and decoder
+            "en_head",
+            "en_mha",
+            "en_ffn_dim",
+            "en_ffn",
+            "de_head",
+            "de_mha",
+            "de_ffn_dim",
+            "de_ffn",
         ]
         
         # model parameters
         self.vocab_size = config.vocab_size
         self.d_model = config.d_model  # hidden_size
-        self.encoder_layers = config.encoder_layers
+
+        # layers
+        self.num_hidden_layers_en = config.encoder_layers
+        self.num_hidden_layers_de  = config.decoder_layers
+        # heads
         self.encoder_attention_heads = config.encoder_attention_heads  # num_attention_heads
-        self.decoder_layers = config.decoder_layers
         self.decoder_attention_heads = config.decoder_attention_heads  # num_attention_heads
+        # ffn dims
         self.decoder_ffn_dim = config.decoder_ffn_dim  # intermediate_size
         self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size
-        self.num_hidden_layers = config.encoder_layers + config.decoder_layers  # encoder + decoder layers
+        # number of ffns
         self.ffn_num_per_layer = 1  # linear -> activation -> linear
+        # head dims
         self.dim_per_encoder_head = self.d_model // self.encoder_attention_heads
         self.dim_per_decoder_head = self.d_model // self.decoder_attention_heads
 
-        # same number of heads, head size for encoder, decoder 
+        # same number of heads, head size for encoder, decoder (change if needed)
         # 4 self attention weight matrices. 4 weights, 3 biases
         # no bias for self_attn.k_proj
         self.params_per_head_layer = self.d_model * self.d_model * 4  + self.d_model * 3
-        self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads
+        self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads  # same for decoder
         
-        # same intermediate size for encoder, decoder
+        # same intermediate size for encoder, decoder (change if needed)
         # weights, biases for each ffn layer
+        # same for encoder and decoder
         self.params_per_ffn_layer = self.d_model * config.encoder_ffn_dim * 2  + self.d_model + config.encoder_ffn_dim 
-        self.params_per_encoder_ffn_dim = self.params_per_ffn_layer // self.encoder_ffn_dim
+        self.params_per_ffn_dim = self.params_per_ffn_layer // self.encoder_ffn_dim
 
         # we ignore the parameters in normalization layers (it takes a very small amount)
-        self.full_model_size = (self.params_per_head_layer + self.params_per_ffn_layer) * self.num_hidden_layers
+        self.full_model_size = (self.params_per_head_layer + self.params_per_ffn_layer) * (self.num_hidden_layers_en + self.num_hidden_layers_de)
         self.prunable_model_size = 0 
 
         self.temperature = temperature
@@ -130,47 +140,83 @@ class L0Module(Module):
 
 
     def initialize_head(self, add_prunable_model_size=True):
-        self.head_loga = self.initialize_parameters(self.encoder_attention_heads, self.num_hidden_layers)
-        self.reset_loga(self.head_loga, mean=10)
-        self.add_one_module(self.head_loga, type="head", 
+        # loga
+        self.en_head_loga = self.initialize_parameters(self.encoder_attention_heads, self.num_hidden_layers_en)
+        self.de_head_loga = self.initialize_parameters(self.decoder_attention_heads, self.num_hidden_layers_de)
+        self.reset_loga(self.en_head_loga, mean=10)
+        self.reset_loga(self.de_head_loga, mean=10)
+        # encoder
+        self.add_one_module(self.head_loga, type="en_head", 
                             parameter_per_dim=self.params_per_head,
                             #  both encoder and decoder attentions heads
-                            size=self.encoder_attention_heads+self.decoder_attention_heads,
+                            size=self.encoder_attention_heads,
                             # how is size and shape used?
-                            shape=[self.num_hidden_layers, 1, self.encoder_attention_heads, 1, 1])
+                            shape=[self.num_hidden_layers_en, 1, self.encoder_attention_heads, 1, 1])
+        # decoder
+        self.add_one_module(self.head_loga, type="de_head", 
+                            parameter_per_dim=self.params_per_head,
+                            #  both encoder and decoder attentions heads
+                            size=self.decoder_attention_heads,
+                            # how is size and shape used?
+                            shape=[self.num_hidden_layers_de, 1, self.decoder_attention_heads, 1, 1])
+        # why if?
         if add_prunable_model_size:
-            self.prunable_model_size += self.params_per_head * self.num_hidden_layers * (self.encoder_attention_heads + self.decoder_attention_heads)
+            self.prunable_model_size += self.params_per_head * (self.num_hidden_layers_en + self.num_hidden_layers_de) * (self.encoder_attention_heads + self.decoder_attention_heads)
         #logger.info(f"Initialized heads. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_mha(self):
-        n_layer = self.num_hidden_layers
-        self.headlayer_loga = self.initialize_parameters(n_layer)
-        self.reset_loga(self.headlayer_loga, mean=10)
-        self.add_one_module(self.headlayer_loga, type="mha", 
-                            parameter_per_dim=self.params_per_head * (self.encoder_attention_heads + self.decoder_attention_heads), size=1,
-                            shape=[n_layer])
+        n_layer_en = self.num_hidden_layers_en
+        n_layer_de = self.num_hidden_layers_de
+        self.en_headlayer_loga = self.initialize_parameters(n_layer_en)
+        self.de_headlayer_loga = self.initialize_parameters(n_layer_de)
+        self.reset_loga(self.en_headlayer_loga, mean=10)
+        self.reset_loga(self.de_headlayer_loga, mean=10)
+        # encoder
+        self.add_one_module(self.headlayer_loga, type="en_mha", 
+                            parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
+                            shape=[n_layer_en])
+        # decoder
+        self.add_one_module(self.headlayer_loga, type="de_mha", 
+                            parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
+                            shape=[n_layer_de])
+        # change in prunable_model_size?
         #logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_ffn_dim(self):
-        self.int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers)
-
-        self.add_one_module(self.int_loga, type="ffn_dim", 
-                            parameter_per_dim=self.params_per_encoder_ffn_dim, size=self.encoder_ffn_dim,
-                            shape=[self.num_hidden_layers, 1, 1, self.encoder_ffn_dim])
-        self.prunable_model_size += self.params_per_ffn_layer * self.num_hidden_layers
-        self.reset_loga(self.int_loga)
+        self.en_int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers_en)
+        self.de_int_loga = self.initialize_parameters(self.decoder_ffn_dim, self.num_hidden_layers_de)
+        # encoder
+        self.add_one_module(self.int_loga, type="en_ffn_dim", 
+                            parameter_per_dim=self.params_per_ffn_dim, size=self.encoder_ffn_dim,
+                            shape=[self.num_hidden_layers_en, 1, 1, self.encoder_ffn_dim])
+        # decoder
+        self.add_one_module(self.int_loga, type="de_ffn_dim", 
+                            parameter_per_dim=self.params_per_ffn_dim, size=self.decoder_ffn_dim,
+                            shape=[self.num_hidden_layers_de, 1, 1, self.decoder_ffn_dim])
+        self.prunable_model_size += self.params_per_ffn_layer * (self.num_hidden_layers_en + self.num_hidden_layers_de)
+        self.reset_loga(self.en_int_loga)
+        self.reset_loga(self.de_int_loga)
         #logger.info(f"Initialized ffn dim. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_ffn(self):
-        n_layer = self.num_hidden_layers
-        self.intlayer_loga = self.initialize_parameters(n_layer)
-        self.add_one_module(self.intlayer_loga, type="ffn", 
+        n_layer_en = self.num_hidden_layers_en
+        n_layer_de = self.num_hidden_layers_de
+        self.en_intlayer_loga = self.initialize_parameters(n_layer_en)
+        self.de_intlayer_loga = self.initialize_parameters(n_layer_de)
+        # encoder
+        self.add_one_module(self.intlayer_loga, type="en_ffn", 
                             parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
-                            shape=[n_layer])
-        self.reset_loga(self.intlayer_loga, mean=10)
+                            shape=[n_layer_en])
+        # decoder
+        self.add_one_module(self.intlayer_loga, type="de_ffn", 
+                            parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
+                            shape=[n_layer_de])
+        self.reset_loga(self.en_intlayer_loga, mean=10)
+        self.reset_loga(self.de_intlayer_loga, mean=10)
+        # change in prunable_model_size?
         #logger.info(f"Initialized ffn. Prunable_model_size = {self.prunable_model_size}")
 
 
@@ -179,7 +225,7 @@ class L0Module(Module):
             mean = math.log(1 - self.droprate_init) - math.log(self.droprate_init)
         tensor.data.normal_(mean, 1e-2)
 
-
+    # change #
     def reset_qz_logas(self):
         for key in self.z_logas:
             if key in ["head_layer", "ffn", "head"]:
@@ -211,6 +257,7 @@ class L0Module(Module):
         return torch.sum(1 - self.cdf_qz(0, loga)) * parameter_size
 
 
+    # change #
     def transform_scores_for_head(self):
 
         all_head_score = 1 - self.cdf_qz(0, self.headlayer_loga)
@@ -223,6 +270,7 @@ class L0Module(Module):
         return all_head_score, head_score
 
 
+    # change #
     def get_num_parameters_for_ffn(self):
         intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga) # 12
         int_score = 1 - self.cdf_qz(0, self.int_loga) # 12 * 3072
@@ -232,6 +280,7 @@ class L0Module(Module):
         return num_parameters
 
 
+    # change #
     def get_num_parameters_and_constraint_for_hidden(self): #! calculate the current parsity
         num_parameters = 0
        
@@ -256,6 +305,7 @@ class L0Module(Module):
         return num_parameters
 
 
+    # change #
     def get_num_parameters_and_constraint(self):
         num_parameters = 0
 
@@ -290,6 +340,7 @@ class L0Module(Module):
                 + self.lambda_2 * (expected_sparsity - target_sparsity) ** 2 #! where is the lambda 1 and lambda 2 from
         )
         return lagrangian_loss, expected_sparsity, target_sparsity
+
 
     def get_eps(self, size):
         """Uniform random numbers for the concrete distribution"""
@@ -336,6 +387,7 @@ class L0Module(Module):
         return numpified_zs
 
 
+    # change #
     def calculate_model_size(self, zs):
         numpified_zs = self.get_z_from_zs(zs)
         hidden_z = numpified_zs["hidden"]
@@ -377,6 +429,7 @@ class L0Module(Module):
         
 
     # called after init and set_lagrangian_warmup_steps
+    # change #
     def forward(self, training=True,):
         zs = {f"{type}_z": [] for type in self.types}
 
