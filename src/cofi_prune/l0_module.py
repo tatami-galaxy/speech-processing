@@ -146,14 +146,14 @@ class L0Module(Module):
         self.reset_loga(self.en_head_loga, mean=10)
         self.reset_loga(self.de_head_loga, mean=10)
         # encoder
-        self.add_one_module(self.head_loga, type="en_head", 
+        self.add_one_module(self.en_head_loga, type="en_head", 
                             parameter_per_dim=self.params_per_head,
                             #  both encoder and decoder attentions heads
                             size=self.encoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_en, 1, self.encoder_attention_heads, 1, 1])
         # decoder
-        self.add_one_module(self.head_loga, type="de_head", 
+        self.add_one_module(self.de_head_loga, type="de_head", 
                             parameter_per_dim=self.params_per_head,
                             #  both encoder and decoder attentions heads
                             size=self.decoder_attention_heads,
@@ -173,11 +173,11 @@ class L0Module(Module):
         self.reset_loga(self.en_headlayer_loga, mean=10)
         self.reset_loga(self.de_headlayer_loga, mean=10)
         # encoder
-        self.add_one_module(self.headlayer_loga, type="en_mha", 
+        self.add_one_module(self.en_headlayer_loga, type="en_mha", 
                             parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
                             shape=[n_layer_en])
         # decoder
-        self.add_one_module(self.headlayer_loga, type="de_mha", 
+        self.add_one_module(self.de_headlayer_loga, type="de_mha", 
                             parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
                             shape=[n_layer_de])
         # change in prunable_model_size?
@@ -188,11 +188,11 @@ class L0Module(Module):
         self.en_int_loga = self.initialize_parameters(self.encoder_ffn_dim, self.num_hidden_layers_en)
         self.de_int_loga = self.initialize_parameters(self.decoder_ffn_dim, self.num_hidden_layers_de)
         # encoder
-        self.add_one_module(self.int_loga, type="en_ffn_dim", 
+        self.add_one_module(self.en_int_loga, type="en_ffn_dim", 
                             parameter_per_dim=self.params_per_ffn_dim, size=self.encoder_ffn_dim,
                             shape=[self.num_hidden_layers_en, 1, 1, self.encoder_ffn_dim])
         # decoder
-        self.add_one_module(self.int_loga, type="de_ffn_dim", 
+        self.add_one_module(self.de_int_loga, type="de_ffn_dim", 
                             parameter_per_dim=self.params_per_ffn_dim, size=self.decoder_ffn_dim,
                             shape=[self.num_hidden_layers_de, 1, 1, self.decoder_ffn_dim])
         self.prunable_model_size += self.params_per_ffn_layer * (self.num_hidden_layers_en + self.num_hidden_layers_de)
@@ -207,11 +207,11 @@ class L0Module(Module):
         self.en_intlayer_loga = self.initialize_parameters(n_layer_en)
         self.de_intlayer_loga = self.initialize_parameters(n_layer_de)
         # encoder
-        self.add_one_module(self.intlayer_loga, type="en_ffn", 
+        self.add_one_module(self.en_intlayer_loga, type="en_ffn", 
                             parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
                             shape=[n_layer_en])
         # decoder
-        self.add_one_module(self.intlayer_loga, type="de_ffn", 
+        self.add_one_module(self.de_intlayer_loga, type="de_ffn", 
                             parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
                             shape=[n_layer_de])
         self.reset_loga(self.en_intlayer_loga, mean=10)
@@ -429,7 +429,6 @@ class L0Module(Module):
         
 
     # called after init and set_lagrangian_warmup_steps
-    # change #
     def forward(self, training=True,):
         zs = {f"{type}_z": [] for type in self.types}
 
@@ -438,6 +437,7 @@ class L0Module(Module):
                 loga = self.z_logas[type]
                 z = self._sample_z(loga)
                 zs[f"{type}_z"] = z.reshape(self.shapes[type])
+        ## change ##
         else:
             for i, type in enumerate(self.types):
                 if type != "hidden": # hidden is not a per layer sample

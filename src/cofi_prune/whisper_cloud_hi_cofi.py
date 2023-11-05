@@ -557,12 +557,6 @@ class CoFiTrainer:
             model.train()
 
             for batch in train_dataloader:
-
-                print('inputs')
-                print(batch['input_features'].shape)
-                print(batch['attention_mask'].shape)
-                print(batch['labels'].shape)
-
                 #if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
                 if self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
                     self.start_prune = True
@@ -576,17 +570,10 @@ class CoFiTrainer:
                     accelerator.print("starting l0 regularization")
 
                 if self.start_prune:
+                    # zs
+                    # hidden, en_head, en_mha, en_ffn_dim, en_ffn, de_head, de_mha, de_ffn_dim, de_ffn
                     zs = self.l0_module.forward(training=True) # get the zs
-
-                    print('zs')
-                    print(zs["hidden_z"].shape)
-                    print(zs["head_z"].shape)
-                    print(zs["mha_z"].shape)
-                    print(zs["ffn_dim_z"].shape)
-                    print(zs["ffn_z"].shape)
-        
-                    quit()
-
+                    # return?
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
                 loss_terms = self.train_step(model, batch, accelerator)
