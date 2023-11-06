@@ -233,7 +233,7 @@ class L0Module(Module):
             else:
                 self.reset_loga(self.z_logas[key])
 
-
+    
     def constrain_parameters(self):
         def _constrain(tensor):
             tensor.data.clamp_(min=math.log(1e-2), max=math.log(1e2))

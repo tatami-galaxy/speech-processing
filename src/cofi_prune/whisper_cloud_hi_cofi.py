@@ -109,6 +109,7 @@ class CoFiTrainer:
             processor = None,
             l0_module=None,
             teacher_model=None,
+            accelerator=None,
             data_collator = None,
             train_dataset = None,
             eval_dataset = None,
@@ -126,6 +127,8 @@ class CoFiTrainer:
         self.model = model
         self.teacher_model = teacher_model 
         self.l0_module = l0_module
+
+        self.accelerator = accelerator
 
         self.optimizer = None
         self.l0_optimizer = None
@@ -201,38 +204,50 @@ class CoFiTrainer:
             inputs[key] = zs[key]
 
 
-    def train_step(self, model, inputs, accelerator):
+    def train_step(self, model, inputs):
 
-        with accelerator.accumulate(model):
-                outputs = model(**batch)
+        model.train()
+        if self.l0_module is not None:
+            self.l0_module.train()
+
+        with self.accelerator.accumulate(model):
+                
+                # add distill loss here
+                distill_loss = None
+                distill_ce_loss = None
+                if self.teacher_model is not None:
+                    with torch.no_grad():
+                        pass
+                else:
+                    outputs = model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
-                total_loss += loss.detach().item() # for tensorboard 
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
 
-                tr_loss_step = loss_terms["loss"]
-                lag_loss_step = loss_terms["lagrangian_loss"]
+                lagrangian_loss = None
+                if self.start_prune:
+                    # lagrangian_loss, expected_sparsity, target_sparsity
+                    lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
+                    loss += lagrangian_loss
 
-                tr_loss += tr_loss_step
-                lag_loss += lag_loss_step if lag_loss_step is not None else 0.0
+                # backward
+                self.accelerator.backward(loss)
 
-                torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), self.args.max_grad_norm)
+                # clip grad norm
+                if self.accelerator.sync_gradients:
+                    self.accelerator.clip_grad_norm_(model.parameters(), self.args.max_grad_norm)
 
+                # step
                 self.optimizer.step()
-
                 if self.l0_module is not None and self.l0_optimizer is not None:
                     self.l0_optimizer.step()
                     self.lagrangian_optimizer.step()
-
                 if self.lr_scheduler is not None:
                     self.lr_scheduler.step()
 
+                # l0 constrain_parameters
                 if self.l0_module is not None:
                     self.l0_module.constrain_parameters()
 
+                # zero grad
                 model.zero_grad()
                 if self.l0_module is not None:
                     self.l0_module.zero_grad()
@@ -242,41 +257,11 @@ class CoFiTrainer:
                 if self.lagrangian_optimizer is not None:
                     self.lagrangian_optimizer.zero_grad()
 
-                self.global_step += 1
-                self.epoch = epoch + (step + 1) / len(epoch_iterator)
-
-                if (self.args.logging_steps > 0 and self.global_step % self.args.logging_steps == 0) or (
-                        self.global_step == 1 and self.args.logging_first_step
-                ):
-                    logs: Dict[str, float] = {}
-                    tr_loss_scalar = tr_loss.item()
-                    reg_loss_scalar = reg_loss.item()
-                    lag_loss_scalar = lag_loss.item()
-
-                    logs["loss"] = (
-                        tr_loss_scalar - logging_loss_scalar) / self.args.logging_steps
-                    logs["reg_loss"] = (
-                        reg_loss_scalar - logging_reg_loss_scalar) / self.args.logging_steps
-                    logs["lag_loss"] = (
-                        lag_loss_scalar - logging_lag_loss_scalar) / self.args.logging_steps
-
-                    # backward compatibility for pytorch schedulers
-                    if self.lr_scheduler is not None:
-                        lr = self.lr_scheduler.get_last_lr()[0] if version.parse(
-                            torch.__version__) >= version.parse("1.4") else self.lr_scheduler.get_lr()[0]
-                    else:
-                        lr = self.args.learning_rate
-
-                    logs["learning_rate"] = lr
-                    logging_loss_scalar = tr_loss_scalar
-                    logging_reg_loss_scalar = reg_loss_scalar
-                    logging_lag_loss_scalar = lag_loss_scalar
-
-                    self.log(logs)
+                return loss.detach(), lagrangian_loss.detach()  # other losses
 
 
-    def evaluate(self, eval_dataset=None):
-        eval_dataloader = self.get_eval_dataloader(eval_dataset)
+    def evaluate(self, eval_dataloader):
+
         output = self.prediction_loop(
             eval_dataloader, description="Evaluation")
 
@@ -437,7 +422,7 @@ class CoFiTrainer:
         return PredictionOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics)
 
 
-    def train(self, args, accelerator):
+    def train(self, args):
 
         # data loaders
         train_dataloader = DataLoader(
@@ -472,12 +457,10 @@ class CoFiTrainer:
             model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
-        total_loss = 0  # total loss before each eval
-
-        accelerator.log({
+        self.accelerator.log({
             "train_batch_size": args.train_batch_size,
             "eval_batch_size": args.eval_batch_size,
-            "gpus": accelerator.state.num_processes
+            "gpus": self.accelerator.state.num_processes
             },
             step=self.global_step + 1,
         )
@@ -486,15 +469,15 @@ class CoFiTrainer:
         ## loading checkpoint changing CER. val loss behaviour same. not sure why. ##
         # check if checkpoint directory passed in
         if args.resume_from_checkpoint is not None:
-            accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
-            accelerator.load_state(args.resume_from_checkpoint)
+            self.accelerator.print(f"resumed from checkpoint: {args.resume_from_checkpoint}")
+            self.accelerator.load_state(args.resume_from_checkpoint)
             # if resumed from checkpoint
             # we need to skip steps until we reach the current step
             # ../checkpoint-123 -> int(123)
             steps_completed = int(args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
             self.global_step = steps_completed
             if args.skip_steps:
-                train_dataloader = accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
+                train_dataloader = self.accelerator.skip_first_batches(train_dataloader, steps_completed) # consider dataset len
 
 
 
@@ -548,13 +531,14 @@ class CoFiTrainer:
             self.lagrangian_optimizer.zero_grad()
 
         # main progress bar
-        progress_bar = tqdm(range(self.global_step, self.train_steps), disable=not accelerator.is_main_process, position=0)
+        progress_bar = tqdm(range(self.global_step, self.train_steps), disable=not self.accelerator.is_main_process, position=0)
         # eval bar
         eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
-        while True:
+        tr_loss = 0  # train loss before each eval
+        lag_loss = 0  # lagrangian loss before each eval
 
-            model.train()
+        while True:
 
             for batch in train_dataloader:
                 #if self.prepruning_finetune_steps > 0 and self.global_step == self.prepruning_finetune_steps: #! before pruning, run 12272 steps
@@ -567,7 +551,7 @@ class CoFiTrainer:
 
                     # reset the optimizer
                     self.create_optimizer_and_scheduler(lr_steps, self.start_prune)
-                    accelerator.print("starting l0 regularization")
+                    self.accelerator.print("starting l0 regularization")
 
                 if self.start_prune:
                     # zs
@@ -576,14 +560,15 @@ class CoFiTrainer:
                     # modifies batch in place
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
-                # here #
-                loss_terms = self.train_step(model, batch, accelerator)
-
+                # train step
+                loss_terms = self.train_step(model, batch)
 
                 progress_bar.update(1)
 
 
                 if (self.global_step + 1) % args.eval_steps == 0:
+
+                    self.evaluate(eval_dataloader)
                     model.eval()
                     val_loss = 0
                     for batch in eval_dataloader:
@@ -899,6 +884,11 @@ def run():
         "--start_prune",
         action="store_true",
     )
+    parser.add_argument(
+        '--max_grad_norm ',
+        type=float,
+        default=1.0,
+    )
 
 
     # parse args
@@ -1082,6 +1072,7 @@ def run():
         processor=processor,
         l0_module=l0_module,
         teacher_model=teacher_model,
+        accelerator=accelerator,
         data_collator=data_collator,
         train_dataset=common_voice['train'],
         eval_dataset= common_voice['test'],
@@ -1089,7 +1080,7 @@ def run():
     )
 
     # train function
-    cofi_trainer.train(args, accelerator)
+    cofi_trainer.train(args)
 
     # end logging
     accelerator.end_training()
