@@ -16,6 +16,7 @@
 
 import math
 from typing import Optional, Tuple, Union
+import warnings
 
 import numpy as np
 import torch
@@ -797,6 +798,12 @@ class SparseWhisperEncoderLayer(nn.Module):
         attention_mask: torch.Tensor,
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
+        # cofi encoder layer args
+        hidden_z_l = None,
+        en_head_z_l = None,
+        en_mha_z_l = None,
+        en_ffn_dim_z_l = None,
+        en_ffn_z_l = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -1447,8 +1454,8 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         hidden_z = None,
         en_head_z = None,
         en_mha_z = None,
-        en_ffn_dim = None,
-        en_ffn = None,
+        en_ffn_dim_z = None,
+        en_ffn_z = None,
     ):
         r"""
         Args:
@@ -1498,6 +1505,8 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                 len(self.layers)
             ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
+        print(hidden_z, en_head_z[0], en_mha_z[0], en_ffn_dim_z[0], en_ffn_z[0])
+
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
@@ -1512,7 +1521,9 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                 layer_outputs = (None, None)
             else:
                 if self.gradient_checkpointing and self.training:
-
+                    
+                    raise ValueError("SparseWhisperForConditionalGeneration does not support gradient checkpointing. Disable and run again")
+                
                     def create_custom_forward(module):
                         def custom_forward(*inputs):
                             return module(*inputs, output_attentions)
@@ -1531,6 +1542,12 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                         None,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
+                        # cofi encoder layer args
+                        hidden_z=hidden_z,
+                        en_head_z=en_head_z[idx],
+                        en_mha_z=en_mha_z[idx],
+                        en_ffn_dim_z=en_ffn_dim_z[idx],
+                        en_ffn_z=en_ffn_z[idx],
                     )
 
                 hidden_states = layer_outputs[0]
@@ -2333,12 +2350,12 @@ class SparseWhisperModel(WhisperPreTrainedModel):
         hidden_z = None,
         en_head_z = None,
         en_mha_z = None,
-        en_ffn_dim = None,
-        en_ffn = None,
-        de_head = None,
-        de_mha = None,
-        de_ffn_dim = None,
-        de_ffn = None,
+        en_ffn_dim_z = None,
+        en_ffn_z = None,
+        de_head_z = None,
+        de_mha_z = None,
+        de_ffn_dim_z = None,
+        de_ffn_z = None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqModelOutput]:
         r"""
         Returns:
@@ -2376,11 +2393,11 @@ class SparseWhisperModel(WhisperPreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 # cofi encoder args
-                hidden_z = None,
-                en_head_z = None,
-                en_mha_z = None,
-                en_ffn_dim = None,
-                en_ffn = None,
+                hidden_z=hidden_z,
+                en_head_z=en_head_z,
+                en_mha_z=en_mha_z,
+                en_ffn_dim_z=en_ffn_dim_z,
+                en_ffn_z=en_ffn_z,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
@@ -2404,11 +2421,11 @@ class SparseWhisperModel(WhisperPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             # cofi decoder args
-            hidden_z = None,
-            de_head = None,
-            de_mha = None,
-            de_ffn_dim = None,
-            de_ffn = None,
+            hidden_z=hidden_z,
+            de_head_z=de_head_z,
+            de_mha_z=de_mha_z,
+            de_ffn_dim_z=de_ffn_dim_z,
+            de_ffn_z=de_ffn_z,
         )
 
         if not return_dict:
@@ -2909,6 +2926,9 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
         self.model = SparseWhisperModel(config)
         self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)  # prune?
 
+        # gradient checkpointing not supported
+        warnings.warn("SparseWhisperForConditionalGeneration does not support gradient checkpointing")
+
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -2934,6 +2954,7 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
         """
         self.model.encoder._freeze_parameters()
 
+
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -2957,12 +2978,12 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
         hidden_z = None,
         en_head_z = None,
         en_mha_z = None,
-        en_ffn_dim = None,
-        en_ffn = None,
-        de_head = None,
-        de_mha = None,
-        de_ffn_dim = None,
-        de_ffn = None,
+        en_ffn_dim_z = None,
+        en_ffn_z = None,
+        de_head_z = None,
+        de_mha_z = None,
+        de_ffn_dim_z = None,
+        de_ffn_z = None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -3017,15 +3038,15 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             # cofi model args
-            hidden_z = None,
-            en_head_z = None,
-            en_mha_z = None,
-            en_ffn_dim = None,
-            en_ffn = None,
-            de_head = None,
-            de_mha = None,
-            de_ffn_dim = None,
-            de_ffn = None,
+            hidden_z=hidden_z,
+            en_head_z=en_head_z,
+            en_mha_z=en_mha_z,
+            en_ffn_dim_z=en_ffn_dim_z,
+            en_ffn_z=en_ffn_z,
+            de_head_z=de_head_z,
+            de_mha_z=de_mha_z,
+            de_ffn_dim_z=de_ffn_dim_z,
+            de_ffn_z=de_ffn_z,
         )
         lm_logits = self.proj_out(outputs[0])
 
