@@ -324,7 +324,6 @@ class SparseLayerNorm(torch.nn.LayerNorm):
             output = F.layer_norm(
                 input, self.normalized_shape, self.weight, self.bias, self.eps)
         return output
-    
 
 
 class WhisperPositionalEmbedding(nn.Embedding):
@@ -333,7 +332,6 @@ class WhisperPositionalEmbedding(nn.Embedding):
 
     def forward(self, input_ids, past_key_values_length=0):
         return self.weight[past_key_values_length : past_key_values_length + input_ids.shape[1]]
-
 
 
 ## fix this ##
