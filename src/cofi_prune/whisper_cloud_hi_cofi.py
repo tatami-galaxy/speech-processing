@@ -207,6 +207,7 @@ class CoFiTrainer:
     def train_step(self, model, inputs):
 
         model.train()
+
         if self.l0_module is not None:
             self.l0_module.train()
 
@@ -453,7 +454,7 @@ class CoFiTrainer:
         # for instance if you need the number of total training steps
         # to create a learning rate scheduler) should go after the call to prepare()
         # works with none teacher
-        model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = accelerator.prepare(
+        model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
             model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
@@ -562,6 +563,9 @@ class CoFiTrainer:
 
                 # train step
                 loss_terms = self.train_step(model, batch)
+
+                print(loss_terms)
+                quit()
 
                 progress_bar.update(1)
 

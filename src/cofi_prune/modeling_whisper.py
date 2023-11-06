@@ -1443,6 +1443,12 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        # cofi encoder args
+        hidden_z = None,
+        en_head_z = None,
+        en_mha_z = None,
+        en_ffn_dim = None,
+        en_ffn = None,
     ):
         r"""
         Args:
@@ -2323,6 +2329,16 @@ class SparseWhisperModel(WhisperPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        # cofi model args
+        hidden_z = None,
+        en_head_z = None,
+        en_mha_z = None,
+        en_ffn_dim = None,
+        en_ffn = None,
+        de_head = None,
+        de_mha = None,
+        de_ffn_dim = None,
+        de_ffn = None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqModelOutput]:
         r"""
         Returns:
@@ -2359,6 +2375,12 @@ class SparseWhisperModel(WhisperPreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
+                # cofi encoder args
+                hidden_z = None,
+                en_head_z = None,
+                en_mha_z = None,
+                en_ffn_dim = None,
+                en_ffn = None,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=True
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
@@ -2381,6 +2403,12 @@ class SparseWhisperModel(WhisperPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            # cofi decoder args
+            hidden_z = None,
+            de_head = None,
+            de_mha = None,
+            de_ffn_dim = None,
+            de_ffn = None,
         )
 
         if not return_dict:
@@ -2925,6 +2953,16 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        # cofi full conditional model args
+        hidden_z = None,
+        en_head_z = None,
+        en_mha_z = None,
+        en_ffn_dim = None,
+        en_ffn = None,
+        de_head = None,
+        de_mha = None,
+        de_ffn_dim = None,
+        de_ffn = None,
     ) -> Union[Tuple[torch.Tensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -2978,6 +3016,16 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            # cofi model args
+            hidden_z = None,
+            en_head_z = None,
+            en_mha_z = None,
+            en_ffn_dim = None,
+            en_ffn = None,
+            de_head = None,
+            de_mha = None,
+            de_ffn_dim = None,
+            de_ffn = None,
         )
         lm_logits = self.proj_out(outputs[0])
 
