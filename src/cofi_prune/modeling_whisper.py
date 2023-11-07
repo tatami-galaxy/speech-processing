@@ -303,7 +303,7 @@ def _dynamic_time_warping(matrix: np.ndarray):
     time_indices = np.array(time_indices)[::-1]
     return text_indices, time_indices
 
-## fix this ##
+
 class SparseLayerNorm(torch.nn.LayerNorm):
     def __init__(self, normalized_shape, eps: float = 1e-5, elementwise_affine: bool = True) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine)
@@ -335,7 +335,7 @@ class WhisperPositionalEmbedding(nn.Embedding):
 
 
 ## fix this ##
-class SparswWhisperPositionalEmbedding(nn.Embedding):
+class SparseWhisperPositionalEmbedding(nn.Embedding):
     """ Inherit from BertEmbeddings to allow CoFiLayerNorm """
 
     def __init__(self, config):
@@ -797,7 +797,7 @@ class SparseWhisperEncoderLayer(nn.Module):
         layer_head_mask: torch.Tensor,
         output_attentions: bool = False,
         # cofi encoder layer args
-        hidden_z_l = None,
+        hidden_z = None,
         en_head_z_l = None,
         en_mha_z_l = None,
         en_ffn_dim_z_l = None,
@@ -1005,6 +1005,12 @@ class SparseWhisperDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
+        # cofi decoder args
+        hidden_z=None,
+        de_head_z_l=None,
+        de_mha_z_l=None,
+        de_ffn_dim_z_l=None,
+        de_ffn_z_l=None,
     ) -> torch.Tensor:
         """
         Args:
@@ -1503,8 +1509,6 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                 len(self.layers)
             ), f"The head_mask should be specified for {len(self.layers)} layers, but it is for {head_mask.size()[0]}."
 
-        print(hidden_z, en_head_z[0], en_mha_z[0], en_ffn_dim_z[0], en_ffn_z[0])
-
         for idx, encoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
@@ -1542,10 +1546,10 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                         output_attentions=output_attentions,
                         # cofi encoder layer args
                         hidden_z=hidden_z,
-                        en_head_z=en_head_z[idx],
-                        en_mha_z=en_mha_z[idx],
-                        en_ffn_dim_z=en_ffn_dim_z[idx],
-                        en_ffn_z=en_ffn_z[idx],
+                        en_head_z_l=en_head_z[idx],
+                        en_mha_z_l=en_mha_z[idx],
+                        en_ffn_dim_z_l=en_ffn_dim_z[idx],
+                        en_ffn_z_l=en_ffn_z[idx],
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1730,6 +1734,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
         if self.gradient_checkpointing and self.training:
+
             if use_cache:
                 logger.warning_once(
                     "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
@@ -1893,6 +1898,12 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        # cofi decoder args
+        hidden_z=None,
+        de_head_z=None,
+        de_mha_z=None,
+        de_ffn_dim_z=None,
+        de_ffn_z=None,
     ):
         r"""
         Args:
@@ -1989,6 +2000,8 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
         if self.gradient_checkpointing and self.training:
+
+            raise ValueError("SparseWhisperForConditionalGeneration does not support gradient checkpointing. Disable and run again")
             if use_cache:
                 logger.warning_once(
                     "`use_cache = True` is incompatible with gradient checkpointing. Setting `use_cache = False`..."
@@ -2020,6 +2033,8 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
 
             if self.gradient_checkpointing and self.training:
 
+                raise ValueError("SparseWhisperForConditionalGeneration does not support gradient checkpointing. Disable and run again")
+
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
                         # None for past_key_value
@@ -2049,6 +2064,12 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    # cofi decoder layer args
+                    hidden_z=hidden_z,
+                    de_head_z_l=de_head_z[idx],
+                    de_mha_z_l=de_mha_z[idx],
+                    de_ffn_dim_z_l=de_ffn_dim_z[idx],
+                    de_ffn_z=de_ffn_z[idx],
                 )
             hidden_states = layer_outputs[0]
 
