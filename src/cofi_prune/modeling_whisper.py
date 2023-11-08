@@ -148,6 +148,7 @@ def _compute_mask_indices(
     # epsilon is used for probabilistic rounding
     epsilon = np.random.rand(1).item()
 
+
     def compute_num_masked_span(input_length):
         """Given input length, compute how many spans should be masked"""
         num_masked_span = int(mask_prob * input_length / mask_length + epsilon)
@@ -308,6 +309,7 @@ class SparseLayerNorm(torch.nn.LayerNorm):
     def __init__(self, normalized_shape, eps: float = 1e-5, elementwise_affine: bool = True) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine)
 
+    # dim (as in dimming light) layer norm instead of zeroing? #
     def forward(self, input, hidden_z=None):
         if hidden_z is not None:
             remaining_index = torch.where(~hidden_z.eq(0))[0]
@@ -1497,6 +1499,7 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
         embed_pos = self.embed_positions.weight
 
+        # dimensions must match #
         hidden_states = inputs_embeds + embed_pos
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
@@ -1996,6 +1999,7 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         else:
             positions = self.embed_positions(inputs_embeds, past_key_values_length=past_key_values_length)
 
+        # dimensions must match #
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 
