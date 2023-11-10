@@ -639,7 +639,7 @@ class SparseWhisperAttention(nn.Module):
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
 
-        ## compute Q, K, V matrices ##
+        ## Compute Q, K, V matrices ##
         
         # b*num_heads x seq_len x head_dim
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
@@ -649,6 +649,9 @@ class SparseWhisperAttention(nn.Module):
         value_states = value_states.reshape(*proj_shape)
 
         src_len = key_states.size(1)
+
+        ## Multiply Q and K ##
+
         # b*num_heads x seq_len x seq_len
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
@@ -665,6 +668,8 @@ class SparseWhisperAttention(nn.Module):
                 )
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        ## Softmax ##
 
         # b*num_heads x seq_len x seq_len
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -690,6 +695,8 @@ class SparseWhisperAttention(nn.Module):
 
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
 
+        ## Multiply softmax(QK) with V ##
+
         # b*num_heads x seq_len x head_dim
         attn_output = torch.bmm(attn_probs, value_states)
 
@@ -700,7 +707,17 @@ class SparseWhisperAttention(nn.Module):
             )
 
         attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
+
+        # apply head mask
+        # encoder head mask
+        if en_head_z_l is not None:
+            attn_output = attn_output.mul(en_head_z_l)
+        # decoder head mask. used for both self and cross attn? -> verify
+        if de_head_z_l is not None:
+            attn_output = attn_output.mul(de_head_z_l)
+
         attn_output = attn_output.transpose(1, 2)
+
 
         # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
         # partitioned across GPUs when using tensor-parallelism.
@@ -708,8 +725,18 @@ class SparseWhisperAttention(nn.Module):
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
         # attn_output = attn_output.reshape(bsz, tgt_len, -1)
 
+        ## MHA output matrix ##
+
         # b x seq_len x embed_dim
         attn_output = self.out_proj(attn_output)
+
+        # apply mha mask
+        # encoder mha mask
+        if en_mha_z_l is not None:
+            attn_output = attn_output.mul(en_mha_z_l)
+        # decoder mha mask
+        if de_head_z_l is not None:
+            attn_output = attn_output.mul(de_mha_z_l)
 
         return attn_output, attn_weights_reshaped, past_key_value
 
@@ -1001,7 +1028,8 @@ class SparseWhisperDecoderLayer(nn.Module):
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
 
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        #self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.self_attn_layer_norm = SparseLayerNorm(self.embed_dim)
         self.encoder_attn = SparseWhisperAttention(
             self.embed_dim,
             config.decoder_attention_heads,
@@ -1011,7 +1039,8 @@ class SparseWhisperDecoderLayer(nn.Module):
         self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
         self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        #self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.final_layer_norm = SparseLayerNorm(self.embed_dim)
 
     def forward(
         self,
@@ -1062,6 +1091,11 @@ class SparseWhisperDecoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            # cofi attention args
+            en_head_z_l=None,
+            en_mha_z_l=None,
+            de_head_z_l=de_head_z_l,
+            de_mha_z_l=de_mha_z_l,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -2022,6 +2056,10 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         else:
             positions = self.embed_positions(inputs_embeds, past_key_values_length=past_key_values_length)
 
+        # prune with hidden_z
+        if hidden_z is not None:
+            positions = positions.mul(hidden_z)
+
         # dimensions must match #
         hidden_states = inputs_embeds + positions
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -2096,7 +2134,7 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
                     de_head_z_l=de_head_z[idx],
                     de_mha_z_l=de_mha_z[idx],
                     de_ffn_dim_z_l=de_ffn_dim_z[idx],
-                    de_ffn_z=de_ffn_z[idx],
+                    de_ffn_z_l=de_ffn_z[idx],
                 )
             hidden_states = layer_outputs[0]
 
