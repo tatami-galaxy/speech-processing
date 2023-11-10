@@ -454,8 +454,8 @@ class CoFiTrainer:
         # for instance if you need the number of total training steps
         # to create a learning rate scheduler) should go after the call to prepare()
         # works with none teacher
-        model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
-            model, self.teacher_model, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
+        model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
+            model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
         self.accelerator.log({

@@ -309,7 +309,7 @@ class SparseLayerNorm(torch.nn.LayerNorm):
     def __init__(self, normalized_shape, eps: float = 1e-5, elementwise_affine: bool = True) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine)
 
-    # dim (as in dimming light) layer norm instead of zeroing? #
+    # dim remains unaltered (768)
     def forward(self, input, hidden_z=None):
         if hidden_z is not None:
             remaining_index = torch.where(~hidden_z.eq(0))[0]
@@ -577,7 +577,14 @@ class SparseWhisperAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        # cofi attention args
+        en_head_z_l = None,  # 1, 12, 1, 1 (12 heads)
+        en_mha_z_l = None,  # scalaer
+        de_head_z_l = None,  # 1, 12, 1, 1
+        de_mha_z_l = None,  # scalar
+        
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
+        
         """Input shape: Batch x Time x Channel"""
 
         # if key_value_states are provided this layer is used as a cross-attention layer
@@ -784,13 +791,15 @@ class SparseWhisperEncoderLayer(nn.Module):
             num_heads=config.encoder_attention_heads,
             dropout=config.attention_dropout,
         )
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        #self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.self_attn_layer_norm = SparseLayerNorm(self.embed_dim)
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        #self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.final_layer_norm = SparseLayerNorm(self.embed_dim)
 
     def forward(
         self,
@@ -817,18 +826,23 @@ class SparseWhisperEncoderLayer(nn.Module):
                 returned tensors for more detail.
         """
         residual = hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
+        hidden_states = self.self_attn_layer_norm(hidden_states, hidden_z)
         hidden_states, attn_weights, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            # cofi attention args
+            en_head_z_l=en_head_z_l ,
+            en_mha_z_l=en_mha_z_l,
+            de_head_z_l=None,
+            de_mha_z_l=None,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
         residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
+        hidden_states = self.final_layer_norm(hidden_states, hidden_z)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
@@ -1428,10 +1442,12 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         self.conv1 = nn.Conv1d(self.num_mel_bins, embed_dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1)
 
+        # prune with hidden_z
         self.embed_positions = nn.Embedding(self.max_source_positions, embed_dim)
 
         self.layers = nn.ModuleList([SparseWhisperEncoderLayer(config) for _ in range(config.encoder_layers)])
-        self.layer_norm = nn.LayerNorm(config.d_model)
+        #self.layer_norm = nn.LayerNorm(config.d_model)
+        self.layer_norm = SparseLayerNorm(config.d_model)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -1499,6 +1515,10 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
         embed_pos = self.embed_positions.weight
 
+        # prune with hidden_z
+        if hidden_z is not None:
+            embed_pos = embed_pos.mul(hidden_z)
+
         # dimensions must match #
         hidden_states = inputs_embeds + embed_pos
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -1560,7 +1580,7 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
 
-        hidden_states = self.layer_norm(hidden_states)
+        hidden_states = self.layer_norm(hidden_states, hidden_z)
         if output_hidden_states:
             encoder_states = encoder_states + (hidden_states,)
 
@@ -2351,6 +2371,7 @@ class SparseWhisperModel(WhisperPreTrainedModel):
 
         return input_features
 
+
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqModelOutput, config_class=_CONFIG_FOR_DOC)
     def forward(
@@ -2947,7 +2968,9 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
     def __init__(self, config: SparseWhisperConfig):
         super().__init__(config)
         self.model = SparseWhisperModel(config)
-        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)  # prune?
+        # hidden size will be d.model even after pruning (real masks)
+        # need to change if periodically zeroed
+        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
         # gradient checkpointing not supported
         warnings.warn("SparseWhisperForConditionalGeneration does not support gradient checkpointing")
@@ -3071,7 +3094,9 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
             de_ffn_dim_z=de_ffn_dim_z,
             de_ffn_z=de_ffn_z,
         )
-        lm_logits = self.proj_out(outputs[0])
+        # hidden size will be d.model even after pruning (real masks)
+        # need to change if periodically zeroed
+        lm_logits = self.proj_out(outputs[0])  # prune?
 
         loss = None
         if labels is not None:
