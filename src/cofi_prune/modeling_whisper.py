@@ -638,6 +638,9 @@ class SparseWhisperAttention(nn.Module):
             past_key_value = (key_states, value_states)
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
+
+        ## compute Q, K, V matrices ##
+        
         # b*num_heads x seq_len x head_dim
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
         # b*num_heads x seq_len x head_dim
