@@ -601,6 +601,8 @@ class SparseWhisperAttention(nn.Module):
         # `past_key_value[0].shape[2] == key_value_states.shape[1]`
         # is checking that the `sequence_length` of the `past_key_value` is the same as
         # the provided `key_value_states` to support prefix tuning
+
+        # cross_attentions
         if (
             is_cross_attention
             and past_key_value is not None
@@ -610,7 +612,6 @@ class SparseWhisperAttention(nn.Module):
             key_states = past_key_value[0]
             value_states = past_key_value[1]
         elif is_cross_attention:
-            # cross_attentions
             key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
             value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
         elif past_key_value is not None:
@@ -619,8 +620,9 @@ class SparseWhisperAttention(nn.Module):
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
             key_states = torch.cat([past_key_value[0], key_states], dim=2)
             value_states = torch.cat([past_key_value[1], value_states], dim=2)
+
+        # self_attention
         else:
-            # self_attention
             # key matrix after X @ K
             # b x num_heads x seq_len x head_dim
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
@@ -628,6 +630,7 @@ class SparseWhisperAttention(nn.Module):
             # b x num_heads x seq_len x head_dim
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
+        # decoder specific
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
@@ -707,6 +710,7 @@ class SparseWhisperAttention(nn.Module):
                 f" {attn_output.size()}"
             )
 
+        # b, num_heads, seq_len, head_dim
         attn_output = attn_output.view(bsz, self.num_heads, tgt_len, self.head_dim)
 
         # apply head mask
