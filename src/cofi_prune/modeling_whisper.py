@@ -305,6 +305,7 @@ def _dynamic_time_warping(matrix: np.ndarray):
     return text_indices, time_indices
 
 
+# used by SparseWhisperEncoder, SparseWhisperEncoderLayer, SparseWhisperDecoder, SparseWhisperDecoderLayer
 class SparseLayerNorm(torch.nn.LayerNorm):
     def __init__(self, normalized_shape, eps: float = 1e-5, elementwise_affine: bool = True) -> None:
         super().__init__(normalized_shape, eps, elementwise_affine)
@@ -741,77 +742,6 @@ class SparseWhisperAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value
 
 
-
-# Copied from transformers.models.mbart.modeling_mbart.MBartEncoderLayer with MBart->Whisper
-class WhisperEncoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
-        super().__init__()
-        self.embed_dim = config.d_model
-        self.self_attn = WhisperAttention(
-            embed_dim=self.embed_dim,
-            num_heads=config.encoder_attention_heads,
-            dropout=config.attention_dropout,
-        )
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.dropout = config.dropout
-        self.activation_fn = ACT2FN[config.activation_function]
-        self.activation_dropout = config.activation_dropout
-        self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
-        self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-        layer_head_mask: torch.Tensor,
-        output_attentions: bool = False,
-    ) -> torch.Tensor:
-        """
-        Args:
-            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
-            attention_mask (`torch.FloatTensor`): attention mask of size
-                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
-            layer_head_mask (`torch.FloatTensor`): mask for attention heads in a given layer of size
-                `(encoder_attention_heads,)`.
-            output_attentions (`bool`, *optional*):
-                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
-                returned tensors for more detail.
-        """
-        residual = hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states, attn_weights, _ = self.self_attn(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            layer_head_mask=layer_head_mask,
-            output_attentions=output_attentions,
-        )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        if hidden_states.dtype == torch.float16 and (
-            torch.isinf(hidden_states).any() or torch.isnan(hidden_states).any()
-        ):
-            clamp_value = torch.finfo(hidden_states.dtype).max - 1000
-            hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
-
-        outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (attn_weights,)
-
-        return outputs
-    
-
-
 class SparseWhisperEncoderLayer(nn.Module):
     def __init__(self, config: SparseWhisperConfig):
         super().__init__()
@@ -857,6 +787,8 @@ class SparseWhisperEncoderLayer(nn.Module):
         """
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states, hidden_z)
+        # same attention class used by encoder and decoder
+        # same attention class used for self and cross attention
         hidden_states, attn_weights, _ = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -875,8 +807,18 @@ class SparseWhisperEncoderLayer(nn.Module):
         hidden_states = self.final_layer_norm(hidden_states, hidden_z)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        
+        # prune ffn dim
+        if en_ffn_dim_z_l is not None:
+            hidden_states = hidden_states.mul(en_ffn_dim_z_l)
+        
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
+        # prune ffn
+        if en_ffn_z_l is not None:
+            hidden_states = hidden_states.mul(en_ffn_z_l)
+
         hidden_states = residual + hidden_states
 
         if hidden_states.dtype == torch.float16 and (
@@ -891,126 +833,7 @@ class SparseWhisperEncoderLayer(nn.Module):
             outputs += (attn_weights,)
 
         return outputs
-
-
-
-# Copied from transformers.models.mbart.modeling_mbart.MBartDecoderLayer with MBart->Whisper
-class WhisperDecoderLayer(nn.Module):
-    def __init__(self, config: WhisperConfig):
-        super().__init__()
-        self.embed_dim = config.d_model
-
-        self.self_attn = WhisperAttention(
-            embed_dim=self.embed_dim,
-            num_heads=config.decoder_attention_heads,
-            dropout=config.attention_dropout,
-            is_decoder=True,
-        )
-        self.dropout = config.dropout
-        self.activation_fn = ACT2FN[config.activation_function]
-        self.activation_dropout = config.activation_dropout
-
-        self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.encoder_attn = WhisperAttention(
-            self.embed_dim,
-            config.decoder_attention_heads,
-            dropout=config.attention_dropout,
-            is_decoder=True,
-        )
-        self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
-        self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
-        self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        layer_head_mask: Optional[torch.Tensor] = None,
-        cross_attn_layer_head_mask: Optional[torch.Tensor] = None,
-        past_key_value: Optional[Tuple[torch.Tensor]] = None,
-        output_attentions: Optional[bool] = False,
-        use_cache: Optional[bool] = True,
-    ) -> torch.Tensor:
-        """
-        Args:
-            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
-            attention_mask (`torch.FloatTensor`): attention mask of size
-                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
-            encoder_hidden_states (`torch.FloatTensor`):
-                cross attention input to the layer of shape `(batch, seq_len, embed_dim)`
-            encoder_attention_mask (`torch.FloatTensor`): encoder attention mask of size
-                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
-            layer_head_mask (`torch.FloatTensor`): mask for attention heads in a given layer of size
-                `(encoder_attention_heads,)`.
-            cross_attn_layer_head_mask (`torch.FloatTensor`): mask for cross-attention heads in a given layer of
-                size `(decoder_attention_heads,)`.
-            past_key_value (`Tuple(torch.FloatTensor)`): cached past key and value projection states
-            output_attentions (`bool`, *optional*):
-                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
-                returned tensors for more detail.
-        """
-        residual = hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
-
-        # Self Attention
-        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        # add present self-attn cache to positions 1,2 of present_key_value tuple
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(
-            hidden_states=hidden_states,
-            past_key_value=self_attn_past_key_value,
-            attention_mask=attention_mask,
-            layer_head_mask=layer_head_mask,
-            output_attentions=output_attentions,
-        )
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        # Cross-Attention Block
-        cross_attn_present_key_value = None
-        cross_attn_weights = None
-        if encoder_hidden_states is not None:
-            residual = hidden_states
-            hidden_states = self.encoder_attn_layer_norm(hidden_states)
-
-            # cross_attn cached key/values tuple is at positions 3,4 of present_key_value tuple
-            cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
-            hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
-                hidden_states=hidden_states,
-                key_value_states=encoder_hidden_states,
-                attention_mask=encoder_attention_mask,
-                layer_head_mask=cross_attn_layer_head_mask,
-                past_key_value=cross_attn_past_key_value,
-                output_attentions=output_attentions,
-            )
-            hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-            hidden_states = residual + hidden_states
-
-            # add cross-attn to positions 3,4 of present_key_value tuple
-            present_key_value = present_key_value + cross_attn_present_key_value
-
-        # Fully Connected
-        residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
-        hidden_states = self.activation_fn(self.fc1(hidden_states))
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        hidden_states = self.fc2(hidden_states)
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
-        hidden_states = residual + hidden_states
-
-        outputs = (hidden_states,)
-
-        if output_attentions:
-            outputs += (self_attn_weights, cross_attn_weights)
-
-        if use_cache:
-            outputs += (present_key_value,)
-
-        return outputs
-    
+   
 
 
 class SparseWhisperDecoderLayer(nn.Module):
@@ -1030,13 +853,16 @@ class SparseWhisperDecoderLayer(nn.Module):
 
         #self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.self_attn_layer_norm = SparseLayerNorm(self.embed_dim)
+
+        # cross attention
         self.encoder_attn = SparseWhisperAttention(
             self.embed_dim,
             config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
         )
-        self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        #self.encoder_attn_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.encoder_attn_layer_norm = SparseLayerNorm(self.embed_dim)
         self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
         self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
         #self.final_layer_norm = nn.LayerNorm(self.embed_dim)
@@ -1079,12 +905,14 @@ class SparseWhisperDecoderLayer(nn.Module):
                 returned tensors for more detail.
         """
         residual = hidden_states
-        hidden_states = self.self_attn_layer_norm(hidden_states)
+        hidden_states = self.self_attn_layer_norm(hidden_states, hidden_z)
 
         # Self Attention
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         # add present self-attn cache to positions 1,2 of present_key_value tuple
+        # same attention class used by encoder and decoder
+        # same attention class used for self and cross attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             past_key_value=self_attn_past_key_value,
@@ -1105,10 +933,12 @@ class SparseWhisperDecoderLayer(nn.Module):
         cross_attn_weights = None
         if encoder_hidden_states is not None:
             residual = hidden_states
-            hidden_states = self.encoder_attn_layer_norm(hidden_states)
+            hidden_states = self.encoder_attn_layer_norm(hidden_states, hidden_z)
 
             # cross_attn cached key/values tuple is at positions 3,4 of present_key_value tuple
             cross_attn_past_key_value = past_key_value[-2:] if past_key_value is not None else None
+            # same attention class used by encoder and decoder
+            # same attention class used for self and cross attention
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -1116,6 +946,11 @@ class SparseWhisperDecoderLayer(nn.Module):
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=cross_attn_past_key_value,
                 output_attentions=output_attentions,
+                # cofi attention args
+                en_head_z_l=None,
+                en_mha_z_l=None,
+                de_head_z_l=de_head_z_l,
+                de_mha_z_l=de_mha_z_l,
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -1125,11 +960,21 @@ class SparseWhisperDecoderLayer(nn.Module):
 
         # Fully Connected
         residual = hidden_states
-        hidden_states = self.final_layer_norm(hidden_states)
+        hidden_states = self.final_layer_norm(hidden_states, hidden_z)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+
+        # prune ffn dim
+        if de_ffn_dim_z_l is not None:
+            hidden_states = hidden_states.mul(de_ffn_dim_z_l)
+
         hidden_states = self.fc2(hidden_states)
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
+        # prune ffn
+        if de_ffn_z_l is not None:
+            hidden_states = hidden_states.mul(de_ffn_z_l)
+            
         hidden_states = residual + hidden_states
 
         outputs = (hidden_states,)
@@ -1552,13 +1397,15 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
         inputs_embeds = inputs_embeds.permute(0, 2, 1)
         embed_pos = self.embed_positions.weight
 
+        hidden_states = inputs_embeds + embed_pos
+
+        # prune with hidden_z here?
+
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
         # prune with hidden_z
         if hidden_z is not None:
-            embed_pos = embed_pos.mul(hidden_z)
-
-        # dimensions must match #
-        hidden_states = inputs_embeds + embed_pos
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = hidden_states.mul(hidden_z)
 
         encoder_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -1618,6 +1465,9 @@ class SparseWhisperEncoder(WhisperPreTrainedModel):
                 all_attentions = all_attentions + (layer_outputs[1],)
 
         hidden_states = self.layer_norm(hidden_states, hidden_z)
+
+        # prune with hidden_states with hidden_z after layer norm?
+
         if output_hidden_states:
             encoder_states = encoder_states + (hidden_states,)
 
@@ -1906,12 +1756,15 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         self.max_source_positions = config.max_source_positions
         self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
 
+        # prune with hidden_z
         self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx)
+
+        # prune with hidden_z
         self.embed_positions = WhisperPositionalEmbedding(self.max_target_positions, config.d_model)
 
         self.layers = nn.ModuleList([SparseWhisperDecoderLayer(config) for _ in range(config.decoder_layers)])
 
-        self.layer_norm = nn.LayerNorm(config.d_model)
+        self.layer_norm = SparseLayerNorm(config.d_model)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -2046,6 +1899,10 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        # prune with hidden_z
+        if hidden_z is not None:
+            positions = positions.mul(hidden_z)
+
         attention_mask = self._prepare_decoder_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
@@ -2056,13 +1913,15 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
         else:
             positions = self.embed_positions(inputs_embeds, past_key_values_length=past_key_values_length)
 
+        hidden_states = inputs_embeds + positions
+
+        # prune with hidden_states with hidden_z here?
+
+        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+
         # prune with hidden_z
         if hidden_z is not None:
-            positions = positions.mul(hidden_z)
-
-        # dimensions must match #
-        hidden_states = inputs_embeds + positions
-        hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
+            hidden_states = hidden_states.mul(hidden_z)
 
         if self.gradient_checkpointing and self.training:
 
@@ -2148,6 +2007,9 @@ class SparseWhisperDecoder(WhisperPreTrainedModel):
                     all_cross_attentions += (layer_outputs[2],)
 
         hidden_states = self.layer_norm(hidden_states)
+
+        # prune with hidden_states with hidden_z after layer norm?
+
         # add hidden states from the last decoder layer
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -3137,7 +2999,7 @@ class SparseWhisperForConditionalGeneration(WhisperPreTrainedModel):
         )
         # hidden size will be d.model even after pruning (real masks)
         # need to change if periodically zeroed
-        lm_logits = self.proj_out(outputs[0])  # prune?
+        lm_logits = self.proj_out(outputs[0])
 
         loss = None
         if labels is not None:
