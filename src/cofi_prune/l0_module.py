@@ -34,8 +34,10 @@ class L0Module(Module):
             "en_mha",
             "en_ffn_dim",
             "en_ffn",
-            "de_head",
-            "de_mha",
+            "de_self_head",
+            "de_self_mha",
+            "de_cross_head",
+            "de_cross_mha",
             "de_ffn_dim",
             "de_ffn",
         ]
@@ -152,8 +154,14 @@ class L0Module(Module):
                             size=self.encoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_en, 1, self.encoder_attention_heads, 1, 1])
-        # decoder
-        self.add_one_module(self.de_head_loga, type="de_head", 
+        # decoder (self and cross)
+        self.add_one_module(self.de_head_loga, type="de_self_head", 
+                            parameter_per_dim=self.params_per_head,
+                            #  both encoder and decoder attentions heads
+                            size=self.decoder_attention_heads,
+                            # how is size and shape used?
+                            shape=[self.num_hidden_layers_de, 1, self.decoder_attention_heads, 1, 1])
+        self.add_one_module(self.de_head_loga, type="de_cross_head", 
                             parameter_per_dim=self.params_per_head,
                             #  both encoder and decoder attentions heads
                             size=self.decoder_attention_heads,
@@ -176,8 +184,11 @@ class L0Module(Module):
         self.add_one_module(self.en_headlayer_loga, type="en_mha", 
                             parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
                             shape=[n_layer_en])
-        # decoder
-        self.add_one_module(self.de_headlayer_loga, type="de_mha", 
+        # decoder (self and cross)
+        self.add_one_module(self.de_headlayer_loga, type="de_self_mha", 
+                            parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
+                            shape=[n_layer_de])
+        self.add_one_module(self.de_headlayer_loga, type="de_cross_mha", 
                             parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
                             shape=[n_layer_de])
         # change in prunable_model_size?
