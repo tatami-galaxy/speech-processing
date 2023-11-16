@@ -25,7 +25,6 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.nn import functional as F
 
-from transformers.deepspeed import is_deepspeed_zero3_enabled
 from transformers.activations import ACT2FN
 from transformers.generation.logits_process import WhisperTimeStampLogitsProcessor
 from transformers.modeling_outputs import (
@@ -33,7 +32,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
-    SequenceClassifierOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
@@ -42,7 +40,6 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from transformers.models.whisper.configuration_whisper import WhisperConfig
 from configuration_whisper import SparseWhisperConfig
 from transformers.models.whisper.tokenization_whisper import TASK_IDS, TO_LANGUAGE_CODE
 
@@ -1681,18 +1678,7 @@ class SparseWhisperForConditionalGeneration(SparseWhisperPreTrainedModel):
         """
         Calling this function will disable the gradient computation for the Whisper encoder so that its parameters will
         not be updated during training.
-        """# encoder
-        en_head_z = None,
-        en_mha_z = None,
-        en_ffn_dim_z = None,
-        en_ffn_z = None,
-        # decoder
-        de_self_head_z = None,
-        de_self_mha_z = None,
-        de_cross_head_z = None,
-        de_cross_mha_z = None,
-        de_ffn_dim_z = None,
-        de_ffn_z = None,
+        """
         self.model.encoder._freeze_parameters()
 
 
