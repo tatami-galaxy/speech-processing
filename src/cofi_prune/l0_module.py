@@ -50,22 +50,27 @@ class L0Module(Module):
         self.num_hidden_layers_en = config.encoder_layers
         self.num_hidden_layers_de  = config.decoder_layers
         # heads
-        self.encoder_attention_heads = config.encoder_attention_heads  # num_attention_heads
-        self.decoder_attention_heads = config.decoder_attention_heads  # num_attention_heads
+        # num_attention_heads / layer
+        self.encoder_attention_heads = config.encoder_attention_heads  
+        # 12 self attn heads, 12 cross attn heads
+        self.decoder_attention_heads = config.decoder_attention_heads
         # ffn dims
         self.decoder_ffn_dim = config.decoder_ffn_dim  # intermediate_size
         self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size
         # number of ffns
         self.ffn_num_per_layer = 1  # linear -> activation -> linear
         # head dims
+        # used in calculate_model_size ()
         self.dim_per_encoder_head = self.d_model // self.encoder_attention_heads
         self.dim_per_decoder_head = self.d_model // self.decoder_attention_heads
 
-        # same number of heads, head size for encoder, decoder (change if needed)
-        # 4 self attention weight matrices. 4 weights, 3 biases
-        # no bias for self_attn.k_proj
+        # same number of heads, head size for encoder, decoder
+        # 4 attention weight matrices. 4 weights, 3 biases
+        # no bias for k_proj
+        # self attn and cross attn for decoder added separately
         self.params_per_head_layer = self.d_model * self.d_model * 4  + self.d_model * 3
-        self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads  # same for decoder
+        # same number of heads for en self_attn, de self_attn, de cross_attn
+        self.params_per_head =  self.params_per_head_layer // self.encoder_attention_heads 
         
         # same intermediate size for encoder, decoder (change if needed)
         # weights, biases for each ffn layer
@@ -74,6 +79,7 @@ class L0Module(Module):
         self.params_per_ffn_dim = self.params_per_ffn_layer // self.encoder_ffn_dim
 
         # we ignore the parameters in normalization layers (it takes a very small amount)
+        # 
         self.full_model_size = (self.params_per_head_layer + self.params_per_ffn_layer) * (self.num_hidden_layers_en + self.num_hidden_layers_de)
         self.prunable_model_size = 0 
 
@@ -144,32 +150,35 @@ class L0Module(Module):
     def initialize_head(self, add_prunable_model_size=True):
         # loga
         self.en_head_loga = self.initialize_parameters(self.encoder_attention_heads, self.num_hidden_layers_en)
-        self.de_head_loga = self.initialize_parameters(self.decoder_attention_heads, self.num_hidden_layers_de)
+        self.de_self_head_loga = self.initialize_parameters(self.decoder_attention_heads, self.num_hidden_layers_de)
+        self.de_cross_head_loga = self.initialize_parameters(self.decoder_attention_heads, self.num_hidden_layers_de)
         self.reset_loga(self.en_head_loga, mean=10)
-        self.reset_loga(self.de_head_loga, mean=10)
+        self.reset_loga(self.de_self_head_loga, mean=10)
+        self.reset_loga(self.de_cross_head_loga, mean=10)
         # encoder
         self.add_one_module(self.en_head_loga, type="en_head", 
                             parameter_per_dim=self.params_per_head,
-                            #  both encoder and decoder attentions heads
+                            # encoder self attn heads
                             size=self.encoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_en, 1, self.encoder_attention_heads, 1, 1])
         # decoder (self and cross)
-        self.add_one_module(self.de_head_loga, type="de_self_head", 
+        self.add_one_module(self.de_self_head_loga, type="de_self_head", 
                             parameter_per_dim=self.params_per_head,
-                            #  both encoder and decoder attentions heads
+                            # decoder self attn heads
                             size=self.decoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_de, 1, self.decoder_attention_heads, 1, 1])
-        self.add_one_module(self.de_head_loga, type="de_cross_head", 
+        self.add_one_module(self.de_cross_head_loga, type="de_cross_head", 
                             parameter_per_dim=self.params_per_head,
-                            #  both encoder and decoder attentions heads
+                            # decoder cross attn heads
                             size=self.decoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_de, 1, self.decoder_attention_heads, 1, 1])
         # why if?
         if add_prunable_model_size:
-            self.prunable_model_size += self.params_per_head * (self.num_hidden_layers_en + self.num_hidden_layers_de) * (self.encoder_attention_heads + self.decoder_attention_heads)
+            # 2 sets of heads(self, cross) for decoder
+            self.prunable_model_size += self.params_per_head * (self.num_hidden_layers_en + self.num_hidden_layers_de) * (self.encoder_attention_heads + 2*self.decoder_attention_heads)
         #logger.info(f"Initialized heads. Prunable_model_size = {self.prunable_model_size}")
 
 
@@ -177,7 +186,8 @@ class L0Module(Module):
         n_layer_en = self.num_hidden_layers_en
         n_layer_de = self.num_hidden_layers_de
         self.en_headlayer_loga = self.initialize_parameters(n_layer_en)
-        self.de_headlayer_loga = self.initialize_parameters(n_layer_de)
+        self.de_self_headlayer_loga = self.initialize_parameters(n_layer_de)
+        self.de_cross_headlayer_loga = self.initialize_parameters(n_layer_de)
         self.reset_loga(self.en_headlayer_loga, mean=10)
         self.reset_loga(self.de_headlayer_loga, mean=10)
         # encoder
@@ -185,10 +195,10 @@ class L0Module(Module):
                             parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
                             shape=[n_layer_en])
         # decoder (self and cross)
-        self.add_one_module(self.de_headlayer_loga, type="de_self_mha", 
+        self.add_one_module(self.de_self_headlayer_loga, type="de_self_mha", 
                             parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
                             shape=[n_layer_de])
-        self.add_one_module(self.de_headlayer_loga, type="de_cross_mha", 
+        self.add_one_module(self.de_cross_headlayer_loga, type="de_cross_mha", 
                             parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
                             shape=[n_layer_de])
         # change in prunable_model_size?
