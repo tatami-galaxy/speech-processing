@@ -610,8 +610,10 @@ class SparseWhisperEncoderLayer(nn.Module):
             # cofi attention args
             en_head_z_l=en_head_z_l ,
             en_mha_z_l=en_mha_z_l,
-            de_head_z_l=None,
-            de_mha_z_l=None,
+            de_self_head_z_l = None,
+            de_self_mha_z_l = None,
+            de_cross_head_z_l = None,
+            de_cross_mha_z_l = None,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -1308,10 +1310,6 @@ class SparseWhisperDecoder(SparseWhisperPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        # prune with hidden_z
-        if hidden_z is not None:
-            positions = positions.mul(hidden_z)
-
         attention_mask = self._prepare_decoder_attention_mask(
             attention_mask, input_shape, inputs_embeds, past_key_values_length
         )
@@ -1325,6 +1323,8 @@ class SparseWhisperDecoder(SparseWhisperPreTrainedModel):
         hidden_states = inputs_embeds + positions
 
         # prune with hidden_states with hidden_z here?
+        #if hidden_z is not None:
+            #hidden_states = hidden_states.mul(hidden_z)
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
 

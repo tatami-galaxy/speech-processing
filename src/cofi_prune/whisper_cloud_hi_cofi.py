@@ -561,6 +561,9 @@ class CoFiTrainer:
                     # modifies batch in place
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
+                    print(zs)
+                    quit()
+
                 # train step
                 loss_terms = self.train_step(model, batch)
 

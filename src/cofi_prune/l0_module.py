@@ -189,7 +189,8 @@ class L0Module(Module):
         self.de_self_headlayer_loga = self.initialize_parameters(n_layer_de)
         self.de_cross_headlayer_loga = self.initialize_parameters(n_layer_de)
         self.reset_loga(self.en_headlayer_loga, mean=10)
-        self.reset_loga(self.de_headlayer_loga, mean=10)
+        self.reset_loga(self.de_self_headlayer_loga, mean=10)
+        self.reset_loga(self.de_cross_headlayer_loga, mean=10)
         # encoder
         self.add_one_module(self.en_headlayer_loga, type="en_mha", 
                             parameter_per_dim=self.params_per_head * self.encoder_attention_heads, size=1,
@@ -325,23 +326,6 @@ class L0Module(Module):
         num_parameters += torch.sum(torch.outer(hidden_score, int_score)) * 2
         return num_parameters
 
-
-    # change #
-    def get_num_parameters_and_constraint(self):
-        num_parameters = 0
-
-        all_head_score, head_score = self.transform_scores_for_head()
-        
-        head_score = head_score * all_head_score
-        num_parameters += torch.sum(head_score) * self.parameters_per_dim["head"]
-
-        intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga)  # 12
-        int_score = 1 - self.cdf_qz(0, self.int_loga)  # 12 * 3072
-        intlayer_score = intlayer_score.unsqueeze(-1)
-
-        int_score = int_score * intlayer_score
-        num_parameters += torch.sum(int_score) * self.parameters_per_dim["intermediate"]
-        return num_parameters
 
 
     def get_target_sparsity(self, pruned_steps):
