@@ -281,14 +281,25 @@ class L0Module(Module):
 
     def transform_scores_for_head(self):
         # 1 - Q(s<=0)
-        all_head_score = 1 - self.cdf_qz(0, self.headlayer_loga)
-        head_score = 1 - self.cdf_qz(0, self.head_loga) # 12 * 12
+        en_mha_score = 1 - self.cdf_qz(0, self.en_headlayer_loga)
+        de_self_mha_score = 1 - self.cdf_qz(0, self.de_self_headlayer_loga)
+        de_cross_mha_score = 1 - self.cdf_qz(0, self.de_cross_headlayer_loga)
+        en_head_score = 1 - self.cdf_qz(0, self.en_head_loga) # 12 * 12
+        de_self_head_score = 1 - self.cdf_qz(0, self.de_self_head_loga)
+        de_cross_head_score = 1 - self.cdf_qz(0, self.de_cross_head_loga)
        
-        if all_head_score is not None:
-            all_head_score = all_head_score.view(-1, 1, 1) # 12 * 1 * 1
-        head_score = head_score.unsqueeze(-1)   # 12 * 12 * 1
+        if en_mha_score is not None:
+            en_mha_score = en_mha_score.view(-1, 1, 1)  # 12 * 1 * 1
+        if de_self_mha_score is not None:
+            de_self_mha_score = de_self_mha_score.view(-1, 1, 1)  # 12 * 1 * 1
+        if de_cross_mha_score is not None:
+            de_cross_mha_score = de_cross_mha_score.view(-1, 1, 1)  # 12 * 1 * 1
+
+        en_head_score = en_head_score.unsqueeze(-1)   # 12 * 12 * 1
+        de_self_head_score = de_self_head_score.unsqueeze(-1)   # 12 * 12 * 1
+        de_cross_head_score = de_cross_head_score.unsqueeze(-1)   # 12 * 12 * 1
        
-        return all_head_score, head_score
+        return en_mha_score, de_self_mha_score, de_cross_mha_score, en_head_score, de_self_head_score, de_cross_head_score
 
 
     # change #
@@ -307,15 +318,14 @@ class L0Module(Module):
        
         # 12 * 1 * 1
         # 12 * 12 * 1
-        all_head_score, head_score = self.transform_scores_for_head()
+        en_mha_score, de_self_mha_score, de_cross_mha_score, en_head_score, de_self_head_score, de_cross_head_score = self.transform_scores_for_head()
         hidden_score = 1 - self.cdf_qz(0, self.hidden_loga) # 768
 
         if all_head_score is not None:
             head_score = (all_head_score * head_score).reshape(-1)
         else:
             head_score = head_score.reshape(-1)
-        num_parameters += \
-            torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.d_model
+        num_parameters += torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.d_model
 
         intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga)  # 12
         int_score = 1 - self.cdf_qz(0, self.int_loga)  # 12 * 3072
