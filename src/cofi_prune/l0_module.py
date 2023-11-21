@@ -263,8 +263,8 @@ class L0Module(Module):
             _constrain(self.z_logas[key])
 
 
+    # CDF of the stretched concrete distribution
     def cdf_qz(self, x, loga):
-        """Implements the CDF of the 'stretched' concrete distribution"""
         xn = (x - limit_a) / (limit_b - limit_a)
         logits = math.log(xn) - math.log(1 - xn)
         return torch.sigmoid(logits * self.temperature - loga).clamp(min=epsilon, max=1 - epsilon)
@@ -279,9 +279,8 @@ class L0Module(Module):
         return torch.sum(1 - self.cdf_qz(0, loga)) * parameter_size
 
 
-    # change #
     def transform_scores_for_head(self):
-
+        # 1 - Q(s<=0)
         all_head_score = 1 - self.cdf_qz(0, self.headlayer_loga)
         head_score = 1 - self.cdf_qz(0, self.head_loga) # 12 * 12
        
@@ -439,6 +438,7 @@ class L0Module(Module):
 
         if training:
             for i, type in enumerate(self.types):
+                # parameter of q
                 loga = self.z_logas[type]
                 z = self._sample_z(loga)
                 zs[f"{type}_z"] = z.reshape(self.shapes[type])
