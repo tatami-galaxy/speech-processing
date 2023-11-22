@@ -176,7 +176,7 @@ class L0Module(Module):
                             size=self.decoder_attention_heads,
                             # how is size and shape used?
                             shape=[self.num_hidden_layers_de, 1, self.decoder_attention_heads, 1, 1])
-        # why if?
+        
         if add_prunable_model_size:
             # 2 sets of heads(self, cross) for decoder
             self.prunable_model_size += self.params_per_head * (self.num_hidden_layers_en + self.num_hidden_layers_de) * (self.encoder_attention_heads + 2*self.decoder_attention_heads)
@@ -217,9 +217,11 @@ class L0Module(Module):
         self.add_one_module(self.de_int_loga, type="de_ffn_dim", 
                             parameter_per_dim=self.params_per_ffn_dim, size=self.decoder_ffn_dim,
                             shape=[self.num_hidden_layers_de, 1, 1, self.decoder_ffn_dim])
-        self.prunable_model_size += self.params_per_ffn_layer * (self.num_hidden_layers_en + self.num_hidden_layers_de)
+    
         self.reset_loga(self.en_int_loga)
         self.reset_loga(self.de_int_loga)
+
+        self.prunable_model_size += self.params_per_ffn_layer * (self.num_hidden_layers_en + self.num_hidden_layers_de)
         #logger.info(f"Initialized ffn dim. Prunable_model_size = {self.prunable_model_size}")
 
 
