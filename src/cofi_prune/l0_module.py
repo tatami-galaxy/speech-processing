@@ -86,7 +86,9 @@ class L0Module(Module):
         self.temperature = temperature
         self.droprate_init = droprate_init if droprate_init != 0. else 0.5
         
+        # Q parameters
         self.z_logas = {}
+        # multiply with E to get expected model size
         self.parameters_per_dim = {}
         self.sizes = {}
         self.shapes = {}
@@ -144,7 +146,6 @@ class L0Module(Module):
             size=self.d_model, shape=[self.d_model]
         )
         self.reset_loga(self.hidden_loga, mean=10)  # different mean?
-        #logger.info(f"Initialized hidden loga. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_head(self, add_prunable_model_size=True):
@@ -179,7 +180,6 @@ class L0Module(Module):
         if add_prunable_model_size:
             # 2 sets of heads(self, cross) for decoder
             self.prunable_model_size += self.params_per_head * (self.num_hidden_layers_en + self.num_hidden_layers_de) * (self.encoder_attention_heads + 2*self.decoder_attention_heads)
-        #logger.info(f"Initialized heads. Prunable_model_size = {self.prunable_model_size}")
 
 
     def initialize_mha(self):
@@ -202,7 +202,7 @@ class L0Module(Module):
         self.add_one_module(self.de_cross_headlayer_loga, type="de_cross_mha", 
                             parameter_per_dim=self.params_per_head * self.decoder_attention_heads, size=1,
                             shape=[n_layer_de])
-        # change in prunable_model_size?
+        # no change in prunable_model_size since all heads already considered
         #logger.info(f"Initialized layerwise mha. Prunable_model_size = {self.prunable_model_size}")
 
 
@@ -321,18 +321,39 @@ class L0Module(Module):
         en_mha_score, de_self_mha_score, de_cross_mha_score, en_head_score, de_self_head_score, de_cross_head_score = self.transform_scores_for_head()
         hidden_score = 1 - self.cdf_qz(0, self.hidden_loga) # 768
 
-        if all_head_score is not None:
-            head_score = (all_head_score * head_score).reshape(-1)
+        if any(s for s in (en_mha_score, de_self_mha_score, de_cross_mha_score) is not None):
+            # head score x mha score
+            if en_mha_score is not None:
+                en_head_score = (en_mha_score * en_head_score).reshape(-1)
+            if de_self_mha_score is not None:
+                de_self_head_score = (de_self_mha_score * de_self_head_score).reshape(-1)
+            if de_cross_mha_score is not None:
+                de_cross_head_score = (de_cross_mha_score * de_cross_head_score).reshape(-1)
         else:
-            head_score = head_score.reshape(-1)
-        num_parameters += torch.sum(torch.outer(hidden_score, head_score)) * self.parameters_per_dim["head"] / self.d_model
+            en_head_score = en_head_score.reshape(-1)
+            de_self_head_score = de_self_head_score.reshape(-1)
+            de_cross_head_score = de_cross_head_score.reshape(-1)
 
-        intlayer_score = 1 - self.cdf_qz(0, self.intlayer_loga)  # 12
-        int_score = 1 - self.cdf_qz(0, self.int_loga)  # 12 * 3072
-        intlayer_score = intlayer_score.unsqueeze(-1)
+        # E (score) x num_parameters
+        num_parameters += torch.sum(torch.outer(hidden_score, en_head_score)) * self.parameters_per_dim["en_head"] / self.d_model
+        num_parameters += torch.sum(torch.outer(hidden_score, de_self_head_score)) * self.parameters_per_dim["de_self_head"] / self.d_model
+        num_parameters += torch.sum(torch.outer(hidden_score, de_cross_head_score)) * self.parameters_per_dim["de_cross_head"] / self.d_model
 
-        int_score = (intlayer_score * int_score).reshape(-1)
-        num_parameters += torch.sum(torch.outer(hidden_score, int_score)) * 2
+        en_intlayer_score = 1 - self.cdf_qz(0, self.en_intlayer_loga)  # 12
+        de_intlayer_score = 1 - self.cdf_qz(0, self.de_intlayer_loga)  # 12
+        en_int_score = 1 - self.cdf_qz(0, self.en_int_loga)  # 12 * 3072
+        de_int_score = 1 - self.cdf_qz(0, self.de_int_loga)  # 12 * 3072
+
+        en_intlayer_score = en_intlayer_score.unsqueeze(-1)
+        de_intlayer_score = de_intlayer_score.unsqueeze(-1)
+
+        en_int_score = (en_intlayer_score * en_int_score).reshape(-1)
+        de_int_score = (de_intlayer_score * de_int_score).reshape(-1)
+
+        # why times 2?
+        num_parameters += torch.sum(torch.outer(hidden_score, en_int_score)) * 2
+        num_parameters += torch.sum(torch.outer(hidden_score, de_int_score)) * 2
+        
         return num_parameters
 
 
