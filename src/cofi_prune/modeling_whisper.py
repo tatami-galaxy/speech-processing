@@ -430,7 +430,10 @@ class SparseWhisperAttention(nn.Module):
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             # value matrix after X @ V
             # b x num_heads x seq_len x head_dim
-            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            value_states = self._shape(self.v_proj(hidden_states), -1, bsz)  ## nan at layer 10
+
+            if not self.is_decoder:
+                print(torch.isnan(hidden_states).any())
 
         # decoder specific
         if self.is_decoder:
@@ -452,7 +455,7 @@ class SparseWhisperAttention(nn.Module):
         # b*num_heads x seq_len x head_dim
         key_states = key_states.reshape(*proj_shape)
         # b*num_heads x seq_len x head_dim
-        value_states = value_states.reshape(*proj_shape)
+        value_states = value_states.reshape(*proj_shape)  ## nan at layer 10
 
         src_len = key_states.size(1)
 
@@ -504,7 +507,7 @@ class SparseWhisperAttention(nn.Module):
         ## Multiply softmax(QK) with V ##
 
         # b*num_heads x seq_len x head_dim
-        attn_output = torch.bmm(attn_probs, value_states)
+        attn_output = torch.bmm(attn_probs, value_states) ## nan at layer 10
 
         if attn_output.size() != (bsz * self.num_heads, tgt_len, self.head_dim):
             raise ValueError(
@@ -528,7 +531,6 @@ class SparseWhisperAttention(nn.Module):
 
         attn_output = attn_output.transpose(1, 2)
 
-
         # Use the `embed_dim` from the config (stored in the class) rather than `hidden_state` because `attn_output` can be
         # partitioned across GPUs when using tensor-parallelism.
         # b x seq_len x embed_dim
@@ -538,7 +540,7 @@ class SparseWhisperAttention(nn.Module):
         ## MHA output matrix ##
 
         # b x seq_len x embed_dim
-        attn_output = self.out_proj(attn_output)
+        attn_output = self.out_proj(attn_output) 
 
         # apply mha mask
         # encoder mha mask
@@ -1115,6 +1117,7 @@ class SparseWhisperEncoder(SparseWhisperPreTrainedModel):
                         (head_mask[idx] if head_mask is not None else None),
                     )
                 else:
+                    print(idx)
                     layer_outputs = encoder_layer(
                         hidden_states,
                         None,

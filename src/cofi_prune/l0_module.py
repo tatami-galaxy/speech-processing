@@ -232,15 +232,14 @@ class L0Module(Module):
         self.de_intlayer_loga = self.initialize_parameters(n_layer_de)
         # encoder
         self.add_one_module(self.en_intlayer_loga, type="en_ffn", 
-                            parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
+                            parameter_per_dim=None, size=self.ffn_num_per_layer,
                             shape=[n_layer_en])
         # decoder
         self.add_one_module(self.de_intlayer_loga, type="de_ffn", 
-                            parameter_per_dim=self.params_per_ffn_layer, size=self.ffn_num_per_layer,
+                            parameter_per_dim=None, size=self.ffn_num_per_layer,
                             shape=[n_layer_de])
         self.reset_loga(self.en_intlayer_loga, mean=10)
         self.reset_loga(self.de_intlayer_loga, mean=10)
-        # change in prunable_model_size?
         #logger.info(f"Initialized ffn. Prunable_model_size = {self.prunable_model_size}")
 
 
@@ -315,15 +314,16 @@ class L0Module(Module):
 
 
     # change #
-    def get_num_parameters_and_constraint_for_hidden(self): #! calculate the current parsity
+    def get_num_parameters_and_constraint(self): #! calculate the current sparsity
         num_parameters = 0
-       
+        
+        # attn scores
         # 12 * 1 * 1
         # 12 * 12 * 1
         en_mha_score, de_self_mha_score, de_cross_mha_score, en_head_score, de_self_head_score, de_cross_head_score = self.transform_scores_for_head()
         hidden_score = 1 - self.cdf_qz(0, self.hidden_loga) # 768
 
-        if any(s for s in (en_mha_score, de_self_mha_score, de_cross_mha_score) is not None):
+        if any(s is not None for s in (en_mha_score, de_self_mha_score, de_cross_mha_score)):
             # head score x mha score
             if en_mha_score is not None:
                 en_head_score = (en_mha_score * en_head_score).reshape(-1)
@@ -341,6 +341,7 @@ class L0Module(Module):
         num_parameters += torch.sum(torch.outer(hidden_score, de_self_head_score)) * self.parameters_per_dim["de_self_head"] / self.d_model
         num_parameters += torch.sum(torch.outer(hidden_score, de_cross_head_score)) * self.parameters_per_dim["de_cross_head"] / self.d_model
 
+        # ffn scores
         en_intlayer_score = 1 - self.cdf_qz(0, self.en_intlayer_loga)  # 12
         de_intlayer_score = 1 - self.cdf_qz(0, self.de_intlayer_loga)  # 12
         en_int_score = 1 - self.cdf_qz(0, self.en_int_loga)  # 12 * 3072
@@ -353,8 +354,12 @@ class L0Module(Module):
         de_int_score = (de_intlayer_score * de_int_score).reshape(-1)
 
         # why times 2?
-        num_parameters += torch.sum(torch.outer(hidden_score, en_int_score)) * 2
-        num_parameters += torch.sum(torch.outer(hidden_score, de_int_score)) * 2
+        #num_parameters += torch.sum(torch.outer(hidden_score, en_int_score)) * 2
+        #num_parameters += torch.sum(torch.outer(hidden_score, de_int_score)) * 2
+
+        # E (score) x num_parameters
+        num_parameters += torch.sum(torch.outer(hidden_score, en_int_score)) * self.parameters_per_dim["en_ffn_dim"] / self.d_model
+        num_parameters += torch.sum(torch.outer(hidden_score, de_int_score)) * self.parameters_per_dim["de_ffn_dim"] / self.d_model
         
         return num_parameters
 
@@ -368,7 +373,7 @@ class L0Module(Module):
     def lagrangian_regularization(self, pruned_steps):
 
         target_sparsity = self.target_sparsity
-        expected_size = self.get_num_parameters_and_constraint_for_hidden() #! calculate \bar s
+        expected_size = self.get_num_parameters_and_constraint() #! calculate \bar s
         expected_sparsity = 1 - expected_size / self.prunable_model_size
         if self.lagrangian_warmup > 0:
             target_sparsity = self.get_target_sparsity(pruned_steps)

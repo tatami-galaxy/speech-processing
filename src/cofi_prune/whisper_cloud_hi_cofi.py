@@ -204,14 +204,14 @@ class CoFiTrainer:
             inputs[key] = zs[key]
 
 
-    def train_step(self, model, inputs):
+    def train_step(self, inputs):
 
-        model.train()
+        self.model.train()
 
         if self.l0_module is not None:
             self.l0_module.train()
 
-        with self.accelerator.accumulate(model):
+        with self.accelerator.accumulate(self.model):
                 
                 # add distill loss here
                 distill_loss = None
@@ -220,21 +220,25 @@ class CoFiTrainer:
                     with torch.no_grad():
                         pass
                 else:
-                    outputs = model(**inputs)  # make sure model takes zs
+                    outputs = self.model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
+
+                self.accelerator.print('loss : {}'.format(loss))
 
                 lagrangian_loss = None
                 if self.start_prune:
                     # lagrangian_loss, expected_sparsity, target_sparsity
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
+                    self.accelerator.print('lag loss : {}'.format(lagrangian_loss))
                     loss += lagrangian_loss
 
                 # backward
                 self.accelerator.backward(loss)
 
                 # clip grad norm
+                # error : clip_grad_norm_ returns inf
                 if self.accelerator.sync_gradients:
-                    self.accelerator.clip_grad_norm_(model.parameters(), self.args.max_grad_norm)
+                    self.accelerator.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
 
                 # step
                 self.optimizer.step()
@@ -249,7 +253,7 @@ class CoFiTrainer:
                     self.l0_module.constrain_parameters()
 
                 # zero grad
-                model.zero_grad()
+                self.model.zero_grad()
                 if self.l0_module is not None:
                     self.l0_module.zero_grad()
                 self.optimizer.zero_grad()
@@ -447,15 +451,15 @@ class CoFiTrainer:
         self.create_optimizer_and_scheduler(num_training_steps=self.train_steps, build_l0_optimizer = self.start_prune)
 
         # model
-        model = self.model
+        #model = self.model
 
         # prepare everything for accelerator
         # any instruction using your training dataloader length,
         # for instance if you need the number of total training steps
         # to create a learning rate scheduler) should go after the call to prepare()
         # works with none teacher
-        model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
-            model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
+        self.model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler = self.accelerator.prepare(
+            self.model, self.teacher_model, self.l0_module, self.optimizer, self.l0_optimizer, self.lagrangian_optimizer, train_dataloader, eval_dataloader, self.lr_scheduler
         )
 
         self.accelerator.log({
@@ -507,9 +511,9 @@ class CoFiTrainer:
 
 
         max_length = (
-            args.generation_max_length if args.generation_max_length is not None else model.config.max_length
+            args.generation_max_length if args.generation_max_length is not None else self.model.config.max_length
         )
-        num_beams = args.num_beams if args.num_beams is not None else model.config.num_beams
+        num_beams = args.num_beams if args.num_beams is not None else self.model.config.num_beams
         gen_kwargs = {"max_new_tokens": max_length, "num_beams": num_beams}
         # generation config
         generation_config = make_generation_config()
@@ -521,7 +525,7 @@ class CoFiTrainer:
         #reg_loss = torch.tensor(0.0).to(self.args.device)
         #lag_loss = torch.tensor(0.0).to(self.args.device)
 
-        model.zero_grad()
+        self.model.zero_grad()
         if self.l0_module is not None:
             self.l0_module.zero_grad()
 
@@ -562,10 +566,7 @@ class CoFiTrainer:
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
                 # train step
-                loss_terms = self.train_step(model, batch)
-
-                print(loss_terms)
-                quit()
+                loss_terms = self.train_step(batch)
 
                 progress_bar.update(1)
 
@@ -573,16 +574,16 @@ class CoFiTrainer:
                 if (self.global_step + 1) % args.eval_steps == 0:
 
                     self.evaluate(eval_dataloader)
-                    model.eval()
+                    self.model.eval()
                     val_loss = 0
                     for batch in eval_dataloader:
                         with torch.no_grad():
-                            outputs = model(**batch)
+                            outputs = self.model(**batch)
                             val_loss += outputs.loss.item()
 
                         # compute metric
                         # generate and calculate cer 
-                        output_ids = accelerator.unwrap_model(model).generate(
+                        output_ids = self.accelerator.unwrap_model(self.model).generate(
                             batch["input_features"],
                             generation_config=generation_config,
                             task=args.task,
@@ -866,7 +867,7 @@ def run():
     parser.add_argument(
         '--target_sparsity',
         type=float,
-        default=0,
+        default=0.95,
     )
     parser.add_argument(
         '--prepruning_finetune_steps',
@@ -889,9 +890,9 @@ def run():
         action="store_true",
     )
     parser.add_argument(
-        '--max_grad_norm ',
+        '--max_grad_norm',
         type=float,
-        default=1.0,
+        default=1.0, # 1.0
     )
 
 
