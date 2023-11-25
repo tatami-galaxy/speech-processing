@@ -44,6 +44,8 @@ import evaluate
 from modeling_whisper import SparseWhisperForConditionalGeneration
 from l0_module import L0Module
 
+from transformers.debug_utils import DebugUnderflowOverflow
+
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
@@ -542,6 +544,8 @@ class CoFiTrainer:
 
         tr_loss = 0  # train loss before each eval
         lag_loss = 0  # lagrangian loss before each eval
+
+        debug_overflow = DebugUnderflowOverflow(self.model)
 
         while True:
 
