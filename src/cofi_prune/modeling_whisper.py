@@ -1117,7 +1117,6 @@ class SparseWhisperEncoder(SparseWhisperPreTrainedModel):
                         (head_mask[idx] if head_mask is not None else None),
                     )
                 else:
-                    #print(idx)
                     layer_outputs = encoder_layer(
                         hidden_states,
                         None,
