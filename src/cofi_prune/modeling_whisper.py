@@ -432,8 +432,8 @@ class SparseWhisperAttention(nn.Module):
             # b x num_heads x seq_len x head_dim
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)  ## nan at layer 10
 
-            if not self.is_decoder:
-                print(torch.isnan(hidden_states).any())
+            #if not self.is_decoder:
+                #print(torch.isnan(hidden_states).any())
 
         # decoder specific
         if self.is_decoder:
@@ -1117,7 +1117,7 @@ class SparseWhisperEncoder(SparseWhisperPreTrainedModel):
                         (head_mask[idx] if head_mask is not None else None),
                     )
                 else:
-                    print(idx)
+                    #print(idx)
                     layer_outputs = encoder_layer(
                         hidden_states,
                         None,
