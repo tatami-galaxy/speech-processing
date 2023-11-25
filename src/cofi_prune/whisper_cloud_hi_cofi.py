@@ -276,7 +276,7 @@ class CoFiTrainer:
         # wandb.log(output.metrics)
         output.metrics["step"] = self.global_step
 
-        logger.info(f"Evaluating: {output.metrics}")
+        #logger.info(f"Evaluating: {output.metrics}")
 
         eval_score = 0
 
