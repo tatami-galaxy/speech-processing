@@ -843,7 +843,7 @@ def run():
     )
     parser.add_argument(
         "--mixed_precision",
-        default='fp16',
+        default='no',
         type=str,
     )
     parser.add_argument(
@@ -922,6 +922,9 @@ def run():
         data_str = args.data_dir.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
     print('output directory set to : {}'.format(args.output_dir))
+
+    # accelerator mixed precision
+    print('mixed precision set to : {}. fp16, fp8 may cause overflow/underflow'.format(args.mixed_precision))
     
 
     # initialize accelerator
