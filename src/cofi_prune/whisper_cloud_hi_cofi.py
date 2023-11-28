@@ -264,87 +264,22 @@ class CoFiTrainer:
                 if self.lagrangian_optimizer is not None:
                     self.lagrangian_optimizer.zero_grad()
 
-                return loss.detach(), lagrangian_loss.detach()  # other losses
+                return loss.detach(), lagrangian_loss.detach()  # other losses (distill loss)
 
 
-    def evaluate(self, eval_dataloader):
-
-        output = self.prediction_loop(
-            eval_dataloader, description="Evaluation")
-
-        self.log(output.metrics)
-        # wandb.log(output.metrics)
-        output.metrics["step"] = self.global_step
-
-        #logger.info(f"Evaluating: {output.metrics}")
-
-        eval_score = 0
-
-        name = glue_tasks[self.model.config.finetuning_task]
-        if isinstance(name, str):
-            if name in output.metrics:
-                eval_score = output.metrics[name]
-        else:
-            for na in name:
-                if na in output.metrics:
-                    eval_score = output.metrics[na]
-                    break
-
-        # logger.info(f"starting saving best: {self.global_step} {self.start_saving_best}")
-
-        if self.start_saving_best:
-            best_so_far = self.eval_counter.update(
-                self.epoch, self.global_step, eval_score)
-            if best_so_far:
-                best_dir = os.path.join(self.args.output_dir, "best")
-                if not os.path.exists(best_dir):
-                    os.makedirs(best_dir)
-
-                if self.l0_module is not None:
-                    zs = self.l0_module.forward(training=False)
-                    torch.save(zs, os.path.join(best_dir, "zs.pt"))
-                    torch.save(self.l0_module, os.path.join(
-                        best_dir, "l0_module.pt"))
-                logger.info(f"Saving the best model so far: [Epoch {int(self.epoch)} | Step: {self.global_step} | Model size: {output.metrics['remaining_params'] if 'remaining_params' in output.metrics else 'Full' } | Score: {round(eval_score, 5)}]")
-                self.model.save_pretrained(best_dir)
-
-        return output.metrics
-    
 
     def prediction_loop(self, dataloader, description, prediction_loss_only=None):
-        prediction_loss_only = (
-            prediction_loss_only if prediction_loss_only is not None else self.args.prediction_loss_only
-        )
 
         # disable output hidden states and attention during evaluation
         self.model.config.output_hidden_states = False
         self.model.config.output_attentions = False
 
-        model = self.model
-
-        # multi-gpu eval
-        model = self.model
-
         batch_size = dataloader.batch_size
-        logger.info("***** Running %s *****", description)
-        logger.info("  Num examples = %d", self.num_examples(dataloader))
-        logger.info("  Batch size = %d", batch_size)
 
-        # Initialize containers
-        # losses/preds/labels on GPU/TPU (accumulated for eval_accumulation_steps)
-        losses_host = None
-        preds_host = None
-        labels_host = None
-        # losses/preds/labels on CPU (final containers)
         all_losses = None
         all_preds = None
         all_labels = None
-        model.eval()
-
-        if self.args.past_index >= 0:
-            self._past = None
-
-        disable_tqdm = not self.is_local_process_zero() or self.args.disable_tqdm
+        self.model.eval()
 
         zs = None
         if self.start_prune:
@@ -354,6 +289,8 @@ class CoFiTrainer:
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs)
 
+        # eval bar
+        #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
         for ii, inputs in enumerate(tqdm(dataloader, desc=description, disable=disable_tqdm)):
             if zs is not None:
                 if ii == 0:
@@ -427,6 +364,50 @@ class CoFiTrainer:
         self.model.config.output_attentions = True
 
         return PredictionOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics)
+    
+
+    def evaluate(self, eval_dataloader):
+
+        output = self.prediction_loop(
+            eval_dataloader, description="Evaluation")
+
+        self.log(output.metrics)
+        # wandb.log(output.metrics)
+        output.metrics["step"] = self.global_step
+
+        #logger.info(f"Evaluating: {output.metrics}")
+
+        eval_score = 0
+
+        name = glue_tasks[self.model.config.finetuning_task]
+        if isinstance(name, str):
+            if name in output.metrics:
+                eval_score = output.metrics[name]
+        else:
+            for na in name:
+                if na in output.metrics:
+                    eval_score = output.metrics[na]
+                    break
+
+        # logger.info(f"starting saving best: {self.global_step} {self.start_saving_best}")
+
+        if self.start_saving_best:
+            best_so_far = self.eval_counter.update(
+                self.epoch, self.global_step, eval_score)
+            if best_so_far:
+                best_dir = os.path.join(self.args.output_dir, "best")
+                if not os.path.exists(best_dir):
+                    os.makedirs(best_dir)
+
+                if self.l0_module is not None:
+                    zs = self.l0_module.forward(training=False)
+                    torch.save(zs, os.path.join(best_dir, "zs.pt"))
+                    torch.save(self.l0_module, os.path.join(
+                        best_dir, "l0_module.pt"))
+                logger.info(f"Saving the best model so far: [Epoch {int(self.epoch)} | Step: {self.global_step} | Model size: {output.metrics['remaining_params'] if 'remaining_params' in output.metrics else 'Full' } | Score: {round(eval_score, 5)}]")
+                self.model.save_pretrained(best_dir)
+
+        return output.metrics
 
 
     def train(self, args):
@@ -539,8 +520,6 @@ class CoFiTrainer:
 
         # main progress bar
         progress_bar = tqdm(range(self.global_step, self.train_steps), disable=not self.accelerator.is_main_process, position=0)
-        # eval bar
-        eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
         tr_loss = 0  # train loss before each eval
         lag_loss = 0  # lagrangian loss before each eval
@@ -570,7 +549,8 @@ class CoFiTrainer:
                     self.fill_inputs_with_zs(zs, batch) # use the zs
 
                 # train step
-                loss_terms = self.train_step(batch)
+                # recieve distill loss 
+                tr_loss, lag_loss = self.train_step(batch)
 
                 progress_bar.update(1)
 
