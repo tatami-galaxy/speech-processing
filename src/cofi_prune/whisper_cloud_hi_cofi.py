@@ -131,6 +131,8 @@ class CoFiTrainer:
         self.l0_module = l0_module
 
         self.accelerator = accelerator
+        self.tokenizer = tokenizer
+        self.processor = processor
 
         self.optimizer = None
         self.l0_optimizer = None
@@ -264,90 +266,83 @@ class CoFiTrainer:
                 if self.lagrangian_optimizer is not None:
                     self.lagrangian_optimizer.zero_grad()
 
-                return loss.detach(), lagrangian_loss.detach()  # other losses (distill loss)
+                return {
+                    'train_loss' : loss.detach().item(), 
+                    'lag_loss' : lagrangian_loss.detach().item(),
+                  }  # other losses (distill loss)
 
 
 
-    def prediction_loop(self, dataloader, description, prediction_loss_only=None):
+    def prediction_step(self, inputs, generation_config, gen_kwargs):
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            val_loss = outputs.loss.item()
+            
+        # compute metric
+        # generate and calculate cer 
+        output_ids = self.accelerator.unwrap_model(self.model).generate(
+            inputs["input_features"],
+            generation_config=generation_config,
+            task=self.args.task,
+            language=self.args.model_lang,
+            is_multilingual=True,
+            **gen_kwargs
+            )
+
+        # pad_acrss_processes to get equal length for each processs
+        output_ids = self.accelerator.pad_across_processes(output_ids, dim=1, pad_index=self.tokenizer.pad_token_id)
+        label_ids = self.accelerator.pad_across_processes(inputs["labels"], dim=1, pad_index=self.tokenizer.pad_token_id)
+
+        output_ids = self.accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
+        label_ids = self.accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
+                        
+        label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
+        predictions = self.processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        # we do not want to group tokens when computing the metrics
+        references = self.processor.batch_decode(
+            label_ids,
+            group_tokens=False,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+        for _, val in self.metrics.items():
+            self.metrics[val].add_batch(predictions=predictions, references=references)
+
+        return val_loss
+
+
+
+    def prediction_loop(self, dataloader, generation_config, gen_kwargs, description):
 
         # disable output hidden states and attention during evaluation
         self.model.config.output_hidden_states = False
         self.model.config.output_attentions = False
+        eval_loss = 0
 
-        batch_size = dataloader.batch_size
-
-        all_losses = None
-        all_preds = None
-        all_labels = None
         self.model.eval()
 
         zs = None
         if self.start_prune:
             self.l0_module.eval()
-            zs = self.l0_module.forward(training=False)
+            zs = self.l0_module.forward(training=False)  # real masks
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs)
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
-        for ii, inputs in enumerate(tqdm(dataloader, desc=description, disable=disable_tqdm)):
+        for ii, inputs in enumerate(tqdm(dataloader, desc=description)):
             if zs is not None:
-                if ii == 0:
-                    logger.info(f"Putting zs {zs.keys()} into inputs:")
-                self.fill_inputs_with_zs(zs, inputs) #! use the zs
-            loss, logits, labels = self.prediction_step(
-                model, inputs, prediction_loss_only)
+                #if ii == 0:
+                    #logger.info(f"Putting zs {zs.keys()} into inputs:")
+                self.fill_inputs_with_zs(zs, inputs) # use the zs
+            # prediction step
+            # metric added to self.metrics
+            eval_loss += self.prediction_step(inputs, generation_config, gen_kwargs)
 
-            batch_size = inputs[list(inputs.keys())[0]].shape[0]
+        results = {}
 
-            if logits is not None:
-                preds_host = logits if preds_host is None else nested_concat(
-                    preds_host, logits)
-            if labels is not None:
-                labels_host = labels if labels_host is None else nested_concat(
-                    labels_host, labels)
-            if loss is not None:
-                if type(loss) == float:
-                    losses = [loss] * batch_size
-                    if losses_host is None:
-                        losses_host = losses
-                    else:
-                        losses_host.extend(losses)
-                else:
-                    losses = loss.repeat(batch_size)
-                    losses_host = losses if losses_host is None else torch.cat(
-                        (losses_host, losses), dim=0)
-
-        if self.args.past_index and hasattr(self, "_past"):
-            # Clean the state at the end of the evaluation.py loop
-            delattr(self, "_past")
-
-        if losses_host is not None:
-            if not torch.is_tensor(losses_host):
-                losses_host = torch.tensor(losses_host)
-            losses = nested_numpify(losses_host)
-            all_losses = losses if all_losses is None else np.concatenate(
-                (all_losses, losses), axis=0)
-        if preds_host is not None:
-            logits = nested_numpify(preds_host)
-            all_preds = logits if all_preds is None else nested_concat(
-                all_preds, logits, padding_index=-100)
-        if labels_host is not None:
-            labels = nested_numpify(labels_host)
-            all_labels = labels if all_labels is None else nested_concat(
-                all_labels, labels, padding_index=-100)
-
-        if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
-            metrics = self.compute_metrics(EvalPrediction(
-                predictions=all_preds, label_ids=all_labels))
-        else:
-            metrics = {}
-
-        if all_losses is not None and len(all_losses) > 0:
-            metrics["eval_loss"] = np.mean(all_losses)
-
-        if zs is not None:
+        if zs is not None:  ##
             lag_loss, expected_sparsity, target_sparsity = self.l0_module.lagrangian_regularization(
                 self.global_step - self.prepruning_finetune_steps)
 
@@ -361,15 +356,36 @@ class CoFiTrainer:
                 logger.info(f"Starting saving the best from epoch {int(self.epoch)} and step {self.global_step}")
 
         self.model.config.output_hidden_states = True
-        self.model.config.output_attentions = True
+        self.model.config.output_attentions = True    
+
+        for name, metric in self.metrics.items():
+            results[name] = metric.compute()
+        results['eval loss'] = eval_loss/len(dataloader)
+        self.accelerator.print('results : {}'.format(results))
+        self.accelerator.log(results, step=self.global_step + 1)
+
+        # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
+        # saved to folders named `checkpoint-{global_step}`
+        # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
+        # if mixed precision was used, will also save a "scalar.bin" file
+        output_dir = f"checkpoint-{self.global_step + 1}"
+        if self.args.output_dir is not None:
+            output_dir = os.path.join(self.args.output_dir, output_dir)
+            self.accelerator.save_state(output_dir)
+            # save config
+            self.accelerator.wait_for_everyone()
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.config.save_pretrained(
+                output_dir, is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save
+            )
+
 
         return PredictionOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics)
     
 
-    def evaluate(self, eval_dataloader):
+    def evaluate(self, eval_dataloader, generation_config, gen_kwargs):
 
-        output = self.prediction_loop(
-            eval_dataloader, description="Evaluation")
+        output = self.prediction_loop(eval_dataloader, generation_config, gen_kwargs, description="Evaluation")
 
         self.log(output.metrics)
         # wandb.log(output.metrics)
@@ -550,14 +566,35 @@ class CoFiTrainer:
 
                 # train step
                 # recieve distill loss 
-                tr_loss, lag_loss = self.train_step(batch)
+                losses = self.train_step(batch)
+                tr_loss +=losses['train_loss']
+                lag_loss += losses['lag_loss']
+                # distil loss
 
                 progress_bar.update(1)
 
 
                 if (self.global_step + 1) % args.eval_steps == 0:
 
-                    self.evaluate(eval_dataloader)
+                    # log train losses
+                    tr_loss = tr_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
+                    lag_loss = lag_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
+                    # distill loss #
+
+                    self.accelerator.print('step : {}'.format(self.global_step + 1))
+                    self.accelerator.print('train_loss : {}'.format(tr_loss))
+                    self.accelerator.print('lag_loss : {}'.format(lag_loss))
+
+                    self.accelerator.log({
+                        "train_loss": tr_loss,
+                        "lag_loss": lag_loss,
+                        # distil loss #
+                    },
+                    step=self.global_step + 1,
+                    )
+
+                    self.evaluate(eval_dataloader, generation_config, gen_kwargs)
+
                     self.model.eval()
                     val_loss = 0
                     for batch in eval_dataloader:
@@ -1068,16 +1105,19 @@ def run():
         data_collator=data_collator,
         train_dataset=common_voice['train'],
         eval_dataset= common_voice['test'],
-        metrics=[cer, wer],
+        metrics={'cer': cer, 'wer': wer},
     )
 
+    accelerator.print('training')
     # train function
     cofi_trainer.train(args)
+
+    # make sure model is saved
 
     # end logging
     accelerator.end_training()
 
-
+    # run structural prune code (separate file)
             
 
 

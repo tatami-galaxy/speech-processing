@@ -232,11 +232,11 @@ class L0Module(Module):
         self.de_intlayer_loga = self.initialize_parameters(n_layer_de)
         # encoder
         self.add_one_module(self.en_intlayer_loga, type="en_ffn", 
-                            parameter_per_dim=None, size=self.ffn_num_per_layer,
+                            parameter_per_dim=None, size=self.ffn_num_per_layer,  # 1
                             shape=[n_layer_en])
         # decoder
         self.add_one_module(self.de_intlayer_loga, type="de_ffn", 
-                            parameter_per_dim=None, size=self.ffn_num_per_layer,
+                            parameter_per_dim=None, size=self.ffn_num_per_layer,  # 1
                             shape=[n_layer_de])
         self.reset_loga(self.en_intlayer_loga, mean=10)
         self.reset_loga(self.de_intlayer_loga, mean=10)
@@ -480,10 +480,10 @@ class L0Module(Module):
                 loga = self.z_logas[type]
                 z = self._sample_z(loga)
                 zs[f"{type}_z"] = z.reshape(self.shapes[type])
-        ## change ##
         else:
             for i, type in enumerate(self.types):
-                if type != "hidden": # hidden is not a per layer sample
+                # hidden is not a per layer sample
+                if type != "hidden":
                     loga_all_layers = self.z_logas[type]
                     for layer in range(len(loga_all_layers)):
                         loga = loga_all_layers[layer]
