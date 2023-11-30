@@ -327,7 +327,7 @@ class CoFiTrainer:
             zs = self.l0_module.forward(training=False)  # real masks
 
         if zs is not None:
-            pruned_model_size_info = self.l0_module.calculate_model_size(zs)
+            pruned_model_size_info = self.l0_module.calculate_model_size(zs)  ##
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
@@ -342,7 +342,7 @@ class CoFiTrainer:
 
         results = {}
 
-        if zs is not None:  ##
+        if zs is not None: 
             lag_loss, expected_sparsity, target_sparsity = self.l0_module.lagrangian_regularization(
                 self.global_step - self.prepruning_finetune_steps)
 
