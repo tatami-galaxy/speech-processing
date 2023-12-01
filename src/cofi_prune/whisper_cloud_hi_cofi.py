@@ -347,13 +347,10 @@ class CoFiTrainer:
                 self.global_step - self.prepruning_finetune_steps)
 
             expected_sparsity = round(expected_sparsity.item(), 5)
-            metrics.update(pruned_model_size_info)
-            metrics["expected_sparsity"] = expected_sparsity
-            metrics["target_sparsity"] = target_sparsity
-
-            if (not self.start_saving_best) and (expected_sparsity - self.additional_args.target_sparsity >= -self.additional_args.sparsity_epsilon):
-                self.start_saving_best = True
-                logger.info(f"Starting saving the best from epoch {int(self.epoch)} and step {self.global_step}")
+            results.update(pruned_model_size_info)
+            #results['lag_loss'] = lag_loss
+            results["expected_sparsity"] = expected_sparsity
+            results["target_sparsity"] = target_sparsity
 
         self.model.config.output_hidden_states = True
         self.model.config.output_attentions = True    
@@ -361,6 +358,14 @@ class CoFiTrainer:
         for name, metric in self.metrics.items():
             results[name] = metric.compute()
         results['eval loss'] = eval_loss/len(dataloader)
+
+        return results
+    
+
+    def evaluate(self, eval_dataloader, generation_config, gen_kwargs):
+
+        results = self.prediction_loop(eval_dataloader, generation_config, gen_kwargs, description="Evaluation")
+
         self.accelerator.print('results : {}'.format(results))
         self.accelerator.log(results, step=self.global_step + 1)
 
@@ -378,52 +383,6 @@ class CoFiTrainer:
             unwrapped_model.config.save_pretrained(
                 output_dir, is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save
             )
-
-
-        return PredictionOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics)
-    
-
-    def evaluate(self, eval_dataloader, generation_config, gen_kwargs):
-
-        output = self.prediction_loop(eval_dataloader, generation_config, gen_kwargs, description="Evaluation")
-
-        self.log(output.metrics)
-        # wandb.log(output.metrics)
-        output.metrics["step"] = self.global_step
-
-        #logger.info(f"Evaluating: {output.metrics}")
-
-        eval_score = 0
-
-        name = glue_tasks[self.model.config.finetuning_task]
-        if isinstance(name, str):
-            if name in output.metrics:
-                eval_score = output.metrics[name]
-        else:
-            for na in name:
-                if na in output.metrics:
-                    eval_score = output.metrics[na]
-                    break
-
-        # logger.info(f"starting saving best: {self.global_step} {self.start_saving_best}")
-
-        if self.start_saving_best:
-            best_so_far = self.eval_counter.update(
-                self.epoch, self.global_step, eval_score)
-            if best_so_far:
-                best_dir = os.path.join(self.args.output_dir, "best")
-                if not os.path.exists(best_dir):
-                    os.makedirs(best_dir)
-
-                if self.l0_module is not None:
-                    zs = self.l0_module.forward(training=False)
-                    torch.save(zs, os.path.join(best_dir, "zs.pt"))
-                    torch.save(self.l0_module, os.path.join(
-                        best_dir, "l0_module.pt"))
-                logger.info(f"Saving the best model so far: [Epoch {int(self.epoch)} | Step: {self.global_step} | Model size: {output.metrics['remaining_params'] if 'remaining_params' in output.metrics else 'Full' } | Score: {round(eval_score, 5)}]")
-                self.model.save_pretrained(best_dir)
-
-        return output.metrics
 
 
     def train(self, args):
@@ -595,78 +554,6 @@ class CoFiTrainer:
 
                     self.evaluate(eval_dataloader, generation_config, gen_kwargs)
 
-                    self.model.eval()
-                    val_loss = 0
-                    for batch in eval_dataloader:
-                        with torch.no_grad():
-                            outputs = self.model(**batch)
-                            val_loss += outputs.loss.item()
-
-                        # compute metric
-                        # generate and calculate cer 
-                        output_ids = self.accelerator.unwrap_model(self.model).generate(
-                            batch["input_features"],
-                            generation_config=generation_config,
-                            task=args.task,
-                            language=args.model_lang,
-                            is_multilingual=True,
-                            **gen_kwargs
-                        )
-
-                        # pad_acrss_processes to get equal length for each processs
-                        output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
-                        label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
-
-                        output_ids = accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
-                        label_ids = accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
-                        
-                        label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
-                        predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                        # we do not want to group tokens when computing the metrics
-                        references = processor.batch_decode(
-                            label_ids,
-                            group_tokens=False,
-                            skip_special_tokens=True,
-                            clean_up_tokenization_spaces=True
-                        )
-                        metric.add_batch(predictions=predictions, references=references)
-
-                        eval_bar.update(1)
-
-
-                    eval_bar.refresh()
-                    eval_bar.reset()
-
-                    cer_result = metric.compute()
-                    # add wer for hindi
-                    accelerator.print('step : {}, cer : {}'.format(self.global_step + 1, cer_result))
-                    accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
-                    accelerator.log({
-                        "cer": cer_result,
-                        "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
-                        "val_loss": val_loss / len(eval_dataloader)
-                    },
-                    step=self.global_step + 1,
-                    )
-
-                    # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
-                    # saved to folders named `checkpoint-{global_step}`
-                    # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
-                    # if mixed precision was used, will also save a "scalar.bin" file
-                    output_dir = f"checkpoint-{self.global_step + 1}"
-                    if args.output_dir is not None:
-                        output_dir = os.path.join(args.output_dir, output_dir)
-                        accelerator.save_state(output_dir)
-                        # save config
-                        accelerator.wait_for_everyone()
-                        unwrapped_model = accelerator.unwrap_model(model)
-                        #model.config.save_pretrained(output_dir)
-                        unwrapped_model.config.save_pretrained(
-                            output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-                        )
-
-                    model.train()
-                    total_loss = 0
 
                 self.global_step += 1
 
