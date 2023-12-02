@@ -227,13 +227,10 @@ class CoFiTrainer:
                     outputs = self.model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
 
-                self.accelerator.print('loss : {}'.format(loss))
-
                 lagrangian_loss = None
                 if self.start_prune:
                     # lagrangian_loss, expected_sparsity, target_sparsity
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
-                    self.accelerator.print('lag loss : {}'.format(lagrangian_loss))
                     loss += lagrangian_loss
 
                 # backward
