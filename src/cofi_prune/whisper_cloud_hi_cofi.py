@@ -305,8 +305,8 @@ class CoFiTrainer:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=True
         )
-        for _, val in self.metrics.items():
-            self.metrics[val].add_batch(predictions=predictions, references=references)
+        for key, val in self.metrics.items():
+            val.add_batch(predictions=predictions, references=references)
 
         return val_loss
 

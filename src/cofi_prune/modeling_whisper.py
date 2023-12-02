@@ -1124,10 +1124,10 @@ class SparseWhisperEncoder(SparseWhisperPreTrainedModel):
                         output_attentions=output_attentions,
                         # cofi encoder layer args
                         hidden_z=hidden_z,
-                        en_head_z_l=en_head_z[idx],
-                        en_mha_z_l=en_mha_z[idx],
-                        en_ffn_dim_z_l=en_ffn_dim_z[idx],
-                        en_ffn_z_l=en_ffn_z[idx],
+                        en_head_z_l = en_head_z[idx] if en_head_z is not None else None,
+                        en_mha_z_l=en_mha_z[idx] if en_mha_z is not None else None,
+                        en_ffn_dim_z_l = en_ffn_dim_z[idx] if en_ffn_dim_z is not None else None,
+                        en_ffn_z_l = en_ffn_z[idx] if en_ffn_z is not None else None
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1401,12 +1401,12 @@ class SparseWhisperDecoder(SparseWhisperPreTrainedModel):
                     use_cache=use_cache,
                     # cofi decoder layer args
                     hidden_z=hidden_z,
-                    de_self_head_z_l=de_self_head_z[idx],
-                    de_self_mha_z_l=de_self_mha_z[idx],
-                    de_cross_head_z_l=de_cross_head_z[idx],
-                    de_cross_mha_z_l = de_cross_mha_z[idx],
-                    de_ffn_dim_z_l=de_ffn_dim_z[idx],
-                    de_ffn_z_l=de_ffn_z[idx],
+                    de_self_head_z_l=de_self_head_z[idx] if de_self_head_z is not None else None,
+                    de_self_mha_z_l = de_self_mha_z[idx] if de_self_mha_z is not None else None,
+                    de_cross_head_z_l = de_cross_head_z[idx] if de_cross_head_z is not None else None,
+                    de_cross_mha_z_l = de_cross_mha_z[idx] if de_cross_mha_z is not None else None,
+                    de_ffn_dim_z_l = de_ffn_dim_z[idx] if de_ffn_dim_z is not None else None,
+                    de_ffn_z_l = de_ffn_z[idx] if de_ffn_z is not None else None
                 )
             hidden_states = layer_outputs[0]
 
