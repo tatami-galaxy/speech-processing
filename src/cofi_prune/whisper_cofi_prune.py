@@ -100,6 +100,245 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         batch["labels"] = labels
 
         return batch
+    
+
+def load_model(model_path, model_class, zs=None):
+    assert zs is not None
+    model = load_model_with_zs(model_path, model_class, zs)
+    print(f"Model Size: {calculate_parameters(model)}")
+    return model
+
+
+def load_model_with_zs(model_path, model_class, zs=None):
+    config_path = os.path.join(model_path, "config.json")
+    if os.path.exists(config_path):
+        config = AutoConfig.from_pretrained(model_path)
+    model = model_class.from_pretrained(model_path, config=config)
+    p = os.path.join(model_path, "pytorch_model.bin")
+    loaded_weights = torch.load(p, map_location="cpu")
+    model.load_state_dict(loaded_weights)
+    print(f"Load weights from {model_path}")
+
+    update_params(model, zs)
+    print(f"Model Size before pruning: {calculate_parameters(model)}")
+    prune_model_with_z(zs, model)
+    print(f"Model Size after pruning: {calculate_parameters(model)}")
+    return model
+
+
+def prune_model_with_z(zs, model):
+    if zs is None:
+        return None, None
+    bert = model.bert if hasattr(model, "bert") else model.roberta
+
+    if "head_z" in zs:
+        head_z = zs.get("head_z", None)
+        head_layer_z = zs.get("head_layer_z", None)
+
+        prune_heads = {}
+        for layer in range(len(head_z)):
+            head_z_layer = head_z[layer].cpu().squeeze().clone()
+            if head_layer_z is not None:
+                head_z_layer *= head_layer_z[layer]
+            index = torch.where(head_z_layer == 0)[0].tolist()
+            prune_heads[layer] = index
+
+            print(
+                f"Layer {layer}, heads {' '.join([str(i) for i in index])} pruned.")
+        model.prune_heads(prune_heads)
+
+    kept_intermediate_dims = None
+    if "intermediate_z" in zs:
+        kept_intermediate_dims = {}
+        intermediate_zs = zs["intermediate_z"]
+        mlp_z = zs.get("mlp_z", None)
+        for layer in range(len(intermediate_zs)):
+            intermediate_z_layer = intermediate_zs[layer].squeeze()
+            intermediate_z_layer = intermediate_z_layer.cpu().clone()
+            if mlp_z is not None:
+                intermediate_z_layer *= mlp_z[layer]
+            kept_intermediate_dims[layer] = intermediate_z_layer.nonzero(
+            ).reshape(-1).tolist()
+
+    def prune_layer_norm(layernorm, index):
+        layernorm.weight = torch.nn.parameter.Parameter(
+            layernorm.weight.index_select(0, index))
+        layernorm.bias = torch.nn.parameter.Parameter(
+            layernorm.bias.index_select(0, index))
+        layernorm.normalized_shape = (len(index),)
+
+    def prune_layer(layer, index, dim):
+        layer = prune_linear_layer(layer, index, dim=dim)
+        return layer
+
+    if "hidden_z" in zs:
+        hidden_zs = zs["hidden_z"]
+        index = torch.LongTensor(
+            hidden_zs.squeeze().nonzero().squeeze().tolist())
+        index = index.to(model.device)
+
+        bert.embeddings.word_embeddings.weight = torch.nn.parameter.Parameter(
+            bert.embeddings.word_embeddings.weight.index_select(1, index).clone().detach())
+        bert.embeddings.word_embeddings.embedding_dim = index.shape[0]
+        bert.embeddings.position_embeddings.weight = torch.nn.parameter.Parameter(
+            bert.embeddings.position_embeddings.weight.index_select(1, index).clone().detach())
+        bert.embeddings.position_embeddings.embedding_dim = index.shape[0]
+        bert.embeddings.token_type_embeddings.weight = torch.nn.parameter.Parameter(
+            bert.embeddings.token_type_embeddings.weight.index_select(1, index).clone().detach())
+        bert.embeddings.token_type_embeddings.embedding_dim = index.shape[0]
+        prune_layer_norm(bert.embeddings.LayerNorm, index)
+
+        for layer in range(0, 12):
+            if bert.encoder.layer[layer].attention.self.query is not None:
+                bert.encoder.layer[layer].attention.self.query = \
+                    prune_layer(
+                        bert.encoder.layer[layer].attention.self.query, index, dim=1)
+                bert.encoder.layer[layer].attention.self.key = \
+                    prune_layer(
+                        bert.encoder.layer[layer].attention.self.key, index, dim=1)
+            if bert.encoder.layer[layer].attention.self.value is not None:
+                bert.encoder.layer[layer].attention.self.value = \
+                    prune_layer(
+                        bert.encoder.layer[layer].attention.self.value, index, dim=1)
+                bert.encoder.layer[layer].attention.output.dense = \
+                    prune_layer(
+                        bert.encoder.layer[layer].attention.output.dense, index, dim=0)
+                prune_layer_norm(
+                    bert.encoder.layer[layer].attention.output.LayerNorm, index)
+            if bert.encoder.layer[layer].intermediate.dense is not None:
+                bert.encoder.layer[layer].intermediate.dense = \
+                    prune_layer(
+                        bert.encoder.layer[layer].intermediate.dense, index, dim=1)
+                bert.encoder.layer[layer].output.dense = \
+                    prune_layer(
+                        bert.encoder.layer[layer].output.dense, index, dim=0)
+                prune_layer_norm(
+                    bert.encoder.layer[layer].output.LayerNorm, index)
+
+        # accommodate for different models
+        if hasattr(model, "classifier"):
+            if hasattr(model.classifier, "dense"):
+                model.classifier.dense = prune_linear_layer(
+                    model.classifier.dense, index, dim=1)
+        if hasattr(model, "cls"):
+            if hasattr(model.cls, "dense"):
+                model.cls.dense = prune_linear_layer(
+                    model.classifier.dense, index, dim=1)
+        if hasattr(bert.pooler, "dense"):
+            bert.pooler.dense = prune_linear_layer(
+                bert.pooler.dense, index, dim=1)
+        if hasattr(model, "qa_outputs"):
+            model.qa_outputs = prune_linear_layer(
+                model.qa_outputs, index, dim=1)
+        if getattr(model, "layer_transformation", None) is not None:
+            model.layer_transformation = prune_linear_layer(
+                model.layer_transformation, index, dim=1)
+            print("layer transformation", model.layer_transformation.weight.shape)
+        if getattr(model, "mha_layer_transformation", None) is not None:
+            model.mha_layer_transformation = prune_linear_layer(
+                model.mha_layer_transformation, index, dim=1)
+            print("layer mha_layer_transformation",
+                  model.mha_layer_transformation.weight.shape)
+
+    if kept_intermediate_dims is not None:
+        prune_intermediate_layers(model, kept_intermediate_dims)
+
+    for layer in range(0, 12):
+        print("Layer:", layer)
+        if bert.encoder.layer[layer].attention.self.query is not None:
+            print(
+                "query:", bert.encoder.layer[layer].attention.self.query.weight.shape)
+            print(
+                "key:", bert.encoder.layer[layer].attention.self.key.weight.shape)
+        else:
+            print("query:", None)
+            print("key:", None)
+        if bert.encoder.layer[layer].attention.self.value is not None:
+            print(
+                "value:", bert.encoder.layer[layer].attention.self.value.weight.shape)
+            print(
+                "output:", bert.encoder.layer[layer].attention.output.dense.weight.shape)
+        else:
+            print("value:", None)
+            print("output:", None)
+        if bert.encoder.layer[layer].intermediate.dense is not None:
+            print(
+                "up:", bert.encoder.layer[layer].intermediate.dense.weight.shape)
+            print("down:", bert.encoder.layer[layer].output.dense.weight.shape)
+        else:
+            print("up", None)
+            print("down", None)
+
+
+def prune_intermediate_layers(model, keep_dims):
+    bert = model.bert if hasattr(model, "bert") else model.roberta
+    device = model.device
+    for layer in keep_dims:
+        if len(keep_dims[layer]) == 0:
+            bert.encoder.layer[layer].intermediate.dense = None
+            bert.encoder.layer[layer].output.dense = None
+        else:
+            bert.encoder.layer[layer].intermediate.dense = prune_linear_layer(
+                bert.encoder.layer[layer].intermediate.dense, index=torch.LongTensor(keep_dims[layer]).to(device), dim=0)
+            bert.encoder.layer[layer].output.dense = prune_linear_layer(
+                bert.encoder.layer[layer].output.dense, index=torch.LongTensor(keep_dims[layer]).to(device), dim=1)
+
+
+def load_zs(model_path):
+    if model_path.endswith("zs.pt"):
+        zs_path = model_path
+    else:
+        zs_path = os.path.join(model_path, "zs.pt")
+
+    if os.path.exists(zs_path):
+        zs = torch.load(zs_path, map_location="cpu")
+        if zs is None:
+            model_path = os.path.dirname(model_path)
+            l0_module = torch.load(os.path.join(
+                model_path, "l0_module.pt"), map_location="cpu")
+            zs = l0_module.forward(training=False)
+        return zs
+    else:
+        return None
+
+
+def load_pruned_model(model, weights):
+    config = model.config
+    dim_per_head = config.hidden_size // config.num_attention_heads
+    zs = {}
+
+    architecture = config.architectures[0].lower()
+    bert_name = "roberta" if "roberta" in architecture else "bert"
+
+    hidden_z = torch.zeros(config.hidden_size)
+    hidden_z[:weights[f"{bert_name}.embeddings.word_embeddings.weight"].shape[1]] = 1
+    zs["hidden_z"] = hidden_z
+
+    head_z = torch.zeros(config.num_hidden_layers, config.num_attention_heads)
+    head_layer_z = torch.zeros(config.num_hidden_layers)
+    for i in range(config.num_hidden_layers):
+        key = f"{bert_name}.encoder.layer.{i}.attention.output.dense.weight"
+        if key in weights:
+            remaining_heads = weights[key].shape[-1] // dim_per_head
+            head_z[i, :remaining_heads] = 1
+            head_layer_z[i] = 1
+    zs["head_z"] = head_z
+    zs["head_layer_z"] = head_layer_z
+
+    int_z = torch.zeros(config.num_hidden_layers, config.intermediate_size)
+    mlp_z = torch.zeros(config.num_hidden_layers)
+    for i in range(config.num_hidden_layers):
+        key = f"bert.encoder.layer.{i}.output.dense.weight"
+        if key in weights:
+            remaining_int_dims = weights[key].shape[-1]
+            int_z[i, :remaining_int_dims] = 1
+            mlp_z[i] = 1
+    zs["intermediate_z"] = int_z
+    zs["mlp_z"] = mlp_z
+
+    prune_model_with_z(zs, model)
+    model.load_state_dict(weights, strict=False)
+    return model
 
 
 class CoFiTrainer:
@@ -208,68 +447,6 @@ class CoFiTrainer:
             inputs[key] = zs[key]
 
 
-    def train_step(self, inputs):
-
-        self.model.train()
-
-        if self.l0_module is not None:
-            self.l0_module.train()
-
-        with self.accelerator.accumulate(self.model):
-                
-                # add distill loss here
-                distill_loss = None
-                distill_ce_loss = None
-                if self.teacher_model is not None:
-                    with torch.no_grad():
-                        pass
-                else:
-                    outputs = self.model(**inputs)  # make sure model takes zs
-                loss = outputs.loss
-
-                lagrangian_loss = None
-                if self.start_prune:
-                    # lagrangian_loss, expected_sparsity, target_sparsity
-                    lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
-                    loss += lagrangian_loss
-
-                # backward
-                self.accelerator.backward(loss)
-
-                # clip grad norm
-                # error : clip_grad_norm_ returns inf
-                if self.accelerator.sync_gradients:
-                    self.accelerator.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
-
-                # step
-                self.optimizer.step()
-                if self.l0_module is not None and self.l0_optimizer is not None:
-                    self.l0_optimizer.step()
-                    self.lagrangian_optimizer.step()
-                if self.lr_scheduler is not None:
-                    self.lr_scheduler.step()
-
-                # l0 constrain_parameters
-                if self.l0_module is not None:
-                    self.l0_module.constrain_parameters()
-
-                # zero grad
-                self.model.zero_grad()
-                if self.l0_module is not None:
-                    self.l0_module.zero_grad()
-                self.optimizer.zero_grad()
-                if self.l0_optimizer is not None:
-                    self.l0_optimizer.zero_grad()
-                if self.lagrangian_optimizer is not None:
-                    self.lagrangian_optimizer.zero_grad()
-
-                return {
-                    'train_loss' : loss.detach().item(), 
-                    'lag_loss' : lagrangian_loss.detach().item(),
-                  }  # other losses (distill loss)
-
-
-
     def prediction_step(self, inputs, generation_config, gen_kwargs):
         with torch.no_grad():
             outputs = self.model(**inputs)
@@ -366,25 +543,11 @@ class CoFiTrainer:
         self.accelerator.print('results : {}'.format(results))
         self.accelerator.log(results, step=self.global_step + 1)
 
-        # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
-        # saved to folders named `checkpoint-{global_step}`
-        # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
-        # if mixed precision was used, will also save a "scalar.bin" file
-        output_dir = f"checkpoint-{self.global_step + 1}"
-        if self.args.output_dir is not None:
-            output_dir = os.path.join(self.args.output_dir, output_dir)
-            self.accelerator.save_state(output_dir)
-            # save config
-            self.accelerator.wait_for_everyone()
-            unwrapped_model = self.accelerator.unwrap_model(self.model)
-            unwrapped_model.config.save_pretrained(
-                output_dir, is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save
-            )
-
-            ## save zs ##
 
 
-    def train(self, args):
+    def prune_and_eval(self, args):
+
+        # first prune model #
 
         # data loaders
         train_dataloader = DataLoader(
@@ -610,17 +773,6 @@ def run():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
-        "--resume_from_checkpoint",
-        default=None,
-        type=str,
-        help="checkpoint directory to load model from",
-    )
-    parser.add_argument(
-        "--skip_steps",
-        action="store_true",
-        help="whether to skip steps in dataloader (checkpoint)"
-    )
-    parser.add_argument(
         "--model_lang",
         default='hindi',
         type=str,
@@ -660,11 +812,6 @@ def run():
         help="A list of tokens that will be suppressed at generation."
     )
     parser.add_argument(
-        '--max_train_samples',
-        type=int,
-        default=None
-    )
-    parser.add_argument(
         '--max_test_samples',
         type=int,
         default=None
@@ -688,23 +835,12 @@ def run():
         help="The number of processes to use for the preprocessing."
     )
     parser.add_argument(
-        "--train_batch_size",
-        default=4,
-        type=int,
+        "--do_eval",
+        action="store_true",
     )
     parser.add_argument(
         "--eval_batch_size",
         default=8,
-        type=int,
-    )
-    parser.add_argument(
-        "--train_steps",
-        default=5000,
-        type=int,
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        default=0,
         type=int,
     )
     parser.add_argument(
@@ -713,35 +849,8 @@ def run():
         type=int,
     )
     parser.add_argument(
-        "--eval_steps",
-        default=1000,
-        type=int,
-    )
-    parser.add_argument(
         "--learning_rate",
         default=1e-5,
-        type=float,
-    )
-    parser.add_argument(
-        "--weight_decay",
-        default=0.0,
-        type=float,
-        help="Weight decay if we apply some."
-    )
-    parser.add_argument(
-        "--adam_epsilon",
-        default=1e-8,
-        type=float,
-        help="Epsilon for Adam optimizer."
-    )
-    parser.add_argument(
-        "--adam_beta1",
-        default=0.9,
-        type=float,
-    )
-    parser.add_argument(
-        "--adam_beta2",
-        default=0.999,
         type=float,
     )
     parser.add_argument(
@@ -823,7 +932,7 @@ def run():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_pruned'
     print('output directory set to : {}'.format(args.output_dir))
 
     # accelerator mixed precision
@@ -839,10 +948,8 @@ def run():
     )
     # we need to initialize the trackers we use, and also store our configuration
     track_config = {
-        "lr": args.learning_rate,
-        "train_steps": args.train_steps,
         "seed": args.seed,
-        "train_batch_size": args.train_batch_size,
+        "eval_batch_size": args.eval_batch_size,
     }
     #run = os.path.split(__file__)[-1].split(".")[0]
     accelerator.init_trackers('runs', track_config)
@@ -877,9 +984,6 @@ def run():
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
-
-    # teacher #
-    teacher_model = None
 
     # distil setup #
 
@@ -986,7 +1090,6 @@ def run():
         tokenizer=tokenizer,
         processor=processor,
         l0_module=l0_module,
-        teacher_model=teacher_model,
         accelerator=accelerator,
         data_collator=data_collator,
         train_dataset=common_voice['train'],
@@ -996,7 +1099,7 @@ def run():
 
     accelerator.print('training')
     # train function
-    cofi_trainer.train(args)
+    cofi_trainer.prune_and_eval(args)
 
     # make sure model is saved
 
