@@ -324,7 +324,7 @@ class CoFiTrainer:
             zs = self.l0_module.forward(training=False)  # real masks
 
         if zs is not None:
-            pruned_model_size_info = self.l0_module.calculate_model_size(zs)  ##
+            pruned_model_size_info = self.l0_module.calculate_model_size(zs) 
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
@@ -373,6 +373,7 @@ class CoFiTrainer:
         output_dir = f"checkpoint-{self.global_step + 1}"
         if self.args.output_dir is not None:
             output_dir = os.path.join(self.args.output_dir, output_dir)
+            # only saves weights, not model config
             self.accelerator.save_state(output_dir)
             # save config
             self.accelerator.wait_for_everyone()
@@ -380,8 +381,12 @@ class CoFiTrainer:
             unwrapped_model.config.save_pretrained(
                 output_dir, is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save
             )
+            # save zs and l0 module
+            if self.l0_module is not None:
+                zs = self.l0_module.forward(training=False)
+                torch.save(zs, os.path.join(output_dir, 'zs_'+str(self.global_step+1)+'.pt'))
+                torch.save(self.l0_module, os.path.join(output_dir, 'l0_module'+str(self.global_step+1)+'.pt'))
 
-            ## save zs ##
 
 
     def train(self, args):

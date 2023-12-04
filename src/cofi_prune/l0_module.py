@@ -419,9 +419,13 @@ class L0Module(Module):
         return numpified_zs
 
 
-    # change #
+    # fix #
     def calculate_model_size(self, zs):
         numpified_zs = self.get_z_from_zs(zs)
+
+        print(numpified_zs)
+        quit()
+
         hidden_z = numpified_zs["hidden"]
         en_head_z = numpified_zs["en_head"]
         en_mha_z = numpified_zs["en_mha"].reshape(-1, 1)
@@ -452,6 +456,7 @@ class L0Module(Module):
         #de_cross_head_nums = np.outer((de_cross_head_z * de_cross_mha_z).reshape(-1), hidden_z).sum().item()
         #en_ffn_nums = np.outer((en_ffn_dim_z * en_ffn_z).reshape(-1), hidden_z).sum().item()
         #de_ffn_nums = np.outer((de_ffn_dim_z * de_ffn_z).reshape(-1), hidden_z).sum().item()
+
         en_head_nums = (en_head_z * en_mha_z).reshape(-1).sum().item()
         de_self_head_nums = (de_self_head_z * de_self_mha_z).reshape(-1).sum().item()
         de_cross_head_nums = (de_cross_head_z * de_cross_mha_z).reshape(-1).sum().item()
