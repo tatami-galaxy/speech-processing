@@ -321,7 +321,8 @@ class CoFiTrainer:
         zs = None
         if self.start_prune:
             self.l0_module.eval()
-            zs = self.l0_module.forward(training=False)  # real masks
+            # real masks
+            zs = self.l0_module.forward(training=False)  # contains zeros
             print(zs)
             quit()
 
