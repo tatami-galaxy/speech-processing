@@ -419,15 +419,9 @@ class L0Module(Module):
         return numpified_zs
 
 
-    # fix #
-    def calculate_model_size(self, zs):
+    def calculate_model_size_np(self, zs):
 
-        print(zs)
-        
         numpified_zs = self.get_z_from_zs(zs)
-
-        print(numpified_zs)
-        quit()
 
         hidden_z = numpified_zs["hidden"]
         en_head_z = numpified_zs["en_head"]
@@ -497,7 +491,87 @@ class L0Module(Module):
         results["pruned_model_sparsity"] = pruned_model_size / self.prunable_model_size
 
         return results
-        
+    
+
+    def calculate_model_size(self, zs):
+
+        hidden_z = zs["hidden_z"]
+        en_head_z = zs["en_head_z"]
+        en_mha_z = zs["en_mha_z"].reshape(-1, 1)
+        en_ffn_dim_z = zs["en_ffn_dim_z"]
+        en_ffn_z = zs["en_ffn_z"].reshape(-1, 1)
+        de_self_head_z = zs["de_self_head_z"]
+        de_self_mha_z = zs["de_self_mha_z"].reshape(-1, 1)
+        de_cross_head_z = zs["de_cross_head_z"]
+        de_cross_mha_z = zs["de_cross_mha_z"].reshape(-1, 1)
+        de_ffn_dim_z = zs["de_ffn_dim_z"]
+        de_ffn_z = zs["de_ffn_z"].reshape(-1, 1)
+
+        # hidden dims
+        remaining_hidden_dims = hidden_z.sum().item()
+        # ffns
+        remaining_en_ffn_nums = en_ffn_dim_z.reshape(
+            self.num_hidden_layers_en, self.encoder_ffn_dim).sum(-1).tolist()
+        remaining_de_ffn_nums = de_ffn_dim_z.reshape(
+            self.num_hidden_layers_de, self.decoder_ffn_dim).sum(-1).tolist()
+        # heads
+        remaining_en_head_nums = en_head_z.reshape(
+            self.num_hidden_layers_en, self.encoder_attention_heads).sum(-1).tolist()
+        remaining_de_self_head_nums = de_self_head_z.reshape(
+            self.num_hidden_layers_de, self.decoder_attention_heads).sum(-1).tolist()
+        remaining_de_cross_head_nums = de_cross_head_z.reshape(
+            self.num_hidden_layers_de, self.decoder_attention_heads).sum(-1).tolist()
+
+        en_head_nums = torch.outer((en_head_z * en_mha_z).reshape(-1), hidden_z).sum().item()
+        de_self_head_nums = torch.outer((de_self_head_z * de_self_mha_z).reshape(-1), hidden_z).sum().item()
+        de_cross_head_nums = torch.outer((de_cross_head_z * de_cross_mha_z).reshape(-1), hidden_z).sum().item()
+        en_ffn_nums = torch.outer((en_ffn_dim_z * en_ffn_z).reshape(-1), hidden_z).sum().item()
+        de_ffn_nums = torch.outer((de_ffn_dim_z * de_ffn_z).reshape(-1), hidden_z).sum().item()
+
+        #en_head_nums = (en_head_z * en_mha_z).reshape(-1).sum().item()
+        #de_self_head_nums = (de_self_head_z * de_self_mha_z).reshape(-1).sum().item()
+        #de_cross_head_nums = (de_cross_head_z * de_cross_mha_z).reshape(-1).sum().item()
+        #en_ffn_nums = (en_ffn_dim_z * en_ffn_z).reshape(-1).sum().item()
+        #de_ffn_nums = (de_ffn_dim_z * de_ffn_z).reshape(-1).sum().item()
+
+        # remaining_model_size = en_head_nums * self.dim_per_encoder_head * 4 + en_ffn_nums * 2
+        remaining_model_size = en_head_nums * self.dim_per_encoder_head + en_ffn_nums
+        # remaining_model_size += (de_self_head_nums + de_cross_head_nums) * self.dim_per_decoder_head * 4 + de_ffn_nums  * 2
+        remaining_model_size += (de_self_head_nums + de_cross_head_nums) * self.dim_per_decoder_head + de_ffn_nums
+
+        print(self.prunable_model_size)
+        print(remaining_model_size)
+        quit()
+
+        ## probably incorrect ##
+        pruned_model_size = self.prunable_model_size - remaining_model_size
+
+        results = {}
+        # Not multiplied with each other
+        results["en_mha"] = en_mha_z.reshape(-1).astype(int).tolist()
+        results["de_self_mha"] = de_self_mha_z.reshape(-1).astype(int).tolist()
+        results["de_cross_mha"] = de_cross_mha_z.reshape(
+            -1).astype(int).tolist()
+
+        results["en_ffn_layers"] = en_ffn_z.reshape(-1).astype(int).tolist()
+        results["de_ffn_layers"] = de_ffn_z.reshape(-1).astype(int).tolist()
+
+        results["hidden_dims"] = remaining_hidden_dims
+
+        results["en_ffn_dims"] = remaining_en_ffn_nums
+        results["de_ffn_dims"] = remaining_de_ffn_nums
+
+        results["en_head_nums"] = remaining_en_head_nums
+        results["de_self_head_nums"] = remaining_de_self_head_nums
+        results["de_cross_head_nums"] = remaining_de_cross_head_nums
+
+        results["pruned_params"] = pruned_model_size
+        results["remaining_params"] = remaining_model_size
+        results["pruned_model_sparsity"] = pruned_model_size / \
+            self.prunable_model_size
+
+        return results
+
 
     # called after init and set_lagrangian_warmup_steps
     def forward(self, training=True,):
