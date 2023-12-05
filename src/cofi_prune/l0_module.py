@@ -421,6 +421,9 @@ class L0Module(Module):
 
     # fix #
     def calculate_model_size(self, zs):
+
+        print(zs)
+        
         numpified_zs = self.get_z_from_zs(zs)
 
         print(numpified_zs)

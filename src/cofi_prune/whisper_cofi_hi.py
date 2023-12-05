@@ -323,8 +323,6 @@ class CoFiTrainer:
             self.l0_module.eval()
             # real masks
             zs = self.l0_module.forward(training=False)  # contains zeros
-            print(zs)
-            quit()
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs) 
