@@ -322,6 +322,8 @@ class CoFiTrainer:
         if self.start_prune:
             self.l0_module.eval()
             zs = self.l0_module.forward(training=False)  # real masks
+            print(zs)
+            quit()
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs) 
