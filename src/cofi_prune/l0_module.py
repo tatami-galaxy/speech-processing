@@ -508,67 +508,50 @@ class L0Module(Module):
         de_ffn_z = zs["de_ffn_z"].reshape(-1, 1)
 
         # hidden dims
-        remaining_hidden_dims = hidden_z.sum().item()
+        remaining_hidden_dims = torch.count_nonzero(hidden_z).item()
+        # ffn dims
+        remaining_en_ffn_dims = torch.count_nonzero(
+            en_ffn_dim_z.reshape(self.num_hidden_layers_en, self.encoder_ffn_dim), dim=1)
+        remaining_de_ffn_dims = torch.count_nonzero(
+            de_ffn_dim_z.reshape(self.num_hidden_layers_de, self.decoder_ffn_dim), dim=1)
         # ffns
-        remaining_en_ffn_nums = en_ffn_dim_z.reshape(
-            self.num_hidden_layers_en, self.encoder_ffn_dim).sum(-1).tolist()
-        remaining_de_ffn_nums = de_ffn_dim_z.reshape(
-            self.num_hidden_layers_de, self.decoder_ffn_dim).sum(-1).tolist()
+        remaining_en_ffns = torch.count_nonzero(en_ffn_z, dim=1)
+        remaining_de_ffns = torch.count_nonzero(de_ffn_z, dim=1)
         # heads
-        remaining_en_head_nums = en_head_z.reshape(
-            self.num_hidden_layers_en, self.encoder_attention_heads).sum(-1).tolist()
-        remaining_de_self_head_nums = de_self_head_z.reshape(
-            self.num_hidden_layers_de, self.decoder_attention_heads).sum(-1).tolist()
-        remaining_de_cross_head_nums = de_cross_head_z.reshape(
-            self.num_hidden_layers_de, self.decoder_attention_heads).sum(-1).tolist()
+        remaining_en_head_nums = torch.count_nonzero(
+            en_head_z.reshape(self.num_hidden_layers_en, self.encoder_attention_heads), dim=1)
+        remaining_de_self_head_nums = torch.count_nonzero(
+            de_self_head_z.reshape(self.num_hidden_layers_de, self.decoder_attention_heads), dim=1)
+        remaining_de_cross_head_nums = torch.count_nonzero(
+            de_cross_head_z.reshape(self.num_hidden_layers_de, self.decoder_attention_heads), dim=1)
+        
+        # head params
+        total_en_heads = torch.sum(remaining_en_head_nums)
+        total_de_heads = torch.sum(remaining_de_self_head_nums) + torch.sum(remaining_de_cross_head_nums)
+        remaining_head_params = (total_en_heads + total_de_heads) * self.params_per_head
+        # ffn params
+        total_en_ffns = torch.sum(remaining_en_ffns)
+        total_de_ffns = torch.sum(remaining_de_ffns)
+        remaining_ffn_params = (total_en_ffns + total_de_ffns) * self.params_per_ffn_layer
+        # remaining model size
+        remaining_model_size = remaining_head_params.item() + remaining_ffn_params.item()
 
-        en_head_nums = torch.outer((en_head_z * en_mha_z).reshape(-1), hidden_z).sum().item()
-        de_self_head_nums = torch.outer((de_self_head_z * de_self_mha_z).reshape(-1), hidden_z).sum().item()
-        de_cross_head_nums = torch.outer((de_cross_head_z * de_cross_mha_z).reshape(-1), hidden_z).sum().item()
-        en_ffn_nums = torch.outer((en_ffn_dim_z * en_ffn_z).reshape(-1), hidden_z).sum().item()
-        de_ffn_nums = torch.outer((de_ffn_dim_z * de_ffn_z).reshape(-1), hidden_z).sum().item()
-
-        #en_head_nums = (en_head_z * en_mha_z).reshape(-1).sum().item()
-        #de_self_head_nums = (de_self_head_z * de_self_mha_z).reshape(-1).sum().item()
-        #de_cross_head_nums = (de_cross_head_z * de_cross_mha_z).reshape(-1).sum().item()
-        #en_ffn_nums = (en_ffn_dim_z * en_ffn_z).reshape(-1).sum().item()
-        #de_ffn_nums = (de_ffn_dim_z * de_ffn_z).reshape(-1).sum().item()
-
-        # remaining_model_size = en_head_nums * self.dim_per_encoder_head * 4 + en_ffn_nums * 2
-        remaining_model_size = en_head_nums * self.dim_per_encoder_head + en_ffn_nums
-        # remaining_model_size += (de_self_head_nums + de_cross_head_nums) * self.dim_per_decoder_head * 4 + de_ffn_nums  * 2
-        remaining_model_size += (de_self_head_nums + de_cross_head_nums) * self.dim_per_decoder_head + de_ffn_nums
-
-        print(self.prunable_model_size)
-        print(remaining_model_size)
-        quit()
-
-        ## probably incorrect ##
         pruned_model_size = self.prunable_model_size - remaining_model_size
 
         results = {}
-        # Not multiplied with each other
-        results["en_mha"] = en_mha_z.reshape(-1).astype(int).tolist()
-        results["de_self_mha"] = de_self_mha_z.reshape(-1).astype(int).tolist()
-        results["de_cross_mha"] = de_cross_mha_z.reshape(
-            -1).astype(int).tolist()
 
-        results["en_ffn_layers"] = en_ffn_z.reshape(-1).astype(int).tolist()
-        results["de_ffn_layers"] = de_ffn_z.reshape(-1).astype(int).tolist()
+        results["remianing_hidden_dims"] = remaining_hidden_dims
 
-        results["hidden_dims"] = remaining_hidden_dims
+        results["remaining_en_heads"] = remaining_en_head_nums.tolist()
+        results["remaining_de_self_heads"] = remaining_de_self_head_nums.tolist()
+        results["remaining_de_cross_heads"] = remaining_de_cross_head_nums.tolist()
 
-        results["en_ffn_dims"] = remaining_en_ffn_nums
-        results["de_ffn_dims"] = remaining_de_ffn_nums
-
-        results["en_head_nums"] = remaining_en_head_nums
-        results["de_self_head_nums"] = remaining_de_self_head_nums
-        results["de_cross_head_nums"] = remaining_de_cross_head_nums
+        results["remaining_en_ffn_layers"] = remaining_en_ffns.tolist()
+        results["remaining_de_ffn_layers"] = remaining_de_ffns.tolist()
 
         results["pruned_params"] = pruned_model_size
         results["remaining_params"] = remaining_model_size
-        results["pruned_model_sparsity"] = pruned_model_size / \
-            self.prunable_model_size
+        results["pruned_model_sparsity"] = pruned_model_size / self.prunable_model_size
 
         return results
 

@@ -326,6 +326,8 @@ class CoFiTrainer:
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs) 
+            print(pruned_model_size_info)
+            quit()
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
@@ -366,6 +368,8 @@ class CoFiTrainer:
 
         self.accelerator.print('results : {}'.format(results))
         self.accelerator.log(results, step=self.global_step + 1)
+
+        quit()
 
         # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
         # saved to folders named `checkpoint-{global_step}`
