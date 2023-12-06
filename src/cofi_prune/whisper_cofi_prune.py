@@ -385,75 +385,17 @@ class CoFiTrainer:
         self.metrics = metrics
 
 
-    def create_optimizer_and_scheduler(self, num_training_steps: int, build_l0_optimizer:bool=True):
-
-        if self.optimizer is None:
-            no_decay = ["bias", "LayerNorm.weight"]
-            freeze_keywords = ["embeddings"]
-
-            main_model_params = [
-                {
-                    "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)],
-                    "weight_decay": self.args.weight_decay,
-                    "lr": self.args.learning_rate
-                },
-                {
-                    "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay) and not any(fk in n for fk in freeze_keywords)],
-                    "weight_decay": 0.0,
-                    "lr": self.args.learning_rate
-                },
-            ]
-            #log_params(main_model_params, "main params")
-            self.optimizer = AdamW(
-                main_model_params,
-                betas=(self.args.adam_beta1, self.args.adam_beta2),
-                eps=self.args.adam_epsilon,
-            )
-
-            if build_l0_optimizer and self.l0_module is not None:
-                l0_params = [{
-                    "params": [p for n, p in self.l0_module.named_parameters() if "lambda" not in n],
-                    "weight_decay": 0.0,
-                    "lr": self.args.reg_learning_rate
-                }]
-                #log_params(l0_params, "l0 reg params")
-                self.l0_optimizer = AdamW(l0_params,
-                                          betas=(self.args.adam_beta1,
-                                                 self.args.adam_beta2),
-                                          eps=self.args.adam_epsilon, )
-
-                lagrangian_params = [{
-                    "params": [p for n, p in self.l0_module.named_parameters() if "lambda" in n],
-                    "weight_decay": 0.0,
-                    "lr": -self.args.reg_learning_rate
-                }]
-                #log_params(lagrangian_params, "l0 reg lagrangian params")
-                self.lagrangian_optimizer = AdamW(lagrangian_params,
-                                                    betas=(self.args.adam_beta1,
-                                                            self.args.adam_beta2),
-                                                    eps=self.args.adam_epsilon)
-
-        if self.lr_scheduler is None:
-            # scheduler_type == "linear"
-            self.lr_scheduler = get_linear_schedule_with_warmup(
-                self.optimizer, num_warmup_steps=self.args.warmup_steps, num_training_steps=num_training_steps
-            )
-            #else:
-                #self.lr_scheduler = None
-
-
     def fill_inputs_with_zs(self, zs, inputs):
         for key in zs:
             inputs[key] = zs[key]
-
 
     def prediction_step(self, inputs, generation_config, gen_kwargs):
         with torch.no_grad():
             outputs = self.model(**inputs)
             val_loss = outputs.loss.item()
-            
+
         # compute metric
-        # generate and calculate cer 
+        # generate and calculate cer
         output_ids = self.accelerator.unwrap_model(self.model).generate(
             inputs["input_features"],
             generation_config=generation_config,
@@ -461,17 +403,22 @@ class CoFiTrainer:
             language=self.args.model_lang,
             is_multilingual=True,
             **gen_kwargs
-            )
+        )
 
         # pad_acrss_processes to get equal length for each processs
-        output_ids = self.accelerator.pad_across_processes(output_ids, dim=1, pad_index=self.tokenizer.pad_token_id)
-        label_ids = self.accelerator.pad_across_processes(inputs["labels"], dim=1, pad_index=self.tokenizer.pad_token_id)
+        output_ids = self.accelerator.pad_across_processes(
+            output_ids, dim=1, pad_index=self.tokenizer.pad_token_id)
+        label_ids = self.accelerator.pad_across_processes(
+            inputs["labels"], dim=1, pad_index=self.tokenizer.pad_token_id)
 
-        output_ids = self.accelerator.gather(output_ids)  #.cpu().numpy()  # gather_for_metrics
-        label_ids = self.accelerator.gather(label_ids)  #.cpu().numpy()  # gather_for_metrics
-                        
+        # .cpu().numpy()  # gather_for_metrics
+        output_ids = self.accelerator.gather(output_ids)
+        # .cpu().numpy()  # gather_for_metrics
+        label_ids = self.accelerator.gather(label_ids)
+
         label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
-        predictions = self.processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        predictions = self.processor.batch_decode(
+            output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         # we do not want to group tokens when computing the metrics
         references = self.processor.batch_decode(
             label_ids,
@@ -483,7 +430,6 @@ class CoFiTrainer:
             val.add_batch(predictions=predictions, references=references)
 
         return val_loss
-
 
 
     def prediction_loop(self, dataloader, generation_config, gen_kwargs, description):
@@ -498,43 +444,45 @@ class CoFiTrainer:
         zs = None
         if self.start_prune:
             self.l0_module.eval()
-            zs = self.l0_module.forward(training=False)  # real masks
+            # real masks
+            zs = self.l0_module.forward(training=False)  # contains zeros
 
         if zs is not None:
-            pruned_model_size_info = self.l0_module.calculate_model_size(zs)  ##
+            pruned_model_size_info = self.l0_module.calculate_model_size(zs)
 
         # eval bar
-        #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
+        # eval_bar = tqdm(range(len(eval_dataloader)), position=1)
         for ii, inputs in enumerate(tqdm(dataloader, desc=description)):
             if zs is not None:
-                #if ii == 0:
-                    #logger.info(f"Putting zs {zs.keys()} into inputs:")
-                self.fill_inputs_with_zs(zs, inputs) # use the zs
+                # if ii == 0:
+                # logger.info(f"Putting zs {zs.keys()} into inputs:")
+                self.fill_inputs_with_zs(zs, inputs)  # use the zs
             # prediction step
             # metric added to self.metrics
-            eval_loss += self.prediction_step(inputs, generation_config, gen_kwargs)
+            eval_loss += self.prediction_step(inputs,
+                                              generation_config, gen_kwargs)
 
         results = {}
 
-        if zs is not None: 
+        if zs is not None:
             lag_loss, expected_sparsity, target_sparsity = self.l0_module.lagrangian_regularization(
                 self.global_step - self.prepruning_finetune_steps)
 
             expected_sparsity = round(expected_sparsity.item(), 5)
             results.update(pruned_model_size_info)
-            #results['lag_loss'] = lag_loss
+            # results['lag_loss'] = lag_loss
             results["expected_sparsity"] = expected_sparsity
             results["target_sparsity"] = target_sparsity
 
         self.model.config.output_hidden_states = True
-        self.model.config.output_attentions = True    
+        self.model.config.output_attentions = True
 
         for name, metric in self.metrics.items():
             results[name] = metric.compute()
         results['eval loss'] = eval_loss/len(dataloader)
 
         return results
-    
+
 
     def evaluate(self, eval_dataloader, generation_config, gen_kwargs):
 

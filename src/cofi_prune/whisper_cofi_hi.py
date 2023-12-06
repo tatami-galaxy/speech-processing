@@ -517,7 +517,7 @@ class CoFiTrainer:
                     self.lr_scheduler = None
                     lr_steps = self.train_steps - self.global_step
 
-                    # reset the optimizer
+                    # reset the optimizer before strarting pruning
                     self.create_optimizer_and_scheduler(lr_steps, self.start_prune)
                     self.accelerator.print("starting l0 regularization")
 
