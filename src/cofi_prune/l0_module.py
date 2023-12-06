@@ -524,7 +524,11 @@ class L0Module(Module):
             de_self_head_z.reshape(self.num_hidden_layers_de, self.decoder_attention_heads), dim=1)
         remaining_de_cross_head_nums = torch.count_nonzero(
             de_cross_head_z.reshape(self.num_hidden_layers_de, self.decoder_attention_heads), dim=1)
-        
+        # mha
+        remaining_en_mha_nums = torch.count_nonzero(en_mha_z, dim=1)
+        remaining_de_self_mha_nums = torch.count_nonzero(de_self_mha_z, dim=1)
+        remaining_de_cross_mha_nums = torch.count_nonzero(de_cross_mha_z, dim=1)
+
         # head params
         total_en_heads = torch.sum(remaining_en_head_nums)
         total_de_heads = torch.sum(remaining_de_self_head_nums) + torch.sum(remaining_de_cross_head_nums)
@@ -545,6 +549,13 @@ class L0Module(Module):
         results["remaining_en_heads"] = remaining_en_head_nums.tolist()
         results["remaining_de_self_heads"] = remaining_de_self_head_nums.tolist()
         results["remaining_de_cross_heads"] = remaining_de_cross_head_nums.tolist()
+
+        results["remaining_en_mha_nums"] = remaining_en_mha_nums.tolist()
+        results["remaining_de_self_mha_nums"] = remaining_de_self_mha_nums.tolist()
+        results["remaining_de_cross_mha_nums"] = remaining_de_cross_mha_nums.tolist()
+
+        results["remaining_en_ffn_dims"] = remaining_en_ffn_dims.tolist()
+        results["remaining_de_ffn_dims"] = remaining_en_ffn_dims.tolist()
 
         results["remaining_en_ffn_layers"] = remaining_en_ffns.tolist()
         results["remaining_de_ffn_layers"] = remaining_de_ffns.tolist()
