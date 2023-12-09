@@ -111,6 +111,7 @@ class CoFiTrainer:
             processor = None,
             l0_module=None,
             teacher_model=None,
+            distil_type=None,
             accelerator=None,
             data_collator = None,
             train_dataset = None,
@@ -128,6 +129,7 @@ class CoFiTrainer:
 
         self.model = model
         self.teacher_model = teacher_model 
+        self.distil_type = distil_type
         self.l0_module = l0_module
 
         self.accelerator = accelerator
@@ -222,7 +224,10 @@ class CoFiTrainer:
                 distill_ce_loss = None
                 if self.teacher_model is not None:
                     with torch.no_grad():
-                        pass
+                        if self.distil_type == 'logit':
+                            pass
+                        elif self.distil_type == 'rail':
+                            pass
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
@@ -772,6 +777,16 @@ def run():
 
     # cofi args
     parser.add_argument(
+        "--teacher_name_or_path",
+        default=None,
+        type=str,
+    )
+    parser.add_argument(
+        "--distil_type",
+        default=None,
+        type=str,
+    )
+    parser.add_argument(
         '--droprate_init',
         type=float,
         default=0.5,
@@ -835,11 +850,20 @@ def run():
         data_str = args.data_dir.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_cofi'
     print('output directory set to : {}'.format(args.output_dir))
+    # check distilation type
+    if args.distil_type not in [None, 'logit', 'rail']:
+        raise ValueError(
+            f"distil_type must be either None or in [logit, rail]"
+        )
+    elif args.distil_type is not None:
+        if args.teacher_name_or_path is None:
+            raise ValueError(
+                f"need to pass in teacher_name_or_path for distillation"
+            )
 
     # accelerator mixed precision
     print('mixed precision set to : {}. fp16, fp8 may cause overflow/underflow'.format(args.mixed_precision))
     
-
     # initialize accelerator
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -858,11 +882,14 @@ def run():
     accelerator.init_trackers('runs', track_config)
 
     # extractor, tokenizer, processor
+    accelerator.print('loading tokenizer and processor')
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
     tokenizer = WhisperTokenizer.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
+    if args.teacher_name_or_path is not None:
+        accelerator.print('using same tokenizer and processor for teacher. change if needed')
 
     config = WhisperConfig.from_pretrained(
         args.model_name_or_path,
@@ -871,9 +898,10 @@ def run():
     # working. detect sparse activation. change hardcoded gelus to relu
     if args.activation is not None:
         config.activation_function = args.activation
-        print('activation changed to {}'.format(config.activation_function))
+        accelerator.print('activation changed to {}'.format(config.activation_function))
 
     # model
+    accelerator.print('loading model')
     model = SparseWhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
         config=config,
@@ -890,6 +918,8 @@ def run():
 
     # teacher #
     teacher_model = None
+    if args.teacher_name_or_path is not None:
+        teacher_model = SparseWhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
 
     # distil setup #
 
@@ -997,6 +1027,7 @@ def run():
         processor=processor,
         l0_module=l0_module,
         teacher_model=teacher_model,
+        distil_type=args.distil_type,
         accelerator=accelerator,
         data_collator=data_collator,
         train_dataset=common_voice['train'],
