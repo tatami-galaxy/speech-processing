@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Union
 
 from torch.utils.data.dataloader import DataLoader
 import torch
+from torch import nn
 from torch.optim import AdamW
 
 from accelerate import Accelerator
@@ -111,7 +112,6 @@ class CoFiTrainer:
             processor = None,
             l0_module=None,
             teacher_model=None,
-            distil_type=None,
             accelerator=None,
             data_collator = None,
             train_dataset = None,
@@ -129,7 +129,10 @@ class CoFiTrainer:
 
         self.model = model
         self.teacher_model = teacher_model 
-        self.distil_type = distil_type
+        self.distil_type = args.distil_type
+        self.distil_temperature = args.distil_temperature
+        self.alpha_ce = args.alpha_ce
+        self.alpha_distil = args.alpha_distil
         self.l0_module = l0_module
 
         self.accelerator = accelerator
@@ -219,13 +222,30 @@ class CoFiTrainer:
 
         with self.accelerator.accumulate(self.model):
                 
-                # add distill loss here
-                distill_loss = None
-                distill_ce_loss = None
+                d_loss = None
                 if self.teacher_model is not None:
                     with torch.no_grad():
-                        if self.distil_type == 'logit':
-                            pass
+                        if self.distil_type == 'logit':           
+                            outputs = self.model(**inputs)
+                            # stduent logits
+                            s_logits = outputs.logits
+                            # student loss
+                            loss = outputs.loss
+                            # teacher
+                            with torch.no_grad():
+                                outputs = self.teacher_model(**inputs)
+                                # teacher logits
+                                t_logits = outputs.logits
+                            # distillation loss
+                            # has to be outside no_grad()
+                            d_loss = nn.functional.kl_div(
+                                input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
+                                target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
+                                reduction="batchmean",
+                            ) * (self.distil_temperature**2)
+                            # net loss after weightage
+                            loss = self.alpha_distil * d_loss + self.alpha_ce * loss
+
                         elif self.distil_type == 'rail':
                             pass
                 else:
@@ -272,6 +292,8 @@ class CoFiTrainer:
                 ret_dict['train_loss'] = loss.detach().item()
                 if lagrangian_loss is not None:
                     ret_dict['lag_loss'] = lagrangian_loss.detach().item()
+                if d_loss is not None:
+                    ret_dict['distil_loss'] = d_loss.detach().item()
                 # other losses (distill loss)
 
                 return ret_dict
@@ -797,6 +819,24 @@ def run():
         default=2./3.,
     )
     parser.add_argument(
+        "--distil_temperature",
+        default=2.0,
+        type=float,
+        help="distillation temperature"
+    )
+    parser.add_argument(
+        "--alpha_ce",
+        default=0.5,
+        type=float,
+        help="Cross entropy loss linear weight (student loss). Only for distillation."
+    )
+    parser.add_argument(
+        "--alpha_distil",
+        default=0.5,
+        type=float,
+        help="Distillation loss linear weight (distil loss). Only for distillation."
+    )
+    parser.add_argument(
         '--target_sparsity',
         type=float,
         default=0.95,
@@ -920,9 +960,12 @@ def run():
     teacher_model = None
     if args.teacher_name_or_path is not None:
         teacher_model = SparseWhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
+        teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
+        teacher_model.config.suppress_tokens = []
+        if teacher_model.config.decoder_start_token_id is None:
+            raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
 
-    # distil setup #
-
+    # l0 model
     l0_module = L0Module(
         config=config,
         droprate_init=args.droprate_init,
@@ -1027,7 +1070,6 @@ def run():
         processor=processor,
         l0_module=l0_module,
         teacher_model=teacher_model,
-        distil_type=args.distil_type,
         accelerator=accelerator,
         data_collator=data_collator,
         train_dataset=common_voice['train'],

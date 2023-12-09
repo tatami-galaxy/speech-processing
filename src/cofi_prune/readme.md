@@ -1,4 +1,4 @@
-accelerate launch whisper_cofi_hi.py --prepruning_finetune_steps 0 --lagrangian_warmup_epochs 0 --target_sparsity 0.95 
+accelerate launch whisper_cofi_hi.py --prepruning_finetune_steps 2000 --train_steps 7000 --eval_steps 1000 --lagrangian_warmup_epochs 0 --target_sparsity 0.95
 
 # --data_dir mozilla-foundation/common_voice_11_0
 # --max_train_samples 100 --max_test_samples 10 --eval_steps 5 
