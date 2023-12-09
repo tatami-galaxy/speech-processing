@@ -226,8 +226,8 @@ class CoFiTrainer:
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
-
                 lagrangian_loss = None
+
                 if self.start_prune:
                     # lagrangian_loss, expected_sparsity, target_sparsity
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
@@ -263,10 +263,13 @@ class CoFiTrainer:
                 if self.lagrangian_optimizer is not None:
                     self.lagrangian_optimizer.zero_grad()
 
-                return {
-                    'train_loss' : loss.detach().item(), 
-                    'lag_loss' : lagrangian_loss.detach().item(),
-                  }  # other losses (distill loss)
+                ret_dict = {}
+                ret_dict['train_loss'] = loss.detach().item()
+                if lagrangian_loss is not None:
+                    ret_dict['lag_loss'] = lagrangian_loss.detach().item()
+                # other losses (distill loss)
+
+                return ret_dict
 
 
 
@@ -532,7 +535,8 @@ class CoFiTrainer:
                 # recieve distill loss 
                 losses = self.train_step(batch)
                 tr_loss +=losses['train_loss']
-                lag_loss += losses['lag_loss']
+                if 'lag_loss' in losses:
+                    lag_loss += losses['lag_loss']
                 # distil loss
 
                 progress_bar.update(1)
@@ -829,7 +833,7 @@ def run():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_cofi'
     print('output directory set to : {}'.format(args.output_dir))
 
     # accelerator mixed precision
