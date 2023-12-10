@@ -230,7 +230,7 @@ class CoFiTrainer:
                             # stduent logits
                             s_logits = outputs.logits
                             # student loss
-                            loss = outputs.loss
+                            s_loss = outputs.loss
                             # teacher
                             with torch.no_grad():
                                 outputs = self.teacher_model(**inputs)
@@ -244,7 +244,7 @@ class CoFiTrainer:
                                 reduction="batchmean",
                             ) * (self.distil_temperature**2)
                             # net loss after weightage
-                            loss = self.alpha_distil * d_loss + self.alpha_ce * loss
+                            loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
 
                         elif self.distil_type == 'rail':
                             pass
@@ -958,7 +958,7 @@ def run():
 
     # teacher #
     teacher_model = None
-    if args.teacher_name_or_path is not None:
+    if args.teacher_name_or_path is not None and args.distil_type is not None:
         teacher_model = SparseWhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
         teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
         teacher_model.config.suppress_tokens = []
