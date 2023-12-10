@@ -414,7 +414,7 @@ def train(args, accelerator):
             with accelerator.accumulate(model):
                 # student
                 outputs = model(**batch)
-                # stduent logits
+                # student logits
                 s_logits = outputs.logits
                 # student loss
                 s_loss = outputs.loss

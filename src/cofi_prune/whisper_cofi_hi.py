@@ -229,7 +229,7 @@ class CoFiTrainer:
                 if self.teacher_model is not None:
                     if self.distil_type == 'logit':           
                         outputs = self.model(**inputs)
-                        # stduent logits
+                        # student logits
                         s_logits = outputs.logits
                         # student loss
                         s_loss = outputs.loss
@@ -439,11 +439,7 @@ class CoFiTrainer:
             batch_size=args.eval_batch_size,
         )
 
-        num_update_steps_per_epoch = len(train_dataloader) // args.gradient_accumulation_steps
-        num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
-        lagrangian_warmup_steps = args.lagrangian_warmup_epochs * num_update_steps_per_epoch #! 24544
-        # self.prepruning_finetune_steps = self.additional_args.prepruning_finetune_epochs * num_update_steps_per_epoch
-        self.l0_module.set_lagrangian_warmup_steps(lagrangian_warmup_steps)
+        self.l0_module.set_lagrangian_warmup_steps(args.lagrangian_warmup_steps)
 
         self.create_optimizer_and_scheduler(num_training_steps=self.train_steps, build_l0_optimizer = self.start_prune)
 
@@ -857,9 +853,9 @@ def run():
         help="learning rate for regularization."
     )
     parser.add_argument(
-        '--lagrangian_warmup_epochs',
+        '--lagrangian_warmup_steps',
         type=int,
-        default=2,
+        default=0,
     )
     parser.add_argument(
         "--start_prune",
