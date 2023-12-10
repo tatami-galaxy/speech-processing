@@ -233,9 +233,9 @@ class CoFiTrainer:
                             s_loss = outputs.loss
                             # teacher
                             with torch.no_grad():
-                                outputs = self.teacher_model(**inputs)
+                                t_outputs = self.teacher_model(**inputs)
                                 # teacher logits
-                                t_logits = outputs.logits
+                                t_logits = t_outputs.logits
                             # distillation loss
                             # has to be outside no_grad()
                             d_loss = nn.functional.kl_div(
