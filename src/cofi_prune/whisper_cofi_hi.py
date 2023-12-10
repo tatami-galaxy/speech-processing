@@ -223,6 +223,8 @@ class CoFiTrainer:
         with self.accelerator.accumulate(self.model):
                 
                 d_loss = None
+                lagrangian_loss = None
+
                 if self.teacher_model is not None:
                     if self.distil_type == 'logit':           
                         outputs = self.model(**inputs)
@@ -233,10 +235,9 @@ class CoFiTrainer:
                         # teacher
                         with torch.no_grad():
                             outputs = self.teacher_model(**inputs)
-                            # teacher logits
-                            t_logits = outputs.logits
+                        # teacher logits
+                        t_logits = outputs.logits
                         # distillation loss
-                        # has to be outside no_grad()
                         d_loss = nn.functional.kl_div(
                             input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
                             target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
@@ -249,8 +250,7 @@ class CoFiTrainer:
                         pass
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
-                loss = outputs.loss
-                lagrangian_loss = None
+                    loss = outputs.loss
 
                 if self.start_prune:
                     # lagrangian_loss, expected_sparsity, target_sparsity
