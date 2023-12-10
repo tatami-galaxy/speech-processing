@@ -25,6 +25,7 @@ from torch.optim import AdamW
 from accelerate import Accelerator
 
 from transformers import(
+    WhisperForConditionalGeneration,
     WhisperFeatureExtractor,
     WhisperTokenizer,
     WhisperProcessor,
@@ -234,7 +235,11 @@ class CoFiTrainer:
                         s_loss = outputs.loss
                         # teacher
                         with torch.no_grad():
-                            outputs = self.teacher_model(**inputs)
+                            outputs = self.teacher_model(
+                                input_features=inputs['input_features'],
+                                attention_mask=inputs['attention_mask'],
+                                labels=inputs['labels']
+                            )
                         # teacher logits
                         t_logits = outputs.logits
                         # distillation loss
@@ -958,7 +963,7 @@ def run():
     # teacher #
     teacher_model = None
     if args.teacher_name_or_path is not None and args.distil_type is not None:
-        teacher_model = SparseWhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
+        teacher_model = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
         teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
         teacher_model.config.suppress_tokens = []
         if teacher_model.config.decoder_start_token_id is None:
