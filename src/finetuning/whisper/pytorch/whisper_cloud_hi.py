@@ -25,7 +25,10 @@ import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import evaluate
-from transformers import WhisperForConditionalGeneration, WhisperConfig
+#from transformers import WhisperForConditionalGeneration, WhisperConfig
+from transformers import WhisperConfig
+from transformers import WhisperForConditionalGeneration
+
 from torch.utils.data.dataloader import DataLoader
 from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
 import argparse
