@@ -224,30 +224,29 @@ class CoFiTrainer:
                 
                 d_loss = None
                 if self.teacher_model is not None:
-                    with torch.no_grad():
-                        if self.distil_type == 'logit':           
-                            outputs = self.model(**inputs)
-                            # stduent logits
-                            s_logits = outputs.logits
-                            # student loss
-                            s_loss = outputs.loss
-                            # teacher
-                            with torch.no_grad():
-                                t_outputs = self.teacher_model(**inputs)
-                                # teacher logits
-                                t_logits = t_outputs.logits
-                            # distillation loss
-                            # has to be outside no_grad()
-                            d_loss = nn.functional.kl_div(
-                                input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
-                                target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
-                                reduction="batchmean",
-                            ) * (self.distil_temperature**2)
-                            # net loss after weightage
-                            loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
+                    if self.distil_type == 'logit':           
+                        outputs = self.model(**inputs)
+                        # stduent logits
+                        s_logits = outputs.logits
+                        # student loss
+                        s_loss = outputs.loss
+                        # teacher
+                        with torch.no_grad():
+                            outputs = self.teacher_model(**inputs)
+                            # teacher logits
+                            t_logits = outputs.logits
+                        # distillation loss
+                        # has to be outside no_grad()
+                        d_loss = nn.functional.kl_div(
+                            input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
+                            target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
+                            reduction="batchmean",
+                        ) * (self.distil_temperature**2)
+                        # net loss after weightage
+                        loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
 
-                        elif self.distil_type == 'rail':
-                            pass
+                    elif self.distil_type == 'rail':
+                        pass
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                 loss = outputs.loss
