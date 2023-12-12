@@ -528,6 +528,8 @@ class WhisperEncoderLayer(nn.Module):
 
         # before activation
         # activation
+        print(torch.count_nonzero(hidden_states))
+        quit()
         hidden_states = self.activation_fn(fc1_hidden_states)
         # after activation
 

@@ -655,7 +655,7 @@ def run():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_relu'
     print('output directory set to : {}'.format(args.output_dir))
     
 
