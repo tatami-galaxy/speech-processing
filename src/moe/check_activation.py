@@ -245,12 +245,13 @@ def train(args, accelerator):
     # eval bar
     eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
-    while True:
-        model.eval()
-        for batch in eval_dataloader:
-            with torch.no_grad():
-                outputs = model(**batch)
-
+    model.eval()
+    for batch in eval_dataloader:
+        with torch.no_grad():
+            outputs = model(**batch)
+            eval_bar.update(1)
+    for l in range(model.config.encoder_layers):
+        print(model.model.encoder.layers[l].activation / len(eval_dataloader))
 
 
 def run():
@@ -390,8 +391,6 @@ def run():
     # train function
     train(args, accelerator)
 
-    # end logging
-    accelerator.end_training()
 
 
             

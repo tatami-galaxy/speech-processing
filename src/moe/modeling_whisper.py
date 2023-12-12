@@ -489,7 +489,9 @@ class WhisperEncoderLayer(nn.Module):
         self.activation_dropout = config.activation_dropout
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
-        self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        self.final_layer_norm = nn.LayerNorm(self.embed_dim)   
+        # activation
+        self.activation = 0
 
     def forward(
         self,
@@ -528,10 +530,9 @@ class WhisperEncoderLayer(nn.Module):
 
         # before activation
         # activation
-        print(torch.count_nonzero(hidden_states))
-        quit()
         hidden_states = self.activation_fn(fc1_hidden_states)
         # after activation
+        self.activation += torch.count_nonzero(hidden_states)
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
@@ -579,6 +580,8 @@ class WhisperDecoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
         self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        # activation
+        self.activation = 0
 
     def forward(
         self,
@@ -661,9 +664,8 @@ class WhisperDecoderLayer(nn.Module):
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)
         # after activation
+        self.activation += (torch.count_nonzero(hidden_states)/torch.numel(hidden_states))
 
-
-        #print('decoder activation')
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         hidden_states = self.fc2(hidden_states)
