@@ -613,6 +613,10 @@ def run():
 
     # whisper args
     parser.add_argument(
+        "--local",
+        action="store_true",
+    )
+    parser.add_argument(
         "--model_name_or_path",
         default="openai/whisper-small",
         type=str,
@@ -976,9 +980,15 @@ def run():
         
 
     # dataset
-    common_voice = DatasetDict()
-    common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
-    common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
+
+    if args.local:
+        common_voice = load_dataset(args.data_dir, args.data_lang)
+        # print(common_voice)
+        # quit()
+    else:
+        common_voice = DatasetDict()
+        common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
+        common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
     with accelerator.main_process_first():
         # remove unused columns
