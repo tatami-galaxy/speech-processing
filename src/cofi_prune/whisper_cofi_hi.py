@@ -959,6 +959,7 @@ def run():
     # teacher #
     teacher_model = None
     if args.teacher_name_or_path is not None and args.distil_type is not None:
+        accelerator.print('loading teacher')
         teacher_model = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
         teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
         teacher_model.config.suppress_tokens = []
