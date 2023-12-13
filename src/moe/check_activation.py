@@ -251,7 +251,9 @@ def train(args, accelerator):
             outputs = model(**batch)
             eval_bar.update(1)
     for l in range(model.config.encoder_layers):
-        print(model.model.encoder.layers[l].activation / len(eval_dataloader))
+        print('encoder layer {} activation : {:0.2f}%'.format(l, model.model.encoder.layers[l].activation.detach().cpu().item() / len(eval_dataloader)))
+    for l in range(model.config.decoder_layers):
+        print('decoder layer {} activation : {:0.2f}%'.format(l, model.model.decoder.layers[l].activation.detach().cpu().item() / len(eval_dataloader)))
 
 
 def run():
