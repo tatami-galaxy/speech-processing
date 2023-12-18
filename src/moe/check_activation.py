@@ -243,7 +243,7 @@ def train(args, accelerator):
     # Training
 
     # eval bar
-    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
+    eval_bar = tqdm(range(len(eval_dataloader)))
 
     model.eval()
     for batch in eval_dataloader:
