@@ -575,7 +575,7 @@ def run():
     )
     parser.add_argument(
         "--eval_batch_size",
-        default=8,
+        default=4,
         type=int,
     )
     parser.add_argument(
