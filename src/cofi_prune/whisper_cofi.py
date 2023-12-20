@@ -37,6 +37,7 @@ from transformers import(
 
 from datasets import(
     load_dataset,
+    load_from_disk,
     DatasetDict,
     Audio,
 )
@@ -981,9 +982,7 @@ def run():
 
     # dataset
     if args.local:
-        common_voice = load_dataset(args.data_dir, args.data_lang)
-        #print(common_voice)
-        #quit()
+        common_voice = load_from_disk(args.data_dir)
     else:
         common_voice = DatasetDict()
         common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
@@ -1068,9 +1067,14 @@ def run():
         forward_attention_mask=forward_attention_mask,
     )
 
-    # cer
-    cer = evaluate.load("cer")
-    wer = evaluate.load("wer")
+    # cer, wer
+    if args.local:
+        # change path
+        cer = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
+        wer = evaluate.load("/home/ujan/Downloads/evaluate/metrics/wer/wer.py")
+    else:
+        cer = evaluate.load("cer")
+        wer = evaluate.load("wer")
 
 
     cofi_trainer = CoFiTrainer(
