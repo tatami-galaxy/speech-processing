@@ -980,11 +980,10 @@ def run():
         
 
     # dataset
-
     if args.local:
         common_voice = load_dataset(args.data_dir, args.data_lang)
-        # print(common_voice)
-        # quit()
+        #print(common_voice)
+        #quit()
     else:
         common_voice = DatasetDict()
         common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
