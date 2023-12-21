@@ -526,16 +526,20 @@ class WhisperEncoderLayer(nn.Module):
         hidden_states = self.final_layer_norm(hidden_states)
 
         # break into two steps to see effect of activation
+        # project into ffn dim
         fc1_hidden_states = self.fc1(hidden_states)
-
+        print(fc1_hidden_states.shape)
+        quit()
         # before activation
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)
         # after activation
         self.activation += ((torch.count_nonzero(hidden_states)/torch.numel(hidden_states))*100)
-
+        # dropout
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        # project back to hidden dim
         hidden_states = self.fc2(hidden_states)
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -657,18 +661,19 @@ class WhisperDecoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
 
+        # project into ffn dim
         # break into two steps to see effect of activation
         fc1_hidden_states = self.fc1(hidden_states)
-
         # before activation
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)
         # after activation
         self.activation += ((torch.count_nonzero(hidden_states)/torch.numel(hidden_states))*100)
-
-
+        # dropout
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+        # project back into hidden dim
         hidden_states = self.fc2(hidden_states)
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 

@@ -11,8 +11,7 @@
 """
 
 from functools import partial
-import os, re
-import datetime
+import os
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict, Audio
@@ -582,7 +581,7 @@ def run():
     )
     parser.add_argument(
         "--train_steps",
-        default=5000,
+        default=6000,
         type=int,
     )
     parser.add_argument(
@@ -597,7 +596,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
