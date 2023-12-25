@@ -55,7 +55,7 @@ class L0Module(Module):
         # 12 self attn heads, 12 cross attn heads
         self.decoder_attention_heads = config.decoder_attention_heads
         # ffn dims
-        self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size]
+        self.encoder_ffn_dim = config.encoder_ffn_dim  # intermediate_size
         self.decoder_ffn_dim = config.decoder_ffn_dim  # intermediate_size
         # number of ffns
         self.ffn_num_per_layer = 1  # linear -> activation -> linear

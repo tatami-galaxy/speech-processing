@@ -239,7 +239,9 @@ def train(args, accelerator):
     # prepare everything for accelerator
     model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
 
-
+    # activations
+    encoder_activations = {l: 0 for l in range(model.config.encoder_layers)}
+    decoder_activations = {l: 0 for l in range(model.config.decoder_layers)}
     # Training
 
     # eval bar
@@ -249,12 +251,19 @@ def train(args, accelerator):
     for batch in eval_dataloader:
         with torch.no_grad():
             outputs = model(**batch)
-            eval_bar.update(1)
-    for l in range(model.config.encoder_layers):
-        print('encoder layer {} activation : {:0.2f}%'.format(l, model.model.encoder.layers[l].activation.detach().cpu().item() / len(eval_dataloader)))
-    for l in range(model.config.decoder_layers):
-        print('decoder layer {} activation : {:0.2f}%'.format(l, model.model.decoder.layers[l].activation.detach().cpu().item() / len(eval_dataloader)))
+            for l in range(model.config.encoder_layers):
+                encoder_activations[l] += model.model.encoder.layers[l].activation.detach().cpu().item()
+            for l in range(model.config.decoder_layers):
+                decoder_activations[l] += model.model.decoder.layers[l].activation.detach().cpu().item()
 
+            eval_bar.update(1)
+
+    for l in range(model.config.encoder_layers):
+        print('encoder layer {} activation : {:0.2f}%'.format(l, encoder_activations[l] / len(eval_dataloader)))
+    for l in range(model.config.decoder_layers):
+        print('decoder layer {} activation : {:0.2f}%'.format(l, decoder_activations[l] / len(eval_dataloader)))
+
+    ## neuron activations become less sparse with fine tuning ##
 
 def run():
 
@@ -358,7 +367,7 @@ def run():
     )
     parser.add_argument(
         "--eval_batch_size",
-        default=8,
+        default=1,
         type=int,
     )
     parser.add_argument(
@@ -371,6 +380,7 @@ def run():
 
     # parse args
     args = parser.parse_args()
+    args.eval_batch_size = 1
 
     # set seed
     set_seed(args.seed)

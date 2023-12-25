@@ -1,4 +1,4 @@
 accelerate launch whisper_cloud_hi.py --activation relu --max_test_samples 100
 
 # sparse act
-accelerate launch check_activation.py --activation relu --eval_batch_size 1 --max_test_samples 50 --model_name_or_path /home/ujan/speech-processing/models/whisper/whisper-small_common_voice_13_0_relu/checkpoint-6000
+accelerate launch check_activation.py --activation relu --max_test_samples 50 --model_name_or_path /home/ujan/speech-processing/models/whisper/whisper-small_common_voice_13_0_relu/checkpoint-6000
