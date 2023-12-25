@@ -492,6 +492,9 @@ class WhisperEncoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)   
         # activation
         self.activation = 0
+        # for computing experts
+        self.h = None
+        self.sigma_h = None
 
     def forward(
         self,
@@ -529,8 +532,10 @@ class WhisperEncoderLayer(nn.Module):
         # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
         # break into two steps to see effect of activation
         fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
+        self.h = fc1_hidden_states.detach().clone()
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
+        self.sigma_h = hidden_states.detach().clone()
 
         # computing activation fraction
         non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
@@ -541,7 +546,6 @@ class WhisperEncoderLayer(nn.Module):
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         # project back to hidden dim
         hidden_states = self.fc2(hidden_states)  # F(x) = sigma(h)W2 + b2
-
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -588,6 +592,9 @@ class WhisperDecoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
         # activation
         self.activation = 0
+        # for computing experts
+        self.h = None
+        self.sigma_h = None
 
     def forward(
         self,
@@ -667,8 +674,10 @@ class WhisperDecoderLayer(nn.Module):
         # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
         # break into two steps to see effect of activation
         fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
+        self.h = fc1_hidden_states.detach().clone()
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
+        self.sigma_h = hidden_states.detach().clone()
 
         # computing activation fraction
         non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
