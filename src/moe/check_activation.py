@@ -10,9 +10,7 @@
 
 """
 
-from functools import partial
-import os, re
-import datetime
+import os
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict, Audio
@@ -20,17 +18,15 @@ from datasets import load_dataset, DatasetDict, Audio
 from transformers import WhisperFeatureExtractor
 from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
-from transformers import GenerationConfig
 import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
-import evaluate
 #from transformers import WhisperForConditionalGeneration, WhisperConfig
 from transformers import WhisperConfig
-from modeling_whisper import WhisperForConditionalGeneration
+from modeling_whisper_moe import WhisperForConditionalGeneration
 
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
+from transformers import set_seed
 import argparse
 from accelerate import Accelerator
 

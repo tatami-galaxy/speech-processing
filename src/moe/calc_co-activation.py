@@ -10,9 +10,7 @@
 
 """
 
-from functools import partial
-import os, re
-import datetime
+import os
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
 from datasets import load_dataset, DatasetDict, Audio
@@ -24,13 +22,12 @@ from transformers import GenerationConfig
 import torch
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
-import evaluate
 #from transformers import WhisperForConditionalGeneration, WhisperConfig
 from transformers import WhisperConfig
-from modeling_whisper import WhisperForConditionalGeneration
+from modeling_whisper_moe import WhisperForConditionalGeneration
 
 from torch.utils.data.dataloader import DataLoader
-from transformers import AdamW, get_linear_schedule_with_warmup, set_seed
+from transformers import set_seed
 import argparse
 from accelerate import Accelerator
 
@@ -45,17 +42,49 @@ while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
 
-def co_activation(model, co_act_tensor, config, encoder=True):
+def co_activation(model, co_act_tensor, config, args, encoder=True):
+
     if encoder:
-        for l in range(config.encoder_layers):
-            h = model.model.encoder.layers[l].h.flatten(start_dim=0, end_dim=1)
-            #outer_h = torch.bmm(h.unsqueeze(2), h.unsqueeze(1))  # out of memory
-            #outer_h = torch.einsum("bi,bj->bij", h, h)  # out of memory
-            for n in range(config.encoder_ffn_dim):
-                h_n = h[n, :]
-                for m in range(config.encoder_ffn_dim):                        
-                    h_m = h[m, :]
-                    torch.mul(h_n, h_m)  # -> check co activation
+        num_layers = config.encoder_layers
+        ffn_dim = config.encoder_ffn_dim
+    else: 
+        num_layers = config.decoder_layers
+        ffn_dim = config.decoder_ffn_dim
+
+    layer_bar = tqdm(range(num_layers))
+    for l in range(config.encoder_layers):
+        if encoder:
+            h = model.model.encoder.layers[l].h.flatten(start_dim=0, end_dim=1)  # 1500, 3072
+            sigma_h = model.model.encoder.layers[l].sigma_h.flatten(start_dim=0, end_dim=1)  # 1500, 3072
+        else:
+            h = model.model.decoder.layers[l].h.flatten(start_dim=0, end_dim=1)  # 1500, 3072
+            sigma_h = model.model.decoder.layers[l].sigma_h.flatten(start_dim=0, end_dim=1)  # 1500, 3072
+
+        # out of gpu memory #
+        if not args.low_ram:
+            #outer_h = torch.bmm(h.unsqueeze(2), h.unsqueeze(1))  # out of memory on mac
+            outer_h = torch.einsum("bi,bj->bij", h, h)  # 1500, 3072, 3072
+            sigma_ind = torch.einsum("bi,bj->bij", sigma_h, sigma_h)
+                
+        else:
+            neuron_bar = tqdm(range(ffn_dim))
+            for n in range(ffn_dim):
+                h_n = h[:, n]  # 1500
+                sigma_h_n = sigma_h[:, n] # 1500
+                if (sigma_h_n==0).long().sum() != h.shape[0]:  # activated
+                    for m in range(ffn_dim):                     
+                        h_m = h[:, m]  # 1500
+                        sigma_h_m = sigma_h[:, m] # 1500
+                        if (sigma_h_m==0).long().sum() < h.shape[0]:  # if both activated
+                            # check co activation
+                            co_act = torch.mul(h_n, h_m).sum()  # summing activation vector
+                            co_act_tensor[l,n,m] += co_act
+
+                neuron_bar.update(1)
+
+        layer_bar.update(1)
+                    
+    return co_act_tensor
 
 
 
@@ -265,18 +294,19 @@ def train(args, accelerator):
 
     # eval bar
     eval_bar = tqdm(range(len(eval_dataloader)))
-
     model.eval()
+
+    print(encoder_co_act_tensor)
+
     for batch in eval_dataloader:
         with torch.no_grad():
             outputs = model(**batch)
-            encoder_co_act_tensor = co_activation(model, encoder_co_act_tensor, model.config, encoder=True)
-            decoder_co_act_tensor = co_activation(model, decoder_co_act_tensor, model.config, encoder=False)
+            encoder_co_act_tensor = co_activation(model, encoder_co_act_tensor, model.config, args, encoder=True)
+            decoder_co_act_tensor = co_activation(model, decoder_co_act_tensor, model.config, args, encoder=False)
 
             eval_bar.update(1)
 
-
-    ## neuron activations become less sparse with fine tuning ##
+    # save graph in gpmetis format #
 
 def run():
 
@@ -302,6 +332,10 @@ def run():
     )
     parser.add_argument(
         "--freeze_encoder",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--low_ram",
         action="store_true",
     )
     parser.add_argument(
@@ -394,6 +428,9 @@ def run():
     # parse args
     args = parser.parse_args()
     args.eval_batch_size = 1
+
+    if not args.low_ram:
+        raise ValueError("running out of memory with vectorized graph computation. pass in --low_ram")
 
     # set seed
     set_seed(args.seed)
