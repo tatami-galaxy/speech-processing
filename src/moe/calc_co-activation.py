@@ -77,7 +77,7 @@ def co_activation(model, co_act_tensor, config, args, encoder=True):
                         sigma_h_m = sigma_h[:, m] # 1500
                         if (sigma_h_m==0).long().sum() < h.shape[0]:  # if both activated
                             # check co activation
-                            co_act = torch.mul(h_n, h_m).sum()  # summing activation vector
+                            co_act = torch.mul(h_n, h_m).mean()  # averaging activation vector
                             co_act_tensor[l,n,m] += co_act
 
                 neuron_bar.update(1)
@@ -302,10 +302,11 @@ def train(args, accelerator):
         with torch.no_grad():
             outputs = model(**batch)
             encoder_co_act_tensor = co_activation(model, encoder_co_act_tensor, model.config, args, encoder=True)
-            decoder_co_act_tensor = co_activation(model, decoder_co_act_tensor, model.config, args, encoder=False)
+            #decoder_co_act_tensor = co_activation(model, decoder_co_act_tensor, model.config, args, encoder=False)
 
             eval_bar.update(1)
 
+    print(encoder_co_act_tensor/len(eval_dataloader))
     # save graph in gpmetis format #
 
 def run():
