@@ -3,7 +3,7 @@
 - neuron activations become less sparse with fine tuning
 - ft with relu instead of relu first and then ft
 - inf values in co-activation graph -> mean instead of sum?
-- few samples co-activation graph -> compare with similarity based approach
+- few samples co-activation graph -> compare with balanced k-means
 
 
 ##### CoFI
