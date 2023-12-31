@@ -164,7 +164,7 @@ class MOETrainer:
         with self.accelerator.accumulate(self.model):
             outputs = self.model(**inputs)
             loss = outputs.loss
-            train_loss += loss.detach().item()  # for tensorboard
+            train_loss = loss.detach().item()  # for tensorboard
             self.accelerator.backward(loss)
             self.optimizer.step()
             self.lr_scheduler.step()
@@ -341,9 +341,11 @@ class MOETrainer:
         # Training #
 
         # main progress bar
-        progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+        progress_bar = tqdm(range(self.global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
         # eval bar
         eval_bar = tqdm(range(len(eval_dataloader)), position=1)
+
+        tr_loss = 0
 
         while True:
 
@@ -370,6 +372,8 @@ class MOETrainer:
                     )
                     # evaluate model
                     self.evaluate(eval_dataloader, generation_config, gen_kwargs)
+
+                    tr_loss = 0
 
                 self.global_step += 1
                 if self.global_step >= self.train_steps : return
@@ -613,10 +617,6 @@ def run():
     # we only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
-        
-    if args.activation is not None:
-        model.config.activation_function = args.activation
-        print('activation changed to {}'.format(model.config.activation_function))
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
@@ -627,6 +627,10 @@ def run():
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    
+    if args.activation is not None:
+        model.config.activation_function = args.activation
+        accelerator.print('activation changed to {}'.format(model.config.activation_function))
 
     if args.freeze_encoder:
         model.freeze_encoder()

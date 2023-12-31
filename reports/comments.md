@@ -1,7 +1,11 @@
 ##### MOE
 
 - neuron activations become less sparse with fine tuning
-	- ft with relu instead of relu first and then ft
+	- eval off shelf model with relu
+		- does it require some ft with relu first?
+			- off the shelf worse with relu without ft
+				- try moe 
+			- ft off the shelf a litte and then moe
 
 - partition ffns
 	- inf values in co-activation graph -> mean instead of sum?
