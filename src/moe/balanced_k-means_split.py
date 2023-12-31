@@ -10,16 +10,14 @@
 
 """
 
-import os
 from os.path import dirname, abspath
 from tqdm.auto import tqdm
-from datasets import load_dataset, DatasetDict, Audio
 
 from transformers import WhisperFeatureExtractor
 from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
-from transformers import GenerationConfig
 import torch
+from torch import nn
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 #from transformers import WhisperForConditionalGeneration, WhisperConfig
@@ -32,7 +30,6 @@ import argparse
 from accelerate import Accelerator
 
 from k_means_constrained import KMeansConstrained
-import numpy as np
 
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
@@ -45,7 +42,17 @@ while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
     
 
-def cluster(model, k_means, encoder=True):
+def get_permutation_matrix(labels, ffn_dim, num_experts: int, expert_size: int):
+
+    P = torch.zeros(ffn_dim, ffn_dim)
+    for i in range(num_experts):
+        e_ids = (labels==i).nonzero()[0].tolist()  # 0 -> ffn_dim
+        for j in range(expert_size):
+            P[i*expert_size + j, e_ids[j]] = 1
+
+    return P
+
+def cluster(model, k_means, num_experts: int, expert_size: int, encoder=True):
 
     config = model.config
 
@@ -57,14 +64,47 @@ def cluster(model, k_means, encoder=True):
         ffn_dim = config.decoder_ffn_dim
 
     layer_bar = tqdm(range(num_layers))
-    for l in range(config.encoder_layers):
+    for l in range(num_layers):
         if encoder:
             W1 = model.model.encoder.layers[l].fc1.weight
-            k_means.fit_predict(W1.detach())
+            k_means.fit_predict(W1.cpu())
             labels = k_means.labels_
-            quit()
+            # permutation_matrix
+            P = get_permutation_matrix(labels, ffn_dim, num_experts, expert_size)
+            # permute
+            with torch.no_grad():
+                # permute W1, b1
+                model.model.encoder.layers[l].weight = nn.Parameter(
+                    P@model.model.encoder.layers[l].fc1.weight)
+                model.model.encoder.layers[l].fc1.bias = nn.Parameter(
+                    P@model.model.encoder.layers[l].fc1.bias)
+                # permute W2
+                PT = torch.transpose(P, 0, 1)
+                model.model.encoder.layers[l].fc2.weight = nn.Parameter(
+                    model.model.encoder.layers[l].fc2.weight@PT)
+        # decoder
         else:
-            pass
+            W1 = model.model.decoder.layers[l].fc1.weight
+            k_means.fit_predict(W1.cpu())
+            labels = k_means.labels_
+            # permutation_matrix
+            P = get_permutation_matrix(
+                labels, ffn_dim, num_experts, expert_size)
+            # permute
+            with torch.no_grad():
+                # permute W1, b1
+                model.model.decoder.layers[l].weight = nn.Parameter(
+                    P@model.model.decoder.layers[l].fc1.weight)
+                model.model.decoder.layers[l].fc1.bias = nn.Parameter(
+                    P@model.model.decoder.layers[l].fc1.bias)
+                # permute W2
+                PT = torch.transpose(P, 0, 1)
+                model.model.decoder.layers[l].fc2.weight = nn.Parameter(
+                    model.model.decoder.layers[l].fc2.weight@PT)
+                
+        layer_bar.update(1)
+
+    return model
 
 
 
@@ -126,7 +166,11 @@ def run():
     parser.add_argument(
         "--num_experts",
         default=96,
-        type=str,
+        type=int,
+    )
+    parser.add_argument(
+        "--output_dir",
+        default=None,
     )
 
     # parse args
@@ -141,6 +185,11 @@ def run():
         raise ValueError(
             f"pass in model_name_or_path"
         )
+    # check if output directory is passed in
+    if args.output_dir is None:
+        model_str = args.model_name_or_path.split('/')[-1]
+        args.output_dir = root+'/models/whisper/'+model_str+'_moe_k_means'
+    print('output directory set to : {}'.format(args.output_dir))
     # initialize accelerator
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -153,20 +202,20 @@ def run():
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
 
-    config = WhisperConfig.from_pretrained(
-        args.model_name_or_path,
+    #config = WhisperConfig.from_pretrained(
+        #args.model_name_or_path,
         #cache_dir=args.cache_dir if args.cache_dir else None,
-    )
+    #)
 
     # working. detect sparse activation. try changing hardcoded gelus to relu
     if args.activation is not None:
-        config.activation_function = args.activation
-        print('activation changed to {}'.format(config.activation_function))
+        model.config.activation_function = args.activation
+        accelerator.print('activation changed to {}'.format(model.config.activation_function))
 
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
-        config=config,
+        #config=config,
         #cache_dir=args.cache_dir if args.cache_dir else None,
     )
     #model.config.forced_decoder_ids = None
@@ -180,37 +229,29 @@ def run():
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
-
     # prepare everything for accelerator
     model = accelerator.prepare(model)
 
-    expert_size = model.config.encoder_ffn_dim / args.num_experts 
+    expert_size = model.config.encoder_ffn_dim // args.num_experts 
     k_means = KMeansConstrained(
         n_clusters=args.num_experts,
         size_min=expert_size,
         size_max=expert_size,
         random_state=0
     )
-    cluster(model, k_means, encoder=True)
-    cluster(model, k_means, encoder=False)
 
-    #print(model.model.encoder.layers[3].fc1.weight.shape)
-    #print(model.model.encoder.layers[3].fc1.bias.shape)
+    with torch.no_grad():
+        accelerator.print('clustering encoder')
+        model = cluster(model, k_means, args.num_experts, expert_size, encoder=True)
+        accelerator.print('clustering decoder')
+        model = cluster(model, k_means, args.num_experts, expert_size, encoder=False)
 
-
-    X = torch.tensor([[1, 2], [1, 4], [1, 0],
-                  [4, 2], [4, 4], [4, 0]])
-    clf = KMeansConstrained(
-        n_clusters=2,
-        size_min=2,
-        size_max=5,
-        random_state=0
-    )
-    # fit_predict(X, y=None)
-    # X : {array-like, sparse matrix}, shape = [n_samples, n_features]
-    clf.fit_predict(X)
-    accelerator.print(clf.cluster_centers_)
-    accelerator.print(clf.labels_)
+    # save model
+    accelerator.print('saving moefied model')
+    feature_extractor.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
+    processor.save_pretrained(args.output_dir)
+    model.save_pretrained(args.output_dir)
 
       
 

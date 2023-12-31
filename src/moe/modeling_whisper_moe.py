@@ -536,12 +536,10 @@ class WhisperEncoderLayer(nn.Module):
         # activation
         hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
         self.sigma_h = hidden_states.detach().clone()
-
         # computing activation fraction
         non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
         num_zero_neurons = (non_zero_neurons != 0).long().sum()
         self.activation = (num_zero_neurons/non_zero_neurons.shape[0])*100
-
         # dropout
         hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
         # project back to hidden dim
