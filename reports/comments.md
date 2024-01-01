@@ -29,6 +29,7 @@
 
 - structured sparsity more without distillation at the cost of performance
 	- try layerwise distillation
+	- pruning aware distillation?
 
 - prune conv layers
 
