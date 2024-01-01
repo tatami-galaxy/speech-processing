@@ -400,12 +400,6 @@ def run():
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
     parser.add_argument(
-        "--activation",
-        default=None,
-        type=str,
-        help="change model activation function",
-    )
-    parser.add_argument(
         "--freeze_encoder",
         action="store_true",
     )
@@ -532,7 +526,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=2000,
+        default=1000,
         type=int,
     )
     parser.add_argument(
@@ -567,6 +561,24 @@ def run():
         type=int,
         default=1
     )
+    # moe args
+    parser.add_argument(
+        "--activation",
+        default=None,
+        type=str,
+        help="change model activation function",
+    )
+    parser.add_argument(
+        "--expert_selection",
+        default='random',
+        type=str,
+    )
+    parser.add_argument(
+        "--n_experts",  # make sure it's less than total experts
+        default=None,
+        type=int,
+        help="number of experts to use for each input"
+    )
 
 
 
@@ -590,7 +602,7 @@ def run():
     if args.output_dir is None:
         model_str = args.model_name_or_path.split('/')[-1]
         data_str = args.data_dir.split('/')[-1]
-        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_moe_train'
+        args.output_dir = root+'/models/whisper/'+model_str+'_'+data_str+'_moe_train_'+args.expert_selection
     print('output directory set to : {}'.format(args.output_dir))
     
 

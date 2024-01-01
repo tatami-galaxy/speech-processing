@@ -18,16 +18,11 @@ from transformers import WhisperTokenizer
 from transformers import WhisperProcessor
 import torch
 from torch import nn
-from dataclasses import dataclass
-from typing import Any, Dict, List, Union
-#from transformers import WhisperForConditionalGeneration, WhisperConfig
-from transformers import WhisperConfig
+from typing import List
 from modeling_whisper_moe import WhisperForConditionalGeneration
 
-from torch.utils.data.dataloader import DataLoader
 from transformers import set_seed
 import argparse
-from accelerate import Accelerator
 
 from k_means_constrained import KMeansConstrained
 
@@ -65,42 +60,40 @@ def cluster(model, k_means, num_experts: int, expert_size: int, encoder=True):
 
     layer_bar = tqdm(range(num_layers))
     for l in range(num_layers):
+        # encoder
         if encoder:
             W1 = model.model.encoder.layers[l].fc1.weight
-            k_means.fit_predict(W1.cpu())
+            b1 = model.model.encoder.layers[l].fc1.bias
+            W2 = model.model.encoder.layers[l].fc2.weight
+            k_means.fit_predict(W1)
             labels = k_means.labels_
             # permutation_matrix
             P = get_permutation_matrix(labels, ffn_dim, num_experts, expert_size)
             # permute
             with torch.no_grad():
                 # permute W1, b1
-                model.model.encoder.layers[l].weight = nn.Parameter(
-                    P@model.model.encoder.layers[l].fc1.weight)
-                model.model.encoder.layers[l].fc1.bias = nn.Parameter(
-                    P@model.model.encoder.layers[l].fc1.bias)
+                model.model.encoder.layers[l].weight = nn.Parameter(P@W1)
+                model.model.encoder.layers[l].fc1.bias = nn.Parameter(P@b1)
                 # permute W2
-                PT = torch.transpose(P, 0, 1)
-                model.model.encoder.layers[l].fc2.weight = nn.Parameter(
-                    model.model.encoder.layers[l].fc2.weight@PT)
+                PT = torch.transpose(P,0,1)
+                model.model.encoder.layers[l].fc2.weight = nn.Parameter(W2@PT)
         # decoder
         else:
             W1 = model.model.decoder.layers[l].fc1.weight
-            k_means.fit_predict(W1.cpu())
+            b1 = model.model.decoder.layers[l].fc1.bias
+            W2 = model.model.decoder.layers[l].fc2.weight
+            k_means.fit_predict(W1)
             labels = k_means.labels_
             # permutation_matrix
-            P = get_permutation_matrix(
-                labels, ffn_dim, num_experts, expert_size)
+            P = get_permutation_matrix(labels, ffn_dim, num_experts, expert_size)
             # permute
             with torch.no_grad():
                 # permute W1, b1
-                model.model.decoder.layers[l].weight = nn.Parameter(
-                    P@model.model.decoder.layers[l].fc1.weight)
-                model.model.decoder.layers[l].fc1.bias = nn.Parameter(
-                    P@model.model.decoder.layers[l].fc1.bias)
+                model.model.decoder.layers[l].weight = nn.Parameter(P@W1)
+                model.model.decoder.layers[l].fc1.bias = nn.Parameter(P@b1)
                 # permute W2
-                PT = torch.transpose(P, 0, 1)
-                model.model.decoder.layers[l].fc2.weight = nn.Parameter(
-                    model.model.decoder.layers[l].fc2.weight@PT)
+                PT = torch.transpose(P,0,1)
+                model.model.decoder.layers[l].fc2.weight = nn.Parameter(W2@PT)
                 
         layer_bar.update(1)
 
@@ -190,10 +183,6 @@ def run():
         model_str = args.model_name_or_path.split('/')[-1]
         args.output_dir = root+'/models/whisper/'+model_str+'_moe_k_means'
     print('output directory set to : {}'.format(args.output_dir))
-    # initialize accelerator
-    accelerator = Accelerator(
-        mixed_precision=args.mixed_precision,
-    )
 
     # extractor, tokenizer, processor
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.model_name_or_path)
@@ -201,17 +190,7 @@ def run():
     # We only need to set the task id when the language is specified (i.e. in a multilingual setting)
     tokenizer.set_prefix_tokens(language=args.model_lang, task=args.task)
     processor = WhisperProcessor.from_pretrained(args.model_name_or_path, language=args.model_lang, task=args.task)
-
-    #config = WhisperConfig.from_pretrained(
-        #args.model_name_or_path,
-        #cache_dir=args.cache_dir if args.cache_dir else None,
-    #)
-
-    # working. detect sparse activation. try changing hardcoded gelus to relu
-    if args.activation is not None:
-        model.config.activation_function = args.activation
-        accelerator.print('activation changed to {}'.format(model.config.activation_function))
-
+    
     # model
     model = WhisperForConditionalGeneration.from_pretrained(
         args.model_name_or_path,
@@ -224,13 +203,14 @@ def run():
 
     if model.config.decoder_start_token_id is None:
         raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    
+    if args.activation is not None:
+        model.config.activation_function = args.activation
+        print('activation changed to {}'.format(model.config.activation_function))
 
     if args.freeze_encoder:
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
-
-    # prepare everything for accelerator
-    model = accelerator.prepare(model)
 
     expert_size = model.config.encoder_ffn_dim // args.num_experts 
     k_means = KMeansConstrained(
@@ -241,13 +221,13 @@ def run():
     )
 
     with torch.no_grad():
-        accelerator.print('clustering encoder')
+        print('clustering encoder')
         model = cluster(model, k_means, args.num_experts, expert_size, encoder=True)
-        accelerator.print('clustering decoder')
+        print('clustering decoder')
         model = cluster(model, k_means, args.num_experts, expert_size, encoder=False)
 
     # save model
-    accelerator.print('saving moefied model')
+    print('saving moefied model')
     feature_extractor.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
     processor.save_pretrained(args.output_dir)

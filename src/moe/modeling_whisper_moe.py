@@ -492,9 +492,13 @@ class WhisperEncoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)   
         # activation
         self.activation = 0
-        # for computing experts
+        # for computing experts (co-activation split)
         self.h = None
         self.sigma_h = None
+        # router selection
+        self.moe = False
+        self.num_experts = None
+
 
     def forward(
         self,
@@ -528,22 +532,27 @@ class WhisperEncoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
 
-        # project into ffn dim
-        # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
-        # break into two steps to see effect of activation
-        fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
-        self.h = fc1_hidden_states.detach().clone()
-        # activation
-        hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
-        self.sigma_h = hidden_states.detach().clone()
-        # computing activation fraction
-        non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
-        num_zero_neurons = (non_zero_neurons != 0).long().sum()
-        self.activation = (num_zero_neurons/non_zero_neurons.shape[0])*100
-        # dropout
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        # project back to hidden dim
-        hidden_states = self.fc2(hidden_states)  # F(x) = sigma(h)W2 + b2
+        if self.moe:
+            pass
+
+        else:
+            # project into ffn dim
+            # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
+            # break into two steps to see effect of activation
+            fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
+            self.h = fc1_hidden_states.detach().clone()
+            # activation
+            hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
+            self.sigma_h = hidden_states.detach().clone()
+            # computing activation fraction
+            non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
+            num_zero_neurons = (non_zero_neurons != 0).long().sum()
+            self.activation = (num_zero_neurons/non_zero_neurons.shape[0])*100
+            # dropout
+            hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+            # project back to hidden dim
+            hidden_states = self.fc2(hidden_states)  # F(x) = sigma(h)W2 + b2
+
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -590,9 +599,13 @@ class WhisperDecoderLayer(nn.Module):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
         # activation
         self.activation = 0
-        # for computing experts
+        # for computing experts (co-activation split)
         self.h = None
         self.sigma_h = None
+        # router selection
+        self.moe = False
+        self.num_experts = None
+
 
     def forward(
         self,
@@ -668,24 +681,27 @@ class WhisperDecoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
 
-        # project into ffn dim
-        # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
-        # break into two steps to see effect of activation
-        fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
-        self.h = fc1_hidden_states.detach().clone()
-        # activation
-        hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
-        self.sigma_h = hidden_states.detach().clone()
+        if self.moe:
+            pass
 
-        # computing activation fraction
-        non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
-        num_zero_neurons = (non_zero_neurons != 0).long().sum()
-        self.activation = (num_zero_neurons/non_zero_neurons.shape[0])*100
+        else:
+            # project into ffn dim
+            # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
+            # break into two steps to see effect of activation
+            fc1_hidden_states = self.fc1(hidden_states)  # h = xW1 + b1
+            self.h = fc1_hidden_states.detach().clone()
+            # activation
+            hidden_states = self.activation_fn(fc1_hidden_states)  # sigma(h)W2
+            self.sigma_h = hidden_states.detach().clone()
 
-        # dropout
-        hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
-        # project back into hidden dim
-        hidden_states = self.fc2(hidden_states)  # F(x) = sigma(h)W2 + b2
+            # computing activation fraction
+            non_zero_neurons = hidden_states.flatten(start_dim=0, end_dim=1).count_nonzero(dim=0)
+            num_zero_neurons = (non_zero_neurons != 0).long().sum()
+            self.activation = (num_zero_neurons/non_zero_neurons.shape[0])*100
+            # dropout
+            hidden_states = nn.functional.dropout(hidden_states, p=self.activation_dropout, training=self.training)
+            # project back into hidden dim
+            hidden_states = self.fc2(hidden_states)  # F(x) = sigma(h)W2 + b2
 
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -891,18 +907,23 @@ class WhisperEncoder(WhisperPreTrainedModel):
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
+
         self.post_init()
+
 
     def _freeze_parameters(self):
         for param in self.parameters():
             param.requires_grad = False
         self._requires_grad = False
 
+
     def get_input_embeddings(self) -> nn.Module:
         return self.conv1
 
+
     def set_input_embeddings(self, value: nn.Module):
         self.conv1 = value
+
 
     def forward(
         self,
@@ -1480,6 +1501,22 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         not be updated during training.
         """
         self.model.encoder._freeze_parameters()
+    
+
+    def set_moe(self, n: int, encoder=True):
+        # encoder
+        if encoder:
+            num_layers =self.config.encoder_layers
+            for l in range(num_layers):
+                self.model.encoder.layers[l].moe = True
+                self.model.encoder.layers[l].n_experts = n
+        # decoder
+        else:
+            num_layers =self.config.decoder_layers
+            for l in range(num_layers):
+                self.model.decoder.layers[l].moe = True
+                self.model.decoder.layers[l].n_experts = n
+
 
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Seq2SeqLMOutput, config_class=_CONFIG_FOR_DOC)

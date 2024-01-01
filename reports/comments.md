@@ -12,6 +12,8 @@
 	- few samples co-activation graph -> compare with balanced k-means
 
 - expert selection
+	- randomly select n (hyperparameter) for each input
+		- measure CER and inference time
 
 - upcycle whisper-base, whisper-tiny
 
@@ -19,6 +21,8 @@
 
 
 ##### CoFI
+
+- L0 theory
 
 - checkk distillation loss
 
@@ -30,9 +34,15 @@
 - structured sparsity more without distillation at the cost of performance
 	- try layerwise distillation
 	- pruning aware distillation?
+	- self distillation?
 
 - prune conv layers
 
 - load zs and l0 from checkpoint
 
 - enforcing sparsity clusters
+
+
+##### General
+
+- can we identify what high cer is due to?
