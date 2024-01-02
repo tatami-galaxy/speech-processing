@@ -35,12 +35,12 @@ h = fc2(h)
 print(h)
 
 # permute W1, b1, W2
-#with torch.no_grad():		
-	#fc1.weight = nn.Parameter(P@fc1.weight)
-	#fc1.bias = nn.Parameter(P@fc1.bias)
+with torch.no_grad():		
+	fc1.weight = nn.Parameter(P@fc1.weight)
+	fc1.bias = nn.Parameter(P@fc1.bias)
 
-	#PT = torch.transpose(P, 0, 1)
-	#fc2.weight = nn.Parameter(fc2.weight@PT)
+	PT = torch.transpose(P, 0, 1)
+	fc2.weight = nn.Parameter(fc2.weight@PT)
 
 # select experts
 n_experts = 64

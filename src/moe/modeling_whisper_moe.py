@@ -497,7 +497,7 @@ class WhisperEncoderLayer(nn.Module):
         self.sigma_h = None
         # router selection
         self.moe = False
-        self.num_experts = None
+        self.n_experts = None
 
 
     def forward(
@@ -604,7 +604,7 @@ class WhisperDecoderLayer(nn.Module):
         self.sigma_h = None
         # router selection
         self.moe = False
-        self.num_experts = None
+        self.n_experts = None
 
 
     def forward(
@@ -1503,19 +1503,39 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         self.model.encoder._freeze_parameters()
     
 
-    def set_moe(self, n: int, encoder=True):
+    def set_moe(self, num_experts: int, encoder=True):
+
+        model_dim = self.config.d_model
         # encoder
         if encoder:
-            num_layers =self.config.encoder_layers
+            num_layers = self.config.encoder_layers
+            ffn_dim = self.config.encoder_ffn_dim
             for l in range(num_layers):
+                # set flags and num experts
                 self.model.encoder.layers[l].moe = True
-                self.model.encoder.layers[l].n_experts = n
+                self.model.encoder.layers[l].n_experts = num_experts
+
+                # partition ffn into experts
+                self.model.encoder.layers[l].fc1_list = nn.ModuleList(
+                    [nn.Linear(model_dim, ffn_dim//num_experts) for _ in range(num_experts)])
+                self.model.encoder.layers[l].fc2_list = nn.ModuleList(
+                    [nn.Linear(ffn_dim//num_experts, model_dim, bias=False) for _ in range(num_experts-1)])
+                # b2 needs to be added once
+                self.model.encoder.layers[l].fc2_list.append(nn.Linear(ffn_dim//num_experts, model_dim))
+                for i in range(num_experts):
+                    self.model.encoder.layers[l].fc1_list[i].weight = nn.Parameter(
+                        self.model.encoder.layers[l].fc1.weight[i*expert_size:(i+1)*expert_size, :])
+                    fc1_list[i].bias = nn.Parameter(fc1.bias[i*expert_size:(i+1)*expert_size])
+                    fc2_list[i].weight = nn.Parameter(fc2.weight[:, i*expert_size:(i+1)*expert_size])
+                fc2_list[-1].bias = nn.Parameter(fc2.bias)
         # decoder
         else:
             num_layers =self.config.decoder_layers
+            ffn_dim = self.config.decoder_ffn_dim
             for l in range(num_layers):
+                # set flags and num experts
                 self.model.decoder.layers[l].moe = True
-                self.model.decoder.layers[l].n_experts = n
+                self.model.decoder.layers[l].n_experts = num_experts
 
 
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
