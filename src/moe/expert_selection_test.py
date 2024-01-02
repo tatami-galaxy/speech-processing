@@ -49,9 +49,9 @@ fc2_list = nn.ModuleList([nn.Linear(ffn_dim//num_experts, model_dim, bias=False)
 fc2_list.append(nn.Linear(ffn_dim//num_experts, model_dim))
 
 for i in range(num_experts):
-	fc1_list[i].weight = nn.Parameter(fc1.weight[:expert_size, :])
-	fc1_list[i].bias = nn.Parameter(fc1.bias[:expert_size])
-	fc2_list[i].weight = nn.Parameter(fc2.weight[:, :expert_size])
+	fc1_list[i].weight = nn.Parameter(fc1.weight[i*expert_size:(i+1)*expert_size, :])
+	fc1_list[i].bias = nn.Parameter(fc1.bias[i*expert_size:(i+1)*expert_size])
+	fc2_list[i].weight = nn.Parameter(fc2.weight[:, i*expert_size:(i+1)*expert_size])
 fc2_list[-1].bias = nn.Parameter(fc2.bias)
 
 h = 0
