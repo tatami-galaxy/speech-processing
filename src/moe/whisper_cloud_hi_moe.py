@@ -506,7 +506,7 @@ def run():
     )
     parser.add_argument(
         "--eval_batch_size",
-        default=8,
+        default=4,
         type=int,
     )
     parser.add_argument(
@@ -652,8 +652,10 @@ def run():
     model.set_moe(encoder=True)
     model.set_moe(encoder=False)
     # set num experts to use
-    model.set_moe_n_experts(model.config.num_experts, encoder=True)  # change later
-    model.set_moe_n_experts(model.config.num_experts, encoder=False)
+    #model.set_moe_n_experts(model.config.num_experts, encoder=True)
+    #model.set_moe_n_experts(model.config.num_experts, encoder=False)
+    model.set_moe_n_experts(args.n_experts, encoder=True)
+    model.set_moe_n_experts(args.n_experts, encoder=False)
 
     # dataset
     if args.local:
