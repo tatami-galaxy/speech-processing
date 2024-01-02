@@ -575,7 +575,7 @@ def run():
     )
     parser.add_argument(
         "--n_experts",  # make sure it's less than total experts
-        default=None,
+        default=96,
         type=int,
         help="number of experts to use for each input"
     )
