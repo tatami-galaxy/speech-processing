@@ -226,6 +226,9 @@ def run():
         print('clustering decoder')
         model = cluster(model, k_means, args.num_experts, expert_size, encoder=False)
 
+    # update config with num experts
+    model.config.update({'num_experts': args.num_experts})
+
     # save model
     print('saving moefied model')
     feature_extractor.save_pretrained(args.output_dir)

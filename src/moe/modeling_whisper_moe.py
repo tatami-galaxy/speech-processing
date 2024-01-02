@@ -15,9 +15,8 @@
 """ PyTorch Whisper model."""
 
 import math
-import copy
-from typing import Optional, Tuple, Union, Dict, List, Any, Callable
-import inspect
+import random
+from typing import Optional, Tuple, Union
 import warnings
 from dataclasses import dataclass
 
@@ -26,7 +25,6 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
-import torch.distributed as dist
 
 from transformers.deepspeed import is_deepspeed_zero3_enabled
 from transformers.activations import ACT2FN
@@ -36,7 +34,6 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     Seq2SeqLMOutput,
     Seq2SeqModelOutput,
-    CausalLMOutputWithPast,
     Seq2SeqLMOutput,
     SequenceClassifierOutput,
 )
@@ -490,14 +487,17 @@ class WhisperEncoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.encoder_ffn_dim)
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)   
+        # moe
         # activation
         self.activation = 0
         # for computing experts (co-activation split)
         self.h = None
         self.sigma_h = None
-        # router selection
-        self.moe = False
-        self.n_experts = None
+        self.moe = False  # whether to use moe
+        self.total_experts = config.num_experts  # total num of experts
+        self.n_experts = None  # num experts to use in each layer
+        self.fc1_list = None
+        self.fc2_list = None
 
 
     def forward(
@@ -533,7 +533,14 @@ class WhisperEncoderLayer(nn.Module):
         hidden_states = self.final_layer_norm(hidden_states)
 
         if self.moe:
-            pass
+            if self.n_experts is None:
+                raise ValueError(
+                    f"set n_experts in encoder and decoder layers"
+                )
+            expert_ids = random.sample(list(range(self.total_experts)), self.n_experts)
+            print(expert_ids)
+            quit()
+            
 
         else:
             # project into ffn dim
@@ -597,14 +604,17 @@ class WhisperDecoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
         self.fc2 = nn.Linear(config.decoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim)
+        # moe
         # activation
         self.activation = 0
         # for computing experts (co-activation split)
         self.h = None
         self.sigma_h = None
-        # router selection
-        self.moe = False
-        self.n_experts = None
+        self.moe = False  # whether to use moe
+        self.total_experts = config.num_experts  # total num of experts
+        self.n_experts = None  # num experts to use in each layer
+        self.fc1_list = None
+        self.fc2_list = None
 
 
     def forward(
@@ -1503,39 +1513,76 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
         self.model.encoder._freeze_parameters()
     
 
-    def set_moe(self, num_experts: int, encoder=True):
+    def set_moe(self, encoder=True):
 
         model_dim = self.config.d_model
+        num_experts = self.config.num_experts
+
         # encoder
-        if encoder:
+        if encoder: 
             num_layers = self.config.encoder_layers
             ffn_dim = self.config.encoder_ffn_dim
+            expert_size = ffn_dim // num_experts
             for l in range(num_layers):
-                # set flags and num experts
+                # set moe flag
                 self.model.encoder.layers[l].moe = True
-                self.model.encoder.layers[l].n_experts = num_experts
 
-                # partition ffn into experts
+                # create linear partitions for ffns
                 self.model.encoder.layers[l].fc1_list = nn.ModuleList(
                     [nn.Linear(model_dim, ffn_dim//num_experts) for _ in range(num_experts)])
                 self.model.encoder.layers[l].fc2_list = nn.ModuleList(
                     [nn.Linear(ffn_dim//num_experts, model_dim, bias=False) for _ in range(num_experts-1)])
                 # b2 needs to be added once
                 self.model.encoder.layers[l].fc2_list.append(nn.Linear(ffn_dim//num_experts, model_dim))
+
+                # copy partition weights
                 for i in range(num_experts):
                     self.model.encoder.layers[l].fc1_list[i].weight = nn.Parameter(
                         self.model.encoder.layers[l].fc1.weight[i*expert_size:(i+1)*expert_size, :])
-                    fc1_list[i].bias = nn.Parameter(fc1.bias[i*expert_size:(i+1)*expert_size])
-                    fc2_list[i].weight = nn.Parameter(fc2.weight[:, i*expert_size:(i+1)*expert_size])
-                fc2_list[-1].bias = nn.Parameter(fc2.bias)
+                    self.model.encoder.layers[l].fc1_list[i].bias = nn.Parameter(
+                        self.model.encoder.layers[l].fc1.bias[i*expert_size:(i+1)*expert_size])
+                    self.model.encoder.layers[l].fc2_list[i].weight = nn.Parameter(
+                        self.model.encoder.layers[l].fc2.weight[:, i*expert_size:(i+1)*expert_size])
+                self.model.encoder.layers[l].fc2_list[-1].bias = nn.Parameter(
+                    self.model.encoder.layers[l].fc2.bias)
         # decoder
         else:
             num_layers =self.config.decoder_layers
             ffn_dim = self.config.decoder_ffn_dim
+            expert_size = ffn_dim // num_experts
             for l in range(num_layers):
-                # set flags and num experts
+                # set moe flag
                 self.model.decoder.layers[l].moe = True
-                self.model.decoder.layers[l].n_experts = num_experts
+
+                # create linear partitions for ffns
+                self.model.decoder.layers[l].fc1_list = nn.ModuleList(
+                    [nn.Linear(model_dim, ffn_dim//num_experts) for _ in range(num_experts)])
+                self.model.decoder.layers[l].fc2_list = nn.ModuleList(
+                    [nn.Linear(ffn_dim//num_experts, model_dim, bias=False) for _ in range(num_experts-1)])
+                # b2 needs to be added once
+                self.model.decoder.layers[l].fc2_list.append(
+                    nn.Linear(ffn_dim//num_experts, model_dim))
+                # copy partition weights
+                for i in range(num_experts):
+                    self.model.decoder.layers[l].fc1_list[i].weight = nn.Parameter(
+                        self.model.decoder.layers[l].fc1.weight[i*expert_size:(i+1)*expert_size, :])
+                    self.model.decoder.layers[l].fc1_list[i].bias = nn.Parameter(
+                        self.model.decoder.layers[l].fc1.bias[i*expert_size:(i+1)*expert_size])
+                    self.model.decoder.layers[l].fc2_list[i].weight = nn.Parameter(
+                        self.model.decoder.layers[l].fc2.weight[:, i*expert_size:(i+1)*expert_size])
+                self.model.decoder.layers[l].fc2_list[-1].bias = nn.Parameter(
+                    self.model.decoder.layers[l].fc2.bias)
+
+
+    def set_moe_n_experts(self, n_experts, encoder=True):
+        if encoder:
+            num_layers = self.config.encoder_layers
+            for l in range(num_layers):
+                self.model.encoder.layers[l].n_experts = n_experts
+        else:
+            num_layers = self.config.decoder_layers
+            for l in range(num_layers):
+                self.model.decoder.layers[l].n_experts = n_experts
 
 
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)

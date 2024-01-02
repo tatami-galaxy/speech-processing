@@ -648,6 +648,13 @@ def run():
         model.freeze_encoder()
         model.model.encoder.gradient_checkpointing = False
 
+    # setup moe
+    model.set_moe(encoder=True)
+    model.set_moe(encoder=False)
+    # set num experts to use
+    model.set_moe_n_experts(model.config.num_experts, encoder=True)  # change later
+    model.set_moe_n_experts(model.config.num_experts, encoder=False)
+
     # dataset
     if args.local:
         common_voice = load_from_disk(args.data_dir)
