@@ -702,8 +702,7 @@ class WhisperDecoderLayer(nn.Module):
                 raise ValueError(
                     f"set n_experts in encoder and decoder layers"
                 )
-            expert_ids = random.sample(
-                list(range(self.total_experts)), self.n_experts)
+            expert_ids = random.sample(list(range(self.total_experts)), self.n_experts)
             temp_h = 0
             for id in expert_ids:
                 hidden_states_i = self.fc1_list[id](hidden_states)
@@ -1576,7 +1575,7 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
                 # set moe flag and total experts
                 self.model.decoder.layers[l].moe = True
                 # total num of experts
-                self.model.encoder.layers[l].total_experts = num_experts
+                self.model.decoder.layers[l].total_experts = num_experts
 
                 # create linear partitions for ffns
                 self.model.decoder.layers[l].fc1_list = nn.ModuleList(

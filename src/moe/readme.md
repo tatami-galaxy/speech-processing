@@ -10,4 +10,4 @@ accelerate launch co-activation_split.py --activation relu --max_test_samples 50
 python balanced_k-means_split.py --activation relu --model_name_or_path /home/ujan/speech-processing/models/whisper/whisper-small_common_voice_13_0_relu/checkpoint-6000 
 
 # train moe
-accelerate launch whisper_cloud_hi_moe.py --model_name_or_path `ffn paritioned model` --activation relu --max_test_samples 100 --local
+accelerate launch whisper_cloud_hi_moe.py --model_name_or_path Ujan/whisper-small_moe_k_means --activation relu --max_test_samples 100 --local
