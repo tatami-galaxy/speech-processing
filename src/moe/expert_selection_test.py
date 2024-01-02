@@ -32,7 +32,7 @@ with torch.no_grad():
 h = fc1(x)
 h = nn.functional.relu(h)
 h = fc2(h)
-#print(h)
+print(h)
 
 # permute W1, b1, W2
 #with torch.no_grad():		
@@ -45,12 +45,14 @@ h = fc2(h)
 # select experts
 n_experts = 64
 fc1_list = nn.ModuleList([nn.Linear(model_dim, ffn_dim//num_experts) for _ in range(num_experts)])
-fc2_list = nn.ModuleList([nn.Linear(ffn_dim//num_experts, model_dim) for _ in range(num_experts)])
+fc2_list = nn.ModuleList([nn.Linear(ffn_dim//num_experts, model_dim, bias=False) for _ in range(num_experts - 1)])
+fc2_list.append(nn.Linear(ffn_dim//num_experts, model_dim))
 
 for i in range(num_experts):
 	fc1_list[i].weight = nn.Parameter(fc1.weight[:expert_size, :])
 	fc1_list[i].bias = nn.Parameter(fc1.bias[:expert_size])
 	fc2_list[i].weight = nn.Parameter(fc2.weight[:, :expert_size])
+fc2_list[-1].bias = nn.Parameter(fc2.bias)
 
 h = 0
 for i in range(n_experts):
@@ -59,4 +61,4 @@ for i in range(n_experts):
 	# need to add b2 once, not n_expert times
 	hi = fc2_list[i](hi)
 	h += hi
-#print(h)
+print(h)

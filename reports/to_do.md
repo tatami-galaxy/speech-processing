@@ -1,4 +1,4 @@
-##### MOE
+### MOE
 
 - neuron activations become less sparse with fine tuning
 	- eval off shelf model with relu
@@ -20,7 +20,7 @@
 - activation pathways
 
 
-##### CoFI
+### CoFI
 
 - L0 theory
 
@@ -43,6 +43,6 @@
 - enforcing sparsity clusters
 
 
-##### General
+### General
 
 - can we identify what high cer is due to?
