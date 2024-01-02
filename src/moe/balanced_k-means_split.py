@@ -71,10 +71,10 @@ def cluster(model, k_means, num_experts: int, expert_size: int, encoder=True):
             P = get_permutation_matrix(labels, ffn_dim, num_experts, expert_size)
             # permute
             with torch.no_grad():
-                # permute W1, b1
-                model.model.encoder.layers[l].weight = nn.Parameter(P@W1)
+                # permute and set W1, b1
+                model.model.encoder.layers[l].fc1.weight = nn.Parameter(P@W1)
                 model.model.encoder.layers[l].fc1.bias = nn.Parameter(P@b1)
-                # permute W2
+                # permute and set W2
                 PT = torch.transpose(P,0,1)
                 model.model.encoder.layers[l].fc2.weight = nn.Parameter(W2@PT)
         # decoder
@@ -88,10 +88,10 @@ def cluster(model, k_means, num_experts: int, expert_size: int, encoder=True):
             P = get_permutation_matrix(labels, ffn_dim, num_experts, expert_size)
             # permute
             with torch.no_grad():
-                # permute W1, b1
-                model.model.decoder.layers[l].weight = nn.Parameter(P@W1)
+                # permute and set W1, b1
+                model.model.decoder.layers[l].fc1.weight = nn.Parameter(P@W1)
                 model.model.decoder.layers[l].fc1.bias = nn.Parameter(P@b1)
-                # permute W2
+                # permute and set W2
                 PT = torch.transpose(P,0,1)
                 model.model.decoder.layers[l].fc2.weight = nn.Parameter(W2@PT)
                 

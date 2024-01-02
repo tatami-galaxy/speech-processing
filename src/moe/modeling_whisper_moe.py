@@ -494,7 +494,7 @@ class WhisperEncoderLayer(nn.Module):
         self.h = None
         self.sigma_h = None
         self.moe = False  # whether to use moe
-        self.total_experts = config.num_experts  # total num of experts
+        self.total_experts = None  # total experts
         self.n_experts = None  # num experts to use in each layer
         self.fc1_list = None
         self.fc2_list = None
@@ -538,10 +538,16 @@ class WhisperEncoderLayer(nn.Module):
                     f"set n_experts in encoder and decoder layers"
                 )
             expert_ids = random.sample(list(range(self.total_experts)), self.n_experts)
-            print(expert_ids)
-            quit()
+            temp_h = 0
+            for id in expert_ids:
+                hidden_states_i = self.fc1_list[id](hidden_states)
+                hidden_states_i = self.activation_fn(hidden_states_i)
+                hidden_states_i = nn.functional.dropout(hidden_states_i, p=self.activation_dropout, training=self.training)
+                # need to add b2 once, not n_expert times
+                hidden_states_i = self.fc2_list[id](hidden_states_i)
+                temp_h += hidden_states_i
+            hidden_states = temp_h
             
-
         else:
             # project into ffn dim
             # h = xW1 + b1 ; F(x) = sigma(h)W2 + b2
@@ -611,7 +617,7 @@ class WhisperDecoderLayer(nn.Module):
         self.h = None
         self.sigma_h = None
         self.moe = False  # whether to use moe
-        self.total_experts = config.num_experts  # total num of experts
+        self.total_experts = None  # total experts
         self.n_experts = None  # num experts to use in each layer
         self.fc1_list = None
         self.fc2_list = None
@@ -692,7 +698,22 @@ class WhisperDecoderLayer(nn.Module):
         hidden_states = self.final_layer_norm(hidden_states)
 
         if self.moe:
-            pass
+            if self.n_experts is None:
+                raise ValueError(
+                    f"set n_experts in encoder and decoder layers"
+                )
+            expert_ids = random.sample(
+                list(range(self.total_experts)), self.n_experts)
+            temp_h = 0
+            for id in expert_ids:
+                hidden_states_i = self.fc1_list[id](hidden_states)
+                hidden_states_i = self.activation_fn(hidden_states_i)
+                hidden_states_i = nn.functional.dropout(
+                    hidden_states_i, p=self.activation_dropout, training=self.training)
+                # need to add b2 once, not n_expert times
+                hidden_states_i = self.fc2_list[id](hidden_states_i)
+                temp_h += hidden_states_i
+            hidden_states = temp_h
 
         else:
             # project into ffn dim
@@ -1524,8 +1545,9 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             ffn_dim = self.config.encoder_ffn_dim
             expert_size = ffn_dim // num_experts
             for l in range(num_layers):
-                # set moe flag
+                # set moe flag and total experts
                 self.model.encoder.layers[l].moe = True
+                self.model.encoder.layers[l].total_experts = num_experts  # total num of experts
 
                 # create linear partitions for ffns
                 self.model.encoder.layers[l].fc1_list = nn.ModuleList(
@@ -1551,8 +1573,10 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             ffn_dim = self.config.decoder_ffn_dim
             expert_size = ffn_dim // num_experts
             for l in range(num_layers):
-                # set moe flag
+                # set moe flag and total experts
                 self.model.decoder.layers[l].moe = True
+                # total num of experts
+                self.model.encoder.layers[l].total_experts = num_experts
 
                 # create linear partitions for ffns
                 self.model.decoder.layers[l].fc1_list = nn.ModuleList(
