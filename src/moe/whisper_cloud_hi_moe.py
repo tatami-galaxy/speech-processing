@@ -16,10 +16,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 from tqdm.auto import tqdm
 import argparse
-
 import torch
 from torch.utils.data.dataloader import DataLoader
-
 from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
@@ -29,22 +27,17 @@ from transformers import (
     set_seed
 )
 from modeling_whisper_moe import WhisperForConditionalGeneration
-
 from datasets import (
     load_dataset, 
     load_from_disk, 
     DatasetDict, 
     Audio,
 )
-
 import evaluate
-
 from accelerate import Accelerator
-
 #torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=50000))
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
-
 
 # get root directory
 root = abspath(__file__)

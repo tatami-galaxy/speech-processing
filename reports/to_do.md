@@ -8,12 +8,12 @@
 			- ft off the shelf a litte and then moe
 
 - partition ffns
-	- inf values in co-activation graph -> mean instead of sum?
-	- few samples co-activation graph -> compare with balanced k-means
+	- balanced k-means
 
 - expert selection
-	- randomly select n (hyperparameter) for each input
-		- measure CER and inference time
+	- randomly selection
+		- random experts working (32 out of 96, whisper-small)
+		- measure inference time
 
 - upcycle whisper-base, whisper-tiny
 
