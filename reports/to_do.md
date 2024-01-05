@@ -1,11 +1,9 @@
 ### MOE
 
 - neuron activations become less sparse with fine tuning
-	- eval off shelf model with relu
-		- does it require some ft with relu first?
-			- off the shelf worse with relu without ft
-			- moe still works
-			- ft off the shelf a litte and then moe
+	- off the shelf worse with relu without ft
+	- moe still works
+		- ft off the shelf a litte and then moe
 
 - partition ffns
 	- balanced k-means
@@ -13,7 +11,9 @@
 - expert selection
 	- random selection
 		- random experts working (32 out of 96, whisper-small)
-		- measure inference time
+		- measure inference time after vectorizing ffn computation
+
+- partition heads same as ffn?
 
 - upcycle whisper-base, whisper-tiny
 
@@ -24,12 +24,14 @@
 
 - L0 theory
 
-- checkk distillation loss
+- check distillation loss
 
-- dims and heads zeroing but not mha, ffns
-	- check mha, ffn masks
-	- check mha, ffn masks without distillation
+- dims and heads zeroing but not mha, ffns  [1] -> prioritize getting sparsity first
+	- check mha, ffn masks with and without distillation
+		- what is the effect of mha and ffn masks?
 	- check sparsity calculation
+	- tune l0_temperature, reg_learning_rate
+	- enforce sparsity clusters
 
 - structured sparsity more without distillation at the cost of performance
 	- try layerwise distillation
@@ -40,9 +42,6 @@
 
 - load zs and l0 from checkpoint
 
-- enforcing sparsity clusters
-
 
 ### General
 
-- can we identify what high cer is due to?
