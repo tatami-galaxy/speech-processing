@@ -4,14 +4,14 @@
 	- eval off shelf model with relu
 		- does it require some ft with relu first?
 			- off the shelf worse with relu without ft
-				- try moe 
+			- moe still works
 			- ft off the shelf a litte and then moe
 
 - partition ffns
 	- balanced k-means
 
 - expert selection
-	- randomly selection
+	- random selection
 		- random experts working (32 out of 96, whisper-small)
 		- measure inference time
 

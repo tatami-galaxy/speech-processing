@@ -44,7 +44,7 @@ from datasets import(
 
 import evaluate
 
-from modeling_whisper import SparseWhisperForConditionalGeneration
+from cofi_prune.modeling_whisper_cofi import SparseWhisperForConditionalGeneration
 from l0_module import L0Module
 
 from transformers.debug_utils import DebugUnderflowOverflow
