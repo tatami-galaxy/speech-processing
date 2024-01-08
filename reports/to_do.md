@@ -10,10 +10,15 @@
 
 - expert selection (routing)
 	- random selection
-		- random experts working (32 out of 96, whisper-small)
+		- random experts working (16 out of 96, whisper-small)
 		- measure inference time after vectorizing ffn computation
 
-- partition heads same as ffn?  [1]
+- partition heads same as ffn?  [2]
+	- replace softmax with relu in attn
+	- modifications for convergence
+	- parition into experts
+
+- moe + distillation
 
 - upcycle whisper-base, whisper-tiny
 
@@ -24,7 +29,7 @@
 
 - L0 theory  [2]
 
-- check distillation loss
+- check distillation loss  [1]
 
 - dims and heads zeroing but not mha, ffns 
 	- check mha, ffn masks with and without distillation
@@ -36,7 +41,7 @@
 
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation  [1]
-	- pruning aware distillation?  [2]
+	- pruning aware distillation?  [1]
 	- self distillation?
 
 - prune conv layers
@@ -46,6 +51,6 @@
 
 ### Objectives
 
-- increase structured sparsity
+- increase structured sparsity -> low l0 temperature
 - lower CER
 

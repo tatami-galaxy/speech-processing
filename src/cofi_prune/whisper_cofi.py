@@ -44,7 +44,7 @@ from datasets import(
 
 import evaluate
 
-from cofi_prune.modeling_whisper_cofi import SparseWhisperForConditionalGeneration
+from modeling_whisper_cofi import SparseWhisperForConditionalGeneration
 from l0_module import L0Module
 
 from transformers.debug_utils import DebugUnderflowOverflow
@@ -253,7 +253,13 @@ class CoFiTrainer:
                         loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
 
                     elif self.distil_type == 'rail':
-                        pass
+                        outputs = self.model(**inputs, output_hidden_states=True)
+                        self.accelerator.print(outputs.keys())
+                        self.accelerator.print(outputs.encoder_hidden_states[3].shape)
+                        self.accelerator.print(outputs.decoder_hidden_states[3].shape)
+                        self.accelerator.print(len(outputs.encoder_hidden_states))
+                        self.accelerator.print(len(outputs.decoder_hidden_states))
+                        quit()
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                     loss = outputs.loss
@@ -963,13 +969,16 @@ def run():
 
     # teacher #
     teacher_model = None
-    if args.teacher_name_or_path is not None and args.distil_type is not None:
-        accelerator.print('loading teacher')
-        teacher_model = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
-        teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
-        teacher_model.config.suppress_tokens = []
-        if teacher_model.config.decoder_start_token_id is None:
-            raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+    if args.teacher_name_or_path is not None:
+        if args.distil_type is not None:
+            accelerator.print('loading teacher')
+            teacher_model = WhisperForConditionalGeneration.from_pretrained(args.teacher_name_or_path)
+            teacher_model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language=args.model_lang, task=args.task)
+            teacher_model.config.suppress_tokens = []
+            if teacher_model.config.decoder_start_token_id is None:
+                raise ValueError("Make sure that `config.decoder_start_token_id` is correctly defined")
+        else:
+            accelerator.print("teacher passed in but distil_type is None. No distillation will be performed!")
 
     # l0 model
     l0_module = L0Module(

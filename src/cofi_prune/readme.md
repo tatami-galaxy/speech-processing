@@ -1,10 +1,12 @@
+export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+
 Cloud
 
 # accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 2000 --train_steps 7000 --eval_steps 1000 --lagrangian_warmup_steps 0 --target_sparsity 0.95
 
 # lagrangian_warmup_steps 200 --teacher_name_or_path `teacher path` --distil_type logit --max_test_samples 300
 
-# --learning_rate 1e-7 --reg_learning_rate 0.01 --mixed_precision fp16
+# --learning_rate 1e-7 --reg_learning_rate 0.01 --l0_temperature 0.1
 
 Local
 
