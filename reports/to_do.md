@@ -27,15 +27,16 @@
 - check distillation loss
 
 - dims and heads zeroing but not mha, ffns 
-	- check mha, ffn masks with and without distillation  [1]
-		- what is the effect of mha and ffn masks?
+	- check mha, ffn masks with and without distillation
 	- check sparsity calculation
-	- tune l0_temperature, reg_learning_rate
+	- hyp tune 
+		- l0_temperature -> lowering temperature increases sparsity
+		- reg_learning_rate
 	- enforce sparsity clusters  [1]
 
 - structured sparsity more without distillation at the cost of performance
-	- try layerwise distillation
-	- pruning aware distillation?  [1]
+	- layerwise distillation  [1]
+	- pruning aware distillation?  [2]
 	- self distillation?
 
 - prune conv layers
