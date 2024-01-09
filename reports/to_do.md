@@ -36,15 +36,15 @@
 	- check sparsity calculation
 	- hyp tune 
 		- l0_temperature -> lowering temperature increases sparsity
-		- reg_learning_rate
-	- enforce sparsity clusters  [1]
+		- reg_learning_rate [1]
+	- enforce sparsity clusters  [2]
 
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation  [1]
 	- pruning aware distillation?  [1]
 	- self distillation?
 
-- prune conv layers
+- prune conv layers [2]
 
 - load zs and l0 from checkpoint
 

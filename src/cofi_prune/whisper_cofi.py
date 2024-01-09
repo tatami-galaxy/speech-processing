@@ -150,9 +150,20 @@ class CoFiTrainer:
             self.rail_decoder_layers = random.sample(list(range(self.t_decoder_layers)), self.decoder_layers)
             self.rail_decoder_layers.sort()
 
+            self.rail_trans_encoder_s = nn.Linear(self.model.config.d_model, args.rail_dim)
+            self.rail_trans_decoder_s = nn.Linear(self.model.config.d_model, args.rail_dim)
+            self.rail_trans_encoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim)
+            self.rail_trans_decoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim)
+
+
         self.distil_temperature = args.distil_temperature
         self.alpha_ce = args.alpha_ce
         self.alpha_distil = args.alpha_distil
+        self.rail_lambda1 = args.rail_lambda1
+        self.rail_lambda2 = args.rail_lambda2
+        self.rail_lambda3 = args.rail_lambda3
+        self.rail_lambda4 = args.rail_lambda4
+
         self.l0_module = l0_module
 
         self.accelerator = accelerator
@@ -255,6 +266,7 @@ class CoFiTrainer:
             target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
             reduction="batchmean",
         ) * (self.distil_temperature**2)
+
         # net loss after weightage
         loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
 
@@ -278,12 +290,37 @@ class CoFiTrainer:
             )
         # teacher logits
         t_logits = t_outputs.logits
+        # logit distillation loss
+        d_loss = nn.functional.kl_div(
+            input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
+            target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
+            reduction="batchmean",
+        ) * (self.distil_temperature**2)
+
+        encoder_d_loss = 0
+        decoder_d_loss = 0
         # match encoder hidden states
         for l in range(self.encoder_layers):
             # l+1 since first output is from embedding layer
-            self.accelerator.print(s_outputs.encoder_hidden_states[l+1].shape)
-            self.accelerator.print(t_outputs.encoder_hidden_states[self.rail_encoder_layers[l]].shape)
-            quit()
+            mean_encoder_s_rep = torch.mean(s_outputs.encoder_hidden_states[l+1], dim=1)
+            mean_encoder_t_rep = torch.mean(t_outputs.encoder_hidden_states[self.rail_encoder_layers[l]], dim=1)
+            encoder_s_rep = self.rail_trans_encoder_s(mean_encoder_s_rep)
+            encoder_t_rep = self.rail_trans_encoder_t(mean_encoder_t_rep)
+            encoder_d_loss += nn.functional.mse_loss(encoder_s_rep, encoder_t_rep)
+        
+        # match decoder hidden states
+        for l in range(self.decoder_layers):
+            # l+1 since first output is from embedding layer
+            mean_decoder_s_rep = torch.mean(s_outputs.decoder_hidden_states[l+1], dim=1)
+            mean_decoder_t_rep = torch.mean(t_outputs.decoder_hidden_states[self.rail_decoder_layers[l]], dim=1)
+            decoder_s_rep = self.rail_trans_decoder_s(mean_decoder_s_rep)
+            decoder_t_rep = self.rail_trans_decoder_t(mean_decoder_t_rep)
+            decoder_d_loss += nn.functional.mse_loss(decoder_s_rep, decoder_t_rep)
+
+        # net loss after weightage
+        loss = self.rail_lambda1*s_loss + self.rail_lambda2*d_loss + self.rail_lambda3*encoder_d_loss + self.rail_lambda4*decoder_d_loss
+
+        return s_loss, d_loss+encoder_d_loss+decoder_d_loss, loss
 
 
     def train_step(self, inputs):
@@ -622,7 +659,7 @@ class CoFiTrainer:
 
                 progress_bar.update(1)
 
-
+                # eval loop
                 if (self.global_step + 1) % args.eval_steps == 0:
 
                     # log train losses
@@ -644,6 +681,13 @@ class CoFiTrainer:
 
                     self.evaluate(eval_dataloader, generation_config, gen_kwargs)
 
+                if (self.global_step + 1) % args.rail_steps == 0 and args.distil_type == 'rail':
+                    # sample encoder layers
+                    self.rail_encoder_layers = random.sample(list(range(self.t_encoder_layers)), self.encoder_layers)
+                    self.rail_encoder_layers.sort()
+                    # sample decoder layers
+                    self.rail_decoder_layers = random.sample(list(range(self.t_decoder_layers)), self.decoder_layers)
+                    self.rail_decoder_layers.sort()
 
                 self.global_step += 1
 
@@ -929,6 +973,32 @@ def run():
         type=int,
         default=2000,
         help="number of train steps after which to change teacher layers"
+    )
+    parser.add_argument(
+        '--rail_dim',
+        type=int,
+        default=128,
+        help='mapping dimension for representations in rail-kd'
+    )
+    parser.add_argument(
+        "--rail_lambda1",
+        default=1./3.,
+        type=float,
+    )
+    parser.add_argument(
+        "--rail_lambda2",
+        default=1./3.,
+        type=float,
+    )
+    parser.add_argument(
+        "--rail_lambda3",
+        default=1./6.,
+        type=float,
+    )
+    parser.add_argument(
+        "--rail_lambda4",
+        default=1./6.,
+        type=float,
     )
 
 
