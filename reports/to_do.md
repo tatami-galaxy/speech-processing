@@ -44,6 +44,8 @@
 	- pruning aware distillation?  [1]
 	- self distillation?
 
+- prune then distil? [2]
+
 - prune conv layers [2]
 
 - load zs and l0 from checkpoint
