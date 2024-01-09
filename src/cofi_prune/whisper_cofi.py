@@ -16,6 +16,7 @@ from tqdm.auto import tqdm
 import argparse
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
+import random
 
 from torch.utils.data.dataloader import DataLoader
 import torch
@@ -123,6 +124,7 @@ class CoFiTrainer:
     ):
         
         self.args = args
+        self.seed = args.seed
 
         self.start_prune = False
         self.prepruning_finetune_steps = args.prepruning_finetune_steps
@@ -130,8 +132,24 @@ class CoFiTrainer:
         self.global_step = 0  # tracks total steps
 
         self.model = model
+        self.encoder_layers = model.config.encoder_layers
+        self.decoder_layers = model.config.decoder_layers
+
         self.teacher_model = teacher_model 
+
+        if self.teacher_model is not None:
+            self.t_encoder_layers = self.teacher_model.config.encoder_layers
+            self.t_decoder_layers = self.teacher_model.config.decoder_layers
         self.distil_type = args.distil_type
+        # select and sort intermediate teacher layers for rail
+        if args.distil_type == 'rail':
+            # sample encoder layers
+            self.rail_encoder_layers = random.sample(list(range(self.t_encoder_layers)), self.encoder_layers)
+            self.rail_encoder_layers.sort()
+            # sample decoder layers
+            self.rail_decoder_layers = random.sample(list(range(self.t_decoder_layers)), self.decoder_layers)
+            self.rail_decoder_layers.sort()
+
         self.distil_temperature = args.distil_temperature
         self.alpha_ce = args.alpha_ce
         self.alpha_distil = args.alpha_distil
@@ -215,6 +233,59 @@ class CoFiTrainer:
             inputs[key] = zs[key]
 
 
+    def logit_distil(self, inputs):
+
+        outputs = self.model(**inputs)
+        # student logits
+        s_logits = outputs.logits
+        # student loss
+        s_loss = outputs.loss
+        # teacher
+        with torch.no_grad():
+            outputs = self.teacher_model(
+                input_features=inputs['input_features'],
+                attention_mask=inputs['attention_mask'],
+                labels=inputs['labels']
+            )
+        # teacher logits
+        t_logits = outputs.logits
+        # distillation loss
+        d_loss = nn.functional.kl_div(
+            input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
+            target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
+            reduction="batchmean",
+        ) * (self.distil_temperature**2)
+        # net loss after weightage
+        loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
+
+        return s_loss, d_loss, loss
+    
+
+    def rail_kd(self, inputs):
+
+        s_outputs = self.model(**inputs, output_hidden_states=True)
+        # student logits
+        s_logits = s_outputs.logits
+        # student loss
+        s_loss = s_outputs.loss
+        # teacher
+        with torch.no_grad():
+            t_outputs = self.teacher_model(
+                input_features=inputs['input_features'],
+                attention_mask=inputs['attention_mask'],
+                labels=inputs['labels'],
+                output_hidden_states=True,
+            )
+        # teacher logits
+        t_logits = t_outputs.logits
+        # match encoder hidden states
+        for l in range(self.encoder_layers):
+            # l+1 since first output is from embedding layer
+            self.accelerator.print(s_outputs.encoder_hidden_states[l+1].shape)
+            self.accelerator.print(t_outputs.encoder_hidden_states[self.rail_encoder_layers[l]].shape)
+            quit()
+
+
     def train_step(self, inputs):
 
         self.model.train()
@@ -229,37 +300,11 @@ class CoFiTrainer:
 
                 if self.teacher_model is not None:
                     if self.distil_type == 'logit':           
-                        outputs = self.model(**inputs)
-                        # student logits
-                        s_logits = outputs.logits
-                        # student loss
-                        s_loss = outputs.loss
-                        # teacher
-                        with torch.no_grad():
-                            outputs = self.teacher_model(
-                                input_features=inputs['input_features'],
-                                attention_mask=inputs['attention_mask'],
-                                labels=inputs['labels']
-                            )
-                        # teacher logits
-                        t_logits = outputs.logits
-                        # distillation loss
-                        d_loss = nn.functional.kl_div(
-                            input=nn.functional.log_softmax(s_logits / self.distil_temperature, dim=-1),
-                            target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
-                            reduction="batchmean",
-                        ) * (self.distil_temperature**2)
-                        # net loss after weightage
-                        loss = self.alpha_distil * d_loss + self.alpha_ce * s_loss
+                        # logit distil loss
+                        s_loss, d_loss, loss = self.logit_distil(inputs)
 
                     elif self.distil_type == 'rail':
-                        outputs = self.model(**inputs, output_hidden_states=True)
-                        self.accelerator.print(outputs.keys())
-                        self.accelerator.print(outputs.encoder_hidden_states[3].shape)
-                        self.accelerator.print(outputs.decoder_hidden_states[3].shape)
-                        self.accelerator.print(len(outputs.encoder_hidden_states))
-                        self.accelerator.print(len(outputs.decoder_hidden_states))
-                        quit()
+                        s_loss, d_loss, loss = self.rail_kd(inputs)
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                     loss = outputs.loss
@@ -303,6 +348,8 @@ class CoFiTrainer:
                 ret_dict['train_loss'] = loss.detach().item()
                 if lagrangian_loss is not None:
                     ret_dict['lag_loss'] = lagrangian_loss.detach().item()
+                if s_loss is not None:
+                    ret_dict['student_loss'] = s_loss.detach().item()
                 if d_loss is not None:
                     ret_dict['distil_loss'] = d_loss.detach().item()
                 # other losses (distill loss)
@@ -747,7 +794,7 @@ def run():
     )
     parser.add_argument(
         "--train_steps",
-        default=5000,
+        default=6000,
         type=int,
     )
     parser.add_argument(
@@ -762,7 +809,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(
@@ -877,6 +924,12 @@ def run():
         type=float,
         default=1.0, # 1.0
     )
+    parser.add_argument(
+        '--rail_steps',
+        type=int,
+        default=2000,
+        help="number of train steps after which to change teacher layers"
+    )
 
 
     # parse args
@@ -884,6 +937,7 @@ def run():
 
     # set seed
     set_seed(args.seed)
+    random.seed(args.seed)
 
     # check if data path exists
     if args.data_dir is None:
@@ -911,6 +965,9 @@ def run():
             raise ValueError(
                 f"need to pass in teacher_name_or_path for distillation"
             )
+        if args.distil_type == 'rail':
+            if args.eval_steps != args.rail_steps:
+                print('eval_steps different from rail_steps')
 
     # accelerator mixed precision
     print('mixed precision set to : {}. fp16, fp8 may cause overflow/underflow'.format(args.mixed_precision))
