@@ -44,6 +44,8 @@
 	- pruning aware distillation?  [1]
 	- self distillation?
 
+- cofi with relu activation? [2]
+
 - prune then distil? [2]
 
 - prune conv layers [2]
