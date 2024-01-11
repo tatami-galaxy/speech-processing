@@ -13,7 +13,7 @@
 		- random experts working (16 out of 96, whisper-small)
 		- measure inference time after vectorizing ffn computation
 
-- partition heads same as ffn?  [3]
+- partition heads same as ffn?  [2]
 	- replace softmax with relu in attn
 	- modifications for convergence
 	- parition into experts
@@ -33,6 +33,8 @@
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
 
+- train on full chinese dataset [2]
+
 - hyp tune 
 	- l0_temperature -> lowering temperature increases sparsity
 	- reg_learning_rate [1]
@@ -40,7 +42,10 @@
 
 - enforce sparsity clusters  [2]
 	- is sparsity uniform throughout training?
-		- kl div, wasserstein etc from uniform distrubution
+		- how to measure this?
+	- kl div, wasserstein etc from uniform distrubution
+	- entropy -> uniform distribution maximizes entropy
+	- ripley's k and l functions
 
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation -> better than logit distillation

@@ -555,7 +555,7 @@ class L0Module(Module):
         results["remaining_de_cross_mha_nums"] = remaining_de_cross_mha_nums.tolist()
 
         results["remaining_en_ffn_dims"] = remaining_en_ffn_dims.tolist()
-        results["remaining_de_ffn_dims"] = remaining_en_ffn_dims.tolist()
+        results["remaining_de_ffn_dims"] = remaining_de_ffn_dims.tolist()
 
         results["remaining_en_ffn_layers"] = remaining_en_ffns.tolist()
         results["remaining_de_ffn_layers"] = remaining_de_ffns.tolist()
@@ -565,6 +565,11 @@ class L0Module(Module):
         results["pruned_model_sparsity"] = pruned_model_size / self.prunable_model_size
 
         return results
+    
+
+    def calculate_sparsity_distribution(self, zs):
+        print(zs["en_head_z"].shape)
+        quit()
 
 
     # called after init and set_lagrangian_warmup_steps

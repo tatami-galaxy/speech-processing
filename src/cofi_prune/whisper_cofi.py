@@ -403,11 +403,11 @@ class CoFiTrainer:
                 ret_dict['train_loss'] = loss.detach().item()
                 if lagrangian_loss is not None:
                     ret_dict['lag_loss'] = lagrangian_loss.detach().item()
-                if s_loss is not None:
-                    ret_dict['student_loss'] = s_loss.detach().item()
-                if d_loss is not None:
-                    ret_dict['distil_loss'] = d_loss.detach().item()
-                # other losses (distill loss)
+                if self.args.distil_type is not None:
+                    if s_loss is not None:
+                        ret_dict['student_loss'] = s_loss.detach().item()
+                    if d_loss is not None:
+                        ret_dict['distil_loss'] = d_loss.detach().item()
 
                 return ret_dict
 
@@ -464,11 +464,12 @@ class CoFiTrainer:
         zs = None
         if self.start_prune:
             self.l0_module.eval()
-            # real masks
-            zs = self.l0_module.forward(training=False)  # contains zeros
+            # real masks, contains zeros
+            zs = self.l0_module.forward(training=False)
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs)
+            sparsity_dist = self.l0_module.calculate_sparsity_distribution(zs)
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)
