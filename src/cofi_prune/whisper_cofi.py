@@ -17,6 +17,8 @@ import argparse
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 import random
+from functools import partial
+import re
 
 from torch.utils.data.dataloader import DataLoader
 import torch
@@ -60,6 +62,22 @@ root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
 
+
+def path_remap(x, args):
+
+    # get audio path
+    #path_list = x['audio'].split('/')
+    path = x['audio']
+
+    #for i in range(len(path_list)):
+        #if path_list[i] == 'wav': break
+
+    #new_path = '/'.join(path_list[i:])
+    #new_path = args.data_dir+'/'+new_path
+    new_path = args.data_dir+'/'+path
+    x['audio'] = new_path
+
+    return x
 
 
 @dataclass
@@ -135,6 +153,12 @@ class CoFiTrainer:
         self.encoder_layers = model.config.encoder_layers
         self.decoder_layers = model.config.decoder_layers
 
+        self.l0_module = l0_module
+
+        self.accelerator = accelerator
+        self.tokenizer = tokenizer
+        self.processor = processor
+
         self.teacher_model = teacher_model 
 
         if self.teacher_model is not None:
@@ -150,10 +174,10 @@ class CoFiTrainer:
             self.rail_decoder_layers = random.sample(list(range(self.t_decoder_layers)), self.decoder_layers)
             self.rail_decoder_layers.sort()
 
-            self.rail_trans_encoder_s = nn.Linear(self.model.config.d_model, args.rail_dim)
-            self.rail_trans_decoder_s = nn.Linear(self.model.config.d_model, args.rail_dim)
-            self.rail_trans_encoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim)
-            self.rail_trans_decoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim)
+            self.rail_trans_encoder_s = nn.Linear(self.model.config.d_model, args.rail_dim).to(self.accelerator.device)
+            self.rail_trans_decoder_s = nn.Linear(self.model.config.d_model, args.rail_dim).to(self.accelerator.device)
+            self.rail_trans_encoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim).to(self.accelerator.device)
+            self.rail_trans_decoder_t = nn.Linear(self.teacher_model.config.d_model, args.rail_dim).to(self.accelerator.device)
 
 
         self.distil_temperature = args.distil_temperature
@@ -163,12 +187,6 @@ class CoFiTrainer:
         self.rail_lambda2 = args.rail_lambda2
         self.rail_lambda3 = args.rail_lambda3
         self.rail_lambda4 = args.rail_lambda4
-
-        self.l0_module = l0_module
-
-        self.accelerator = accelerator
-        self.tokenizer = tokenizer
-        self.processor = processor
 
         self.optimizer = None
         self.l0_optimizer = None
@@ -549,7 +567,8 @@ class CoFiTrainer:
         self.accelerator.log({
             "train_batch_size": args.train_batch_size,
             "eval_batch_size": args.eval_batch_size,
-            "gpus": self.accelerator.state.num_processes
+            "gpus": self.accelerator.state.num_processes,
+            "l0_temperature": args.l0_temperature,
             },
             step=self.global_step + 1,
         )
@@ -624,6 +643,8 @@ class CoFiTrainer:
 
         tr_loss = 0  # train loss before each eval
         lag_loss = 0  # lagrangian loss before each eval
+        student_loss = 0
+        distil_loss = 0
 
         debug_overflow = DebugUnderflowOverflow(self.model)
 
@@ -655,7 +676,10 @@ class CoFiTrainer:
                 tr_loss += losses['train_loss']
                 if 'lag_loss' in losses:
                     lag_loss += losses['lag_loss']
-                # distil loss
+                if 'student_loss' in losses:
+                    student_loss += losses['student_loss']
+                if 'distil_loss' in losses:
+                    distil_loss += losses['distil_loss']
 
                 progress_bar.update(1)
 
@@ -665,16 +689,21 @@ class CoFiTrainer:
                     # log train losses
                     tr_loss = tr_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     lag_loss = lag_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
+                    student_loss = student_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
+                    distil_loss = distil_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     # distill loss #
 
                     self.accelerator.print('step : {}'.format(self.global_step + 1))
                     self.accelerator.print('train_loss : {}'.format(tr_loss))
                     self.accelerator.print('lag_loss : {}'.format(lag_loss))
+                    self.accelerator.print('student_loss : {}'.format(student_loss))
+                    self.accelerator.print('distil_loss : {}'.format(distil_loss))
 
                     self.accelerator.log({
                         "train_loss": tr_loss,
                         "lag_loss": lag_loss,
-                        # distil loss #
+                        "stident_loss": student_loss,
+                        "distil_loss": distil_loss,
                     },
                     step=self.global_step + 1,
                     )
@@ -713,6 +742,11 @@ def run():
     parser.add_argument(
         "--local",
         action="store_true",
+    )
+    parser.add_argument(
+        "--ldc",
+        action="store_true",
+        help="overrides local"
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -1039,6 +1073,11 @@ def run():
             if args.eval_steps != args.rail_steps:
                 print('eval_steps different from rail_steps')
 
+    if args.ldc:
+        args.model_lang = 'chinese'
+        args.data_lang = 'zh'
+        args.text_column = 'transcript'
+
     # accelerator mixed precision
     print('mixed precision set to : {}. fp16, fp8 may cause overflow/underflow'.format(args.mixed_precision))
     
@@ -1116,30 +1155,73 @@ def run():
     )
         
     # dataset
-    if args.local:
-        common_voice = load_from_disk(args.data_dir)
+
+    # chinese ldc dataset
+    if args.ldc:
+
+        data_files = {
+            'train': args.data_dir+'/final_train_v2a.csv', # final_train.csv
+            'validation': args.data_dir+'/final_dev_v2a_short.csv', # final_train.csv
+        }
+
+        dataset = load_dataset('csv', data_files=data_files)
+        # map to new audio path
+        with accelerator.main_process_first():
+            dataset = dataset.map(partial(path_remap, args=args), batched=False)
+
+        # check audio column, text column names
+        if args.audio_column not in dataset["train"].column_names:
+            raise ValueError(
+                f"--audio_column '{args.audio_column}' not found in dataset '{args.data_dir}'."
+                " Make sure to set `--audio_column` to the correct audio column - one of"
+                f" {', '.join(dataset['train'].column_names)}."
+            )
+
+        if args.text_column not in dataset["train"].column_names:
+            raise ValueError(
+                f"--text_column {args.text_column} not found in dataset '{args.data_dir}'. "
+                "Make sure to set `--text_column` to the correct text column - one of "
+                f"{', '.join(dataset['train'].column_names)}."
+            )
+        
+        # remove punctuations
+        def remove_special_characters(batch):
+            batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
+            return batch
+        
+        with accelerator.main_process_first():
+            dataset = dataset.map(
+                remove_special_characters,
+                desc="remove special characters from datasets",
+            )
+
+    # common voice
     else:
-        common_voice = DatasetDict()
-        common_voice["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
-        common_voice["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
-    with accelerator.main_process_first():
-        # remove unused columns
-        common_voice = common_voice.remove_columns(
-            [
-                "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
-            ]
-        )
+        if args.local:
+            dataset = load_from_disk(args.data_dir)
+        else:
+            dataset= DatasetDict()
+            dataset["train"] = load_dataset(args.data_dir, args.data_lang, split="train+validation")
+            dataset["test"] = load_dataset(args.data_dir, args.data_lang, split="test")
 
-        # select small dataset for testing
-        if args.max_train_samples is not None:
-            common_voice["train"] = common_voice["train"].select(range(args.max_train_samples))
+        with accelerator.main_process_first():
+            # remove unused columns
+            dataset = dataset.remove_columns(
+                [
+                    "accent", "age", "client_id", "down_votes", "gender", "locale", "path", "segment", "up_votes"
+                ]
+            )
 
-        if args.max_test_samples is not None:
-            common_voice["test"] = common_voice["test"].select(range(args.max_test_samples))
+    # select small dataset for testing
+    if args.max_train_samples is not None:
+        dataset["train"] = dataset["train"].select(range(args.max_train_samples))
 
-        # resample to 16kHz
-        common_voice = common_voice.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
+    if args.max_test_samples is not None:
+        dataset["test"] = dataset["test"].select(range(args.max_test_samples))
+
+    # resample to 16kHz
+    dataset = dataset.cast_column("audio", Audio(sampling_rate=args.sampling_rate))
 
 
     # if SpecAugment is used for whisper models, return attention_mask to guide the mask along time axis
@@ -1155,10 +1237,13 @@ def run():
     max_input_length = args.max_duration_in_seconds * feature_extractor.sampling_rate
     min_input_length = args.min_duration_in_seconds * feature_extractor.sampling_rate
     model_input_name = feature_extractor.model_input_names[0]
+    audio_column_name = args.audio_column
+    num_workers = args.num_workers
+    text_column_name = args.text_column
         
     def prepare_dataset(batch):
         # process audio
-        sample = batch["audio"]
+        sample = batch[audio_column_name]
         inputs = feature_extractor(
             sample["array"],
             sampling_rate=sample["sampling_rate"],
@@ -1171,17 +1256,17 @@ def run():
             batch["attention_mask"] = inputs.get("attention_mask")[0]
 
         # process targets
-        input_str = batch["sentence"]  # do lower
+        input_str = batch[text_column_name]  # do lower
         batch["labels"] = tokenizer(input_str).input_ids
         return batch
         
         
     with accelerator.main_process_first():
         # vectorize dataset
-        common_voice = common_voice.map(
+        dataset = dataset.map(
             prepare_dataset,
-            remove_columns=common_voice.column_names["train"],
-            num_proc=args.num_workers)
+            remove_columns=dataset.column_names["train"],
+            num_proc=num_workers)
 
 
     # filter data that is shorter than min_input_length or longer than
@@ -1189,7 +1274,7 @@ def run():
     def is_audio_in_length_range(length):
         return length > min_input_length and length < max_input_length
 
-    common_voice = common_voice.filter(
+    dataset = dataset.filter(
         is_audio_in_length_range,
         num_proc=args.num_workers,
         input_columns=["input_length"],
@@ -1203,7 +1288,7 @@ def run():
     )
 
     # cer, wer
-    if args.local:
+    if args.local or args.ldc:
         # change path
         cer = evaluate.load("/home/ujan/Downloads/evaluate/metrics/cer/cer.py")
         wer = evaluate.load("/home/ujan/Downloads/evaluate/metrics/wer/wer.py")
@@ -1221,8 +1306,8 @@ def run():
         teacher_model=teacher_model,
         accelerator=accelerator,
         data_collator=data_collator,
-        train_dataset=common_voice['train'],
-        eval_dataset= common_voice['test'],
+        train_dataset=dataset['train'],
+        eval_dataset= dataset['test'],
         metrics={'cer': cer, 'wer': wer},
     )
 

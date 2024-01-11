@@ -144,7 +144,7 @@ def train(args, accelerator):
 
 
 
-     # remove punctuations
+    # remove punctuations
     def remove_special_characters(batch):
         batch[args.text_column] = re.sub(chars_to_ignore_regex, "", batch[args.text_column]).lower() + " "
         return batch
