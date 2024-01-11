@@ -37,14 +37,15 @@
 
 - hyp tune 
 	- l0_temperature -> lowering temperature increases sparsity
-	- reg_learning_rate [1]
+	- reg_learning_rate  [1]
 	- layerwise distillation [1]
 
 - enforce sparsity clusters  [2]
 	- is sparsity uniform throughout training?
-		- how to measure this?
+		- how to measure this?  [1]
 	- kl div, wasserstein etc from uniform distrubution
 	- entropy -> uniform distribution maximizes entropy
+		- how to implement? need to be differentiable objective [2]
 	- ripley's k and l functions
 
 - structured sparsity more without distillation at the cost of performance

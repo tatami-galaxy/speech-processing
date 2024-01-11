@@ -568,7 +568,11 @@ class L0Module(Module):
     
 
     def calculate_sparsity_distribution(self, zs):
-        print(zs["en_head_z"].shape)
+        # get all head sparsities
+        en_head_vals = torch.flatten(zs["en_head_z"])
+        print(en_head_vals)
+        #print(zs["de_self_head_z"].shape)
+        #print(zs["de_cross_head_z"].shape)
         quit()
 
 
