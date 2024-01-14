@@ -372,6 +372,9 @@ class CoFiTrainer:
                 # backward
                 self.accelerator.backward(loss)
 
+                print(self.l0_module.en_head_loga.grad)
+                quit()
+
                 # clip grad norm
                 # error : clip_grad_norm_ returns inf
                 if self.accelerator.sync_gradients:
@@ -469,7 +472,7 @@ class CoFiTrainer:
 
         if zs is not None:
             pruned_model_size_info = self.l0_module.calculate_model_size(zs)
-            sparsity_dist = self.l0_module.calculate_sparsity_distribution(zs)
+            #sparsity_dist = self.l0_module.calculate_sparsity_distribution(zs)
 
         # eval bar
         #eval_bar = tqdm(range(len(eval_dataloader)), position=1)

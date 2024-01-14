@@ -27,7 +27,7 @@
 
 ### CoFI
 
-- L0 theory  [2]
+- L0 theory  [1]
 
 - check distillation loss
 - check mha, ffn masks with and without distillation
@@ -44,8 +44,10 @@
 	- is sparsity uniform throughout training?
 		- how to measure this?  [1]
 	- kl div, wasserstein etc from uniform distrubution
-	- entropy -> uniform distribution maximizes entropy
-		- how to implement? need to be differentiable objective [2]
+	- entropy -> uniform distribution maximizes entropy  [1]
+		- how to implement? need to be differentiable objective [1]
+			- does directly modifying (softmax + entropy) z produce gradients through reparameterization? [1]
+				- check loga grads [1]
 	- ripley's k and l functions
 
 - structured sparsity more without distillation at the cost of performance
