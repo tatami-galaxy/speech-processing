@@ -1056,12 +1056,6 @@ def run():
         default=1./6.,
         type=float,
     )
-    parser.add_argument(
-        "--activation",
-        default=None,
-        type=str,
-        help="change model activation function",
-    )
 
 
     # parse args
