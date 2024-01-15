@@ -372,8 +372,9 @@ class CoFiTrainer:
                 # backward
                 self.accelerator.backward(loss)
 
-                print(self.l0_module.en_head_loga.grad)
-                quit()
+                if self.global_step == 100:
+                    self.accelerator.print(self.l0_module.en_head_loga.grad)
+                    quit()
 
                 # clip grad norm
                 # error : clip_grad_norm_ returns inf
