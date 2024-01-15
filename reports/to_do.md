@@ -12,6 +12,7 @@
 	- random selection
 		- random experts working (16 out of 96, whisper-small)
 		- measure inference time after vectorizing ffn computation
+	- mlp selection [1]
 
 - partition heads same as ffn?  [2]
 	- replace softmax with relu in attn
@@ -27,7 +28,7 @@
 
 ### CoFI
 
-- L0 theory  [1]
+- L0 theory
 
 - check distillation loss
 - check mha, ffn masks with and without distillation
@@ -40,24 +41,19 @@
 	- reg_learning_rate  [1]
 	- layerwise distillation [1]
 
-- enforce sparsity clusters  [2]
-	- is sparsity uniform throughout training?
-		- how to measure this?  [1]
+- enforce sparsity clusters 
 	- kl div, wasserstein etc from uniform distrubution
 	- entropy -> uniform distribution maximizes entropy  [1]
-		- how to implement? need to be differentiable objective [1]
-			- does directly modifying (softmax + entropy) z produce gradients through reparameterization? [1]
-				- check loga grads [1]
 	- ripley's k and l functions
 
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation -> better than logit distillation
-	- pruning aware distillation?  [2]
+	- pruning aware distillation?  [1]
 	- self distillation?
 
 - cofi with relu activation? [2]
 
-- prune then distil? [2]
+- prune then distil? [3]
 
 - prune conv layers [3]
 

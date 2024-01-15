@@ -421,6 +421,9 @@ class CoFiTrainer:
                     if d_loss is not None:
                         ret_dict['distil_loss'] = d_loss.detach().item()
 
+                if ent_loss is not None:
+                    ret_dict['ent_loss'] = s_loss.detach().item()
+
                 return ret_dict
 
 
@@ -659,6 +662,8 @@ class CoFiTrainer:
         student_loss = 0
         distil_loss = 0
 
+        ent_loss = 0
+
         debug_overflow = DebugUnderflowOverflow(self.model)
 
         while True:
@@ -694,6 +699,9 @@ class CoFiTrainer:
                 if 'distil_loss' in losses:
                     distil_loss += losses['distil_loss']
 
+                if 'ent_loss' in losses:
+                    ent_loss += losses['ent_loss']
+
                 progress_bar.update(1)
 
                 # eval loop
@@ -715,8 +723,9 @@ class CoFiTrainer:
                     self.accelerator.log({
                         "train_loss": tr_loss,
                         "lag_loss": lag_loss,
-                        "stident_loss": student_loss,
+                        "student_loss": student_loss,
                         "distil_loss": distil_loss,
+                        "ent_loss": ent_loss,
                     },
                     step=self.global_step + 1,
                     )
@@ -1047,6 +1056,12 @@ def run():
         default=1./6.,
         type=float,
     )
+    parser.add_argument(
+        "--activation",
+        default=None,
+        type=str,
+        help="change model activation function",
+    )
 
 
     # parse args
@@ -1125,7 +1140,7 @@ def run():
         args.model_name_or_path,
     )
 
-    # working. detect sparse activation. change hardcoded gelus to relu
+    # change model activation. also change activation in model file
     if args.activation is not None:
         config.activation_function = args.activation
         accelerator.print('activation changed to {}'.format(config.activation_function))
