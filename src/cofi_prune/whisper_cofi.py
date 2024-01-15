@@ -341,12 +341,22 @@ class CoFiTrainer:
         return s_loss, d_loss+encoder_d_loss+decoder_d_loss, loss
 
 
+    def mask_entropy(self, inputs):
+        en_head_all = torch.flatten(inputs['en_head_z'])
+        pk = torch.nn.functional.softmax(en_head_all, dim=0)
+        ent = -torch.sum(pk * torch.log(pk))
+        return ent
+
+
     def train_step(self, inputs):
 
         self.model.train()
 
         if self.l0_module is not None:
             self.l0_module.train()
+
+            if self.start_prune:
+                ent_loss = self.mask_entropy(inputs)
 
         with self.accelerator.accumulate(self.model):
                 
@@ -369,12 +379,10 @@ class CoFiTrainer:
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
                     loss += lagrangian_loss
 
+                    loss += ent_loss
+
                 # backward
                 self.accelerator.backward(loss)
-
-                if self.global_step == 100:
-                    self.accelerator.print(self.l0_module.en_head_loga.grad)
-                    quit()
 
                 # clip grad norm
                 # error : clip_grad_norm_ returns inf
