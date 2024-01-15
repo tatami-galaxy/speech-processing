@@ -421,7 +421,7 @@ class CoFiTrainer:
                     if d_loss is not None:
                         ret_dict['distil_loss'] = d_loss.detach().item()
 
-                if ent_loss is not None:
+                if self.start_prune and ent_loss is not None:
                     ret_dict['ent_loss'] = s_loss.detach().item()
 
                 return ret_dict
