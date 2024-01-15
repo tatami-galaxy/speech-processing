@@ -422,7 +422,7 @@ class CoFiTrainer:
                         ret_dict['distil_loss'] = d_loss.detach().item()
 
                 if self.start_prune and ent_loss is not None:
-                    ret_dict['ent_loss'] = s_loss.detach().item()
+                    ret_dict['ent_loss'] = ent_loss.detach().item()
 
                 return ret_dict
 
@@ -719,6 +719,7 @@ class CoFiTrainer:
                     self.accelerator.print('lag_loss : {}'.format(lag_loss))
                     self.accelerator.print('student_loss : {}'.format(student_loss))
                     self.accelerator.print('distil_loss : {}'.format(distil_loss))
+                    self.accelerator.print('ent_loss : {}'.format(ent_loss))
 
                     self.accelerator.log({
                         "train_loss": tr_loss,
