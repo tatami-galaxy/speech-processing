@@ -712,7 +712,8 @@ class CoFiTrainer:
                     lag_loss = lag_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     student_loss = student_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     distil_loss = distil_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
-                    # distill loss #
+
+                    ent_loss = ent_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
 
                     self.accelerator.print('step : {}'.format(self.global_step + 1))
                     self.accelerator.print('train_loss : {}'.format(tr_loss))
