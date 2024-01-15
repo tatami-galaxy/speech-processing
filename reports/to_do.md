@@ -44,6 +44,8 @@
 - enforce sparsity clusters 
 	- kl div, wasserstein etc from uniform distrubution
 	- entropy -> uniform distribution maximizes entropy  [1]
+		- entropy for single mask goes down very little
+		- add constraint after some steps?
 	- ripley's k and l functions
 
 - structured sparsity more without distillation at the cost of performance
