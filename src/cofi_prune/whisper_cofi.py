@@ -24,6 +24,7 @@ from torch.utils.data.dataloader import DataLoader
 import torch
 from torch import nn
 from torch.optim import AdamW
+from torch.distributions import Categorical
 
 from accelerate import Accelerator
 
@@ -343,8 +344,9 @@ class CoFiTrainer:
 
     def mask_entropy(self, inputs):
         en_head_all = torch.flatten(inputs['en_head_z'])
-        pk = torch.nn.functional.softmax(en_head_all, dim=0)
-        ent = -torch.sum(pk * torch.log(pk))
+        #pk = torch.nn.functional.softmax(en_head_all, dim=0)
+        #ent = -torch.sum(pk * torch.log(pk))
+        ent = Categorical(probs=en_head_all).entropy()
         return ent
 
 
@@ -720,6 +722,7 @@ class CoFiTrainer:
                     self.accelerator.print('lag_loss : {}'.format(lag_loss))
                     self.accelerator.print('student_loss : {}'.format(student_loss))
                     self.accelerator.print('distil_loss : {}'.format(distil_loss))
+                    
                     self.accelerator.print('ent_loss : {}'.format(ent_loss))
 
                     self.accelerator.log({

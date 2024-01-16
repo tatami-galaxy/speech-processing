@@ -51,6 +51,7 @@
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation -> better than logit distillation
 	- pruning aware distillation?  [1]
+		- check layer loss for masked out layers [1]
 	- self distillation?
 
 - cofi with relu activation? [2]
@@ -65,5 +66,6 @@
 ### Objectives
 
 - increase structured sparsity -> low l0 temperature
+- increase non uniformity of sparsity
 - lower CER
 
