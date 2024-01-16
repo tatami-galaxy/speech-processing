@@ -343,11 +343,26 @@ class CoFiTrainer:
 
 
     def mask_entropy(self, inputs):
-        en_head_all = torch.flatten(inputs['en_head_z'])
+        en_heads = torch.flatten(inputs['en_head_z'])
+        en_mhas = torch.flatten(inputs['en_mha_z'])
+        en_ffns = torch.flatten(inputs['en_ffn_z'])
+        de_self_heads = torch.flatten(inputs['de_self_head_z'])
+        de_self_mhas = torch.flatten(inputs['de_self_mha_z'])
+        de_cross_heads = torch.flatten(inputs['de_cross_head_z'])
+        de_cross_mhas = torch.flatten(inputs['de_cross_mha_z'])
+        de_ffns = torch.flatten(inputs['de_ffn_z'])
         #pk = torch.nn.functional.softmax(en_head_all, dim=0)
         #ent = -torch.sum(pk * torch.log(pk))
-        ent = Categorical(probs=en_head_all).entropy()
-        return ent
+        en_heads_ent = Categorical(probs=en_heads).entropy()
+        en_mhas_ent = Categorical(probs=en_mhas).entropy()
+        en_ffns_ent = Categorical(probs=en_ffns).entropy()
+        de_self_heads_ent = Categorical(probs=de_self_heads).entropy()
+        de_self_mhas_ent = Categorical(probs=de_self_mhas).entropy()
+        de_cross_heads_ent = Categorical(probs=de_cross_heads).entropy()
+        de_cross_mhas_ent = Categorical(probs=de_cross_mhas).entropy()
+        de_ffns_ent = Categorical(probs=de_ffns).entropy
+
+        return en_heads_ent+en_mhas_ent+en_ffns_ent+de_self_heads_ent+de_self_mhas_ent+de_cross_heads_ent+de_cross_mhas_ent+de_ffns_ent
 
 
     def train_step(self, inputs):
@@ -357,7 +372,7 @@ class CoFiTrainer:
         if self.l0_module is not None:
             self.l0_module.train()
 
-            if self.start_prune:
+            if self.start_prune and self.args.minimize_mask_entropy:
                 ent_loss = self.mask_entropy(inputs)
 
         with self.accelerator.accumulate(self.model):
@@ -380,8 +395,8 @@ class CoFiTrainer:
                     # lagrangian_loss, expected_sparsity, target_sparsity
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
                     loss += lagrangian_loss
-
-                    loss += ent_loss
+                    if self.args.minimize_mask_entropy:
+                        loss += ent_loss
 
                 # backward
                 self.accelerator.backward(loss)
@@ -422,8 +437,7 @@ class CoFiTrainer:
                         ret_dict['student_loss'] = s_loss.detach().item()
                     if d_loss is not None:
                         ret_dict['distil_loss'] = d_loss.detach().item()
-
-                if self.start_prune and ent_loss is not None:
+                if self.start_prune and self.args.minimize_mask_entropy and ent_loss is not None:
                     ret_dict['ent_loss'] = ent_loss.detach().item()
 
                 return ret_dict
@@ -663,7 +677,6 @@ class CoFiTrainer:
         lag_loss = 0  # lagrangian loss before each eval
         student_loss = 0
         distil_loss = 0
-
         ent_loss = 0
 
         debug_overflow = DebugUnderflowOverflow(self.model)
@@ -700,7 +713,6 @@ class CoFiTrainer:
                     student_loss += losses['student_loss']
                 if 'distil_loss' in losses:
                     distil_loss += losses['distil_loss']
-
                 if 'ent_loss' in losses:
                     ent_loss += losses['ent_loss']
 
@@ -714,7 +726,6 @@ class CoFiTrainer:
                     lag_loss = lag_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     student_loss = student_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
                     distil_loss = distil_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
-
                     ent_loss = ent_loss / (args.eval_steps * self.accelerator.state.num_processes * args.train_batch_size)
 
                     self.accelerator.print('step : {}'.format(self.global_step + 1))
@@ -722,7 +733,6 @@ class CoFiTrainer:
                     self.accelerator.print('lag_loss : {}'.format(lag_loss))
                     self.accelerator.print('student_loss : {}'.format(student_loss))
                     self.accelerator.print('distil_loss : {}'.format(distil_loss))
-                    
                     self.accelerator.print('ent_loss : {}'.format(ent_loss))
 
                     self.accelerator.log({
@@ -1060,6 +1070,10 @@ def run():
         "--rail_lambda4",
         default=1./6.,
         type=float,
+    )
+    parser.add_argument(
+        "--minimize_mask_entropy",
+        action="store_true",
     )
 
 

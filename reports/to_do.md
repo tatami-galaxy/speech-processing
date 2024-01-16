@@ -34,7 +34,7 @@
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
 
-- train on full chinese dataset [2]
+- train on full chinese dataset [1]
 
 - hyp tune 
 	- l0_temperature -> lowering temperature increases sparsity
@@ -42,11 +42,14 @@
 	- layerwise distillation [1]
 
 - enforce sparsity clusters 
-	- kl div, wasserstein etc from uniform distrubution
+	- kl div, wasserstein etc from uniform distrubution  [1]
 	- entropy -> uniform distribution maximizes entropy  [1]
 		- entropy for single mask goes down very little
+			- sparsity seems to be more but not non-uniformity
+				- run with all masks and rail-kd [1]
+			- how does pytorch categorical work? [1]
 		- add constraint after some steps?
-	- ripley's k and l functions
+	- ripley's k and l functions  [2]
 
 - structured sparsity more without distillation at the cost of performance
 	- layerwise distillation -> better than logit distillation
@@ -59,6 +62,8 @@
 - prune then distil? [3]
 
 - prune conv layers [3]
+
+- moe + cofi [3]
 
 - load zs and l0 from checkpoint
 
