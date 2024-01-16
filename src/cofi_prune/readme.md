@@ -2,7 +2,7 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 Cloud
 
-accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 1000 --train_steps 7000 --eval_steps 1000 --lagrangian_warmup_steps 0 --target_sparsity 0.95 --max_test_samples 300
+accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 0 --train_steps 7000 --eval_steps 1000 --lagrangian_warmup_steps 0 --target_sparsity 0.95 --max_test_samples 300
 
 # --minimize_mask_entropy
 

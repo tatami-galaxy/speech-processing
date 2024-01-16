@@ -360,7 +360,7 @@ class CoFiTrainer:
         de_self_mhas_ent = Categorical(probs=de_self_mhas).entropy()
         de_cross_heads_ent = Categorical(probs=de_cross_heads).entropy()
         de_cross_mhas_ent = Categorical(probs=de_cross_mhas).entropy()
-        de_ffns_ent = Categorical(probs=de_ffns).entropy
+        de_ffns_ent = Categorical(probs=de_ffns).entropy()
 
         return en_heads_ent+en_mhas_ent+en_ffns_ent+de_self_heads_ent+de_self_mhas_ent+de_cross_heads_ent+de_cross_mhas_ent+de_ffns_ent
 
