@@ -74,6 +74,7 @@
 - moe + cofi [3]
 
 - prune structures code [2]
+	- train after pruning [2]
 
 - load zs and l0 from checkpoint
 
