@@ -320,6 +320,7 @@ class CoFiTrainer:
         decoder_d_loss = 0
         # match encoder hidden states
         for l in range(self.encoder_layers):
+            # hidden states at the output of each layer
             # l+1 since first output is from embedding layer
             mean_encoder_s_rep = torch.mean(s_outputs.encoder_hidden_states[l+1], dim=1)
             mean_encoder_t_rep = torch.mean(t_outputs.encoder_hidden_states[self.rail_encoder_layers[l]], dim=1)
@@ -1202,7 +1203,7 @@ def run():
 
         data_files = {
             'train': args.data_dir+'/final_train_v2a.csv', # final_train.csv
-            'validation': args.data_dir+'/final_dev_v2a_short.csv', # final_train.csv
+            'test': args.data_dir+'/final_dev_v2a_short.csv', # final_train.csv
         }
 
         dataset = load_dataset('csv', data_files=data_files)

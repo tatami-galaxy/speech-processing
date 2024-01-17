@@ -21,7 +21,7 @@
 
 - moe + distillation  [2]
 
-- upcycle whisper-base, whisper-tiny [3]
+- upcycle whisper-base, whisper-tiny
 
 - activation pathways
 
@@ -29,8 +29,8 @@
 ### CoFI
 
 - L0 theory
+- CoFI theory
 
-- check distillation loss
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
 
@@ -40,6 +40,14 @@
 	- l0_temperature -> lowering temperature increases sparsity
 	- reg_learning_rate  [1]
 	- layerwise distillation [1]
+
+- rail-kd
+	- distillation loss going up [1]
+		- separate loss for ffn output and attn output [1]
+		- check loss for masked out structures [1]
+			- lower weightage? [2]
+	- compare mse vs kl in layers and logits [2]
+	- matching outputs even when inputs are different? [2]
 
 - enforce sparsity clusters 
 	- kl div, wasserstein etc from uniform distrubution  [1]
@@ -64,6 +72,8 @@
 - prune conv layers [3]
 
 - moe + cofi [3]
+
+- prune structures code [2]
 
 - load zs and l0 from checkpoint
 
