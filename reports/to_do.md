@@ -27,7 +27,7 @@
 ### CoFI
 
 - L0 theory
-- CoFI theory
+- CoFI theory [1]
 
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
@@ -65,14 +65,10 @@
 
 - cofi with relu activation? [2]
 
-- prune then distil? [3]
-
 - prune conv layers [3]
 
-- moe + cofi [3]
-
 - prune structures code [2]
-	- train after pruning [2]
+	- train (w distil) after pruning [2]
 
 - load zs and l0 from checkpoint
 
