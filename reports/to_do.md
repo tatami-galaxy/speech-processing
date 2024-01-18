@@ -1,9 +1,6 @@
 ### MOE
 
 - neuron activations become less sparse with fine tuning
-	- off the shelf worse with relu without ft
-	- moe still works
-		- ft off the shelf a litte and then moe
 
 - partition ffns
 	- balanced k-means
@@ -12,12 +9,13 @@
 	- random selection
 		- random experts working (16 out of 96, whisper-small)
 		- measure inference time after vectorizing ffn computation
-	- mlp selection [1]
+	- mlp selection [2]
 
-- partition heads same as ffn?  [2]
+- partition heads same as ffn?  [1]
 	- replace softmax with relu in attn
 	- modifications for convergence
-	- parition into experts
+	- parition into experts (heads and ffns)
+	- cofi masks
 
 - moe + distillation  [2]
 

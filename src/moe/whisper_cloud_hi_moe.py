@@ -572,6 +572,11 @@ def run():
         type=int,
         help="number of experts to use for each input"
     )
+    parser.add_argument(
+        "--gamma",
+        default=0.5,
+        type=float,
+    )
 
 
 
@@ -649,6 +654,9 @@ def run():
     #model.set_moe_n_experts(model.config.num_experts, encoder=False)
     model.set_moe_n_experts(args.n_experts, encoder=True)
     model.set_moe_n_experts(args.n_experts, encoder=False)
+
+    # attention with ReLU
+    model.set_relu_attn(args.gamma)
 
     # dataset
     if args.local:

@@ -344,6 +344,9 @@ class WhisperAttention(nn.Module):
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
+        self.relu_attn = False
+        self.gamma = None
+
     # Copied from transformers.models.bart.modeling_bart.BartAttention._shape with BART->whisper
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -362,6 +365,7 @@ class WhisperAttention(nn.Module):
 
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
+
         is_cross_attention = key_value_states is not None
 
         bsz, tgt_len, _ = hidden_states.size()
@@ -427,7 +431,12 @@ class WhisperAttention(nn.Module):
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attention_mask
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        if self.relu_attn:
+            attn_weights = nn.functional.relu(attn_weights)
+            seq_len = attn_weights.shape[-1]
+            attn_weights = attn_weights / (self.gamma * math.sqrt(seq_len/2))
+        else:
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
         if layer_head_mask is not None:
             if layer_head_mask.size() != (self.num_heads,):
@@ -1039,13 +1048,13 @@ class WhisperEncoder(WhisperPreTrainedModel):
                     layer_outputs = torch.utils.checkpoint.checkpoint(
                         create_custom_forward(encoder_layer),
                         hidden_states,
-                        None,
+                        None,  #attention_mask,
                         (head_mask[idx] if head_mask is not None else None),
                     )
                 else:
                     layer_outputs = encoder_layer(
                         hidden_states,
-                        None,
+                        None,  #attention_mask,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
                     )
@@ -1449,6 +1458,7 @@ class WhisperModel(WhisperPreTrainedModel):
 
             encoder_outputs = self.encoder(
                 input_features,
+                attention_mask=attention_mask,
                 head_mask=head_mask,
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
@@ -1606,6 +1616,18 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
             num_layers = self.config.decoder_layers
             for l in range(num_layers):
                 self.model.decoder.layers[l].n_experts = n_experts
+
+
+    def set_relu_attn(self, gamma):
+        for l in range(self.config.encoder_layers):
+            self.model.encoder.layers[l].self_attn.relu_attn = True
+            self.model.encoder.layers[l].self_attn.gamma = gamma
+        for l in range(self.config.decoder_layers):
+            self.model.decoder.layers[l].self_attn.relu_attn = True
+            self.model.decoder.layers[l].encoder_attn.relu_attn = True
+            self.model.decoder.layers[l].self_attn.gamma = gamma
+            self.model.decoder.layers[l].encoder_attn.gamma = gamma
+
 
 
     @add_start_docstrings_to_model_forward(WHISPER_INPUTS_DOCSTRING)
