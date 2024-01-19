@@ -13,7 +13,9 @@
 
 - partition heads same as ffn?  [1]
 	- replace softmax with relu in attn
-	- modifications for convergence
+		- not working
+	- modifications for convergence [1]
+		- normalize with original input length [1]
 	- parition into experts (heads and ffns)
 	- cofi masks
 
@@ -48,11 +50,10 @@
 	- matching outputs even when inputs are different? [2]
 
 - enforce sparsity clusters 
-	- kl div, wasserstein etc from uniform distrubution  [1]
-	- entropy -> uniform distribution maximizes entropy  [1]
+	- kl div, wasserstein etc from uniform distrubution + rail-kd  [1]
+	- entropy -> uniform distribution maximizes entropy + rail-kd [1]
 		- entropy for single mask goes down very little
 			- sparsity seems to be more but not non-uniformity
-				- run with all masks and rail-kd [1]
 			- how does pytorch categorical work? [1]
 		- add constraint after some steps?
 	- ripley's k and l functions  [2]
