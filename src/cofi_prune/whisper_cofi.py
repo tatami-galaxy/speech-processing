@@ -343,6 +343,7 @@ class CoFiTrainer:
         return s_loss, d_loss+encoder_d_loss+decoder_d_loss, loss
 
 
+    # categorical entropy proof : https://statproofbook.github.io/P/cat-ent.html
     def mask_entropy(self, inputs):
         en_heads = torch.flatten(inputs['en_head_z'])
         en_mhas = torch.flatten(inputs['en_mha_z'])

@@ -34,34 +34,30 @@
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
 
-- train on full chinese dataset [1]
+- train on full chinese dataset
 
-- hyp tune 
+- hyp tune [1]
 	- l0_temperature -> lowering temperature increases sparsity
-	- reg_learning_rate  [1]
-	- layerwise distillation [1]
+	- reg_learning_rate
+	- rail-kd
 
 - rail-kd
-	- distillation loss going up [1]
+	- distillation loss going up
 		- separate loss for ffn output and attn output [1]
 		- check loss for masked out structures [1]
-			- lower weightage? [2]
+			- lower weightage?
 	- compare mse vs kl in layers and logits [2]
 	- matching outputs even when inputs are different? [2]
 
 - enforce sparsity clusters 
-	- kl div, wasserstein etc from uniform distrubution + rail-kd  [1]
 	- entropy -> uniform distribution maximizes entropy + rail-kd [1]
-		- entropy for single mask goes down very little
-			- sparsity seems to be more but not non-uniformity
-			- how does pytorch categorical work? [1]
+		- sparsity seems to be more but not non-uniformity
 		- add constraint after some steps?
 	- ripley's k and l functions  [2]
+		- https://stats.stackexchange.com/questions/122668/is-there-a-measure-of-evenness-of-spread
 
 - structured sparsity more without distillation at the cost of performance
-	- layerwise distillation -> better than logit distillation
-	- pruning aware distillation?  [1]
-		- check layer loss for masked out layers [1]
+	- pruning aware layerwise distillation?  [1]
 	- self distillation?
 
 - cofi with relu activation? [2]
@@ -69,7 +65,7 @@
 - prune conv layers [3]
 
 - prune structures code [2]
-	- train (w distil) after pruning [2]
+	- train (w distil) after pruning [1]
 
 - load zs and l0 from checkpoint
 
