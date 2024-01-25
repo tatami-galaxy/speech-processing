@@ -527,11 +527,12 @@ class WhisperEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
         """
+
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
         hidden_states, attn_weights, _ = self.self_attn(
             hidden_states=hidden_states,
-            attention_mask=attention_mask,
+            attention_mask=None,  # attention_mask
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
@@ -662,6 +663,7 @@ class WhisperDecoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
         """
+
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
 
@@ -1054,7 +1056,7 @@ class WhisperEncoder(WhisperPreTrainedModel):
                 else:
                     layer_outputs = encoder_layer(
                         hidden_states,
-                        None,  #attention_mask,
+                        None,
                         layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                         output_attentions=output_attentions,
                     )
@@ -1202,6 +1204,7 @@ class WhisperDecoder(WhisperPreTrainedModel):
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
