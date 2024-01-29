@@ -346,6 +346,10 @@ class MOETrainer:
 
             for batch in train_dataloader:
 
+                seq_lens = torch.count_nonzero(batch['attention_mask'], dim=1)
+                # attention with ReLU
+                self.model.set_relu_attn(args.gamma, seq_lens) 
+
                 losses = self.train_step(batch)
                 tr_loss += losses['train_loss']
 
@@ -654,9 +658,6 @@ def run():
     #model.set_moe_n_experts(model.config.num_experts, encoder=False)
     model.set_moe_n_experts(args.n_experts, encoder=True)
     model.set_moe_n_experts(args.n_experts, encoder=False)
-
-    # attention with ReLU
-    model.set_relu_attn(args.gamma)
 
     # dataset
     if args.local:

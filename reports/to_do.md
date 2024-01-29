@@ -15,6 +15,7 @@
 	- replace softmax with relu in attn
 		- not working
 	- modifications for convergence [1]
+		- vectorize [1]
 		- normalize with original input length [1]
 	- parition into experts (heads and ffns)
 	- cofi masks

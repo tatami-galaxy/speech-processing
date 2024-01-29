@@ -580,7 +580,7 @@ def run():
     )
     parser.add_argument(
         "--train_steps",
-        default=5000,
+        default=6000,
         type=int,
     )
     parser.add_argument(
@@ -595,7 +595,7 @@ def run():
     )
     parser.add_argument(
         "--eval_steps",
-        default=1000,
+        default=2000,
         type=int,
     )
     parser.add_argument(

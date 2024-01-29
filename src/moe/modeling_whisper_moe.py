@@ -346,6 +346,7 @@ class WhisperAttention(nn.Module):
 
         self.relu_attn = False
         self.gamma = None
+        self.seq_lens = None
 
     # Copied from transformers.models.bart.modeling_bart.BartAttention._shape with BART->whisper
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
@@ -414,6 +415,11 @@ class WhisperAttention(nn.Module):
         key_states = key_states.reshape(*proj_shape)
         value_states = value_states.reshape(*proj_shape)
 
+        print(query_states.shape)
+        print(key_states.shape)
+        print(value_states.shape)
+        quit()
+
         src_len = key_states.size(1)
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
 
@@ -432,6 +438,10 @@ class WhisperAttention(nn.Module):
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         if self.relu_attn:
+
+            print(self.seq_lens)
+            quit()
+
             attn_weights = nn.functional.relu(attn_weights)
             seq_len = attn_weights.shape[-1]
             attn_weights = attn_weights / (self.gamma * math.sqrt(seq_len/2))
@@ -1621,15 +1631,22 @@ class WhisperForConditionalGeneration(WhisperPreTrainedModel):
                 self.model.decoder.layers[l].n_experts = n_experts
 
 
-    def set_relu_attn(self, gamma):
+    def set_relu_attn(self, gamma, seq_lens):
+
         for l in range(self.config.encoder_layers):
             self.model.encoder.layers[l].self_attn.relu_attn = True
             self.model.encoder.layers[l].self_attn.gamma = gamma
+            self.model.encoder.layers[l].self_attn.seq_lens = seq_lens
+
         for l in range(self.config.decoder_layers):
             self.model.decoder.layers[l].self_attn.relu_attn = True
             self.model.decoder.layers[l].encoder_attn.relu_attn = True
+
             self.model.decoder.layers[l].self_attn.gamma = gamma
             self.model.decoder.layers[l].encoder_attn.gamma = gamma
+
+            self.model.decoder.layers[l].self_attn.seq_lens = seq_lens
+            self.model.decoder.layers[l].encoder_attn.seq_lens = seq_lens
 
 
 
