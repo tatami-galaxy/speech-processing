@@ -6,7 +6,7 @@ accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --pr
 
 --minimize_mask_entropy
 
---lagrangian_warmup_steps 200 --teacher_name_or_path `teacher path` --distil_type rail --max_test_samples 300
+--lagrangian_warmup_steps 200 --teacher_name_or_path `teacher path` --distil_type rail --rail_steps 2000 --max_test_samples 300
 
 --learning_rate 1e-7 --reg_learning_rate 0.01 --l0_temperature 0.1
 
