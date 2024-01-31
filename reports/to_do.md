@@ -17,7 +17,7 @@
 	- modifications for convergence [1]
 		- vectorize [1]
 		- normalize with original input length [1]
-	- parition into experts (heads and ffns)
+	- partiion into experts (heads and ffns)
 	- cofi masks
 
 - moe + distillation  [2]
@@ -52,6 +52,7 @@
 
 - enforce sparsity clusters 
 	- entropy -> uniform distribution maximizes entropy + rail-kd [1]
+		- NANs in training (whisper-tiny) [2]
 		- sparsity seems to be more but not non-uniformity
 		- add constraint after some steps?
 	- ripley's k and l functions  [2]
@@ -59,7 +60,7 @@
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation?  [1]
-	- self distillation?
+	- self distillation?  [2]
 
 - cofi with relu activation? [2]
 
@@ -67,6 +68,8 @@
 
 - prune structures code [2]
 	- train (w distil) after pruning [1]
+
+- cofi wav2vec2 [1]
 
 - load zs and l0 from checkpoint
 
