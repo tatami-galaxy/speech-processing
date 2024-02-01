@@ -101,15 +101,11 @@ def create_vocabulary_from_data(
     )
 
     # take union of all unique characters in each dataset
+    vocab_set = set()
+    for split in datasets:
+        vocab_set = vocab_set | set(vocabs[split]["vocab"][0])
 
-    # for split in datasets:
-        # print(split)
-    
-    print(set(vocabs["train"]["vocab"][0]))
-    quit()
-
-    vocab_list = list(set(vocabs["train"]["vocab"][0]) | set(vocabs["test"]["vocab"][0]))
-
+    vocab_list = list(vocab_set)
     vocab_dict = {v: k for k, v in enumerate(sorted(vocab_list))}
 
     # replace white space with delimiter token
@@ -601,7 +597,7 @@ def main():
 
     # load feature_extractor and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_name_or_path,
+        args.output_dir,
         **tokenizer_kwargs,
     )
     feature_extractor = AutoFeatureExtractor.from_pretrained(args.model_name_or_path)
@@ -616,15 +612,13 @@ def main():
     #dataset_sampling_rate = next(iter(raw_datasets.values())).features[args.audio_column].sampling_rate
     #if dataset_sampling_rate != feature_extractor.sampling_rate:
     with accelerator.main_process_first():
-        raw_datasets = raw_datasets.cast_column(
+        dataset = dataset.cast_column(
             args.audio_column, datasets.features.Audio(sampling_rate=feature_extractor.sampling_rate)
         )
 
     # derive max & min input length for sample rate & max duration
     max_input_length = args.max_duration * feature_extractor.sampling_rate
     min_input_length = args.min_duration * feature_extractor.sampling_rate
-    audio_column = args.audio_column
-    num_workers = args.preprocessing_num_workers
 
 
     # Preprocessing Datasets #
@@ -632,7 +626,7 @@ def main():
     # We need to read the audio files as arrays and tokenize the targets.
     def prepare_dataset(batch):
         # load audio
-        sample = batch[audio_column]
+        sample = batch[args.audio_column]
 
         inputs = feature_extractor(sample["array"], sampling_rate=sample["sampling_rate"])
         batch["input_values"] = inputs.input_values[0]
@@ -641,14 +635,14 @@ def main():
         # encode targets
         additional_kwargs = {}
 
-        batch["labels"] = tokenizer(batch["target_text"], **additional_kwargs).input_ids
+        batch["labels"] = tokenizer(batch[args.text_column], **additional_kwargs).input_ids
         return batch
 
     with accelerator.main_process_first():
-        vectorized_datasets = raw_datasets.map(
+        vectorized_dataset = dataset.map(
             prepare_dataset,
-            remove_columns=next(iter(raw_datasets.values())).column_names,
-            num_proc=num_workers,
+            remove_columns=next(iter(dataset.values())).column_names,
+            num_proc=args.num_workers,
             desc="preprocess dataset",
         )
 
@@ -657,9 +651,9 @@ def main():
 
         # filter data that is shorter than min_input_length
         print('filtering')
-        vectorized_datasets = vectorized_datasets.filter(
+        vectorized_dataset = vectorized_dataset.filter(
             is_audio_in_length_range,
-            num_proc=num_workers,
+            num_proc=args.num_workers,
             input_columns=["input_length"],
         )
 
@@ -682,7 +676,6 @@ def main():
             "activation_dropout": args.activation_dropout,
         }
     )
-
 
     # load model
     model = AutoModelForCTC.from_pretrained(
@@ -707,32 +700,20 @@ def main():
     # Define evaluation metrics during training, *i.e.* word error rate, character error rate
 
     # load from cer metric
-    cer_metric = evaluate.load(args.eval_metric)
-
-
-    #def compute_metrics(pred):
-        #pred_logits = pred.predictions
-        #pred_ids = np.argmax(pred_logits, axis=-1)
-
-        #pred.label_ids[pred.label_ids == -100] = tokenizer.pad_token_id
-
-        #pred_str = tokenizer.batch_decode(pred_ids)
-        # we do not want to group tokens when computing the metrics
-        #label_str = tokenizer.batch_decode(pred.label_ids, group_tokens=False)
-
-        #metrics = {k: v.compute(predictions=pred_str, references=label_str) for k, v in eval_metrics.items()}
-
-        #return metrics
+    cer_metric = evaluate.load('cer')
+    wer_metric = evaluate.load('wer')
 
     # dataloaders
     train_dataloader = DataLoader(
-        vectorized_datasets["train"],
+        vectorized_dataset["train"],
         shuffle=True,
         collate_fn=data_collator,
-        batch_size=args.per_device_train_batch_size,
+        batch_size=args.train_batch_size
     )
     eval_dataloader = DataLoader(
-        vectorized_datasets["validation"], collate_fn=data_collator, batch_size=args.per_device_eval_batch_size
+        vectorized_dataset["test"],
+        collate_fn=data_collator,
+        batch_size=args.eval_batch_size
     )
 
     # Optimizer
@@ -743,29 +724,20 @@ def main():
         eps=args.adam_epsilon,
     )
 
-    # Prepare everything with our `accelerator`.
+    # Prepare everything with accelerator
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
-
-    # Scheduler and math around the number of training steps.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-
-    if args.max_train_steps is None:
-        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
 
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
         optimizer=optimizer,
         num_warmup_steps=args.warmup_steps,
-        num_training_steps=args.max_train_steps,
+        num_training_steps=args.train_steps,
     )
 
-    # Afterwards we recalculate our number of training epochs
-    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-
-    # 5. Train
-    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+    # Train
+    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(vectorized_datasets['train'])}")
