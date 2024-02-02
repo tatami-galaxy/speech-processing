@@ -355,6 +355,12 @@ def main():
         action=argparse.BooleanOptionalAction,
     )
     argp.add_argument(
+        "--resume_from_checkpoint",
+        default=None,
+        type=str,
+        help="checkpoint directory to load model from",
+    )
+    argp.add_argument(
         '--train_batch_size',
         type=int,
         default=16 #32
