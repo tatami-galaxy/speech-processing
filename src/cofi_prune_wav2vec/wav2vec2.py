@@ -15,52 +15,38 @@
 
 """ Fine-tuning a 🤗 Transformers CTC model for automatic speech recognition"""
 
-
-import functools
-from functools import partial
 import json
-import logging
 import os
 from os.path import dirname, abspath
 import re
-import sys
-import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 import argparse
 from argparse import ArgumentParser
-import math
-
-import datasets
-import evaluate
-import numpy as np
-import torch
-import datasets
-from datasets import Audio
-import transformers
-from transformers import AdamW
-from datasets import DatasetDict, load_dataset
-from torch.utils.data.dataloader import DataLoader
-from accelerate import Accelerator
 from tqdm.auto import tqdm
 
-import transformers
+import torch
+from torch.utils.data.dataloader import DataLoader
+from accelerate import Accelerator
+
+import datasets
+from datasets import DatasetDict, load_dataset
+import evaluate
+
 from transformers import (
     AutoConfig,
     AutoFeatureExtractor,
     AutoModelForCTC,
     AutoProcessor,
     AutoTokenizer,
-    Trainer,
+    AdamW,
     Wav2Vec2Processor,
-    TrainingArguments,
     get_scheduler,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
-from torch.utils.tensorboard import SummaryWriter
 
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
@@ -74,9 +60,6 @@ chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 root = abspath(__file__)
 while root.split('/')[-1] != 'speech-processing':
     root = dirname(root)
-
-
-logger = logging.getLogger(__name__)
 
 
 def create_vocabulary_from_data(
@@ -184,13 +167,11 @@ class DataCollatorCTCWithPadding:
         return batch
 
 
-
 def main():
 
     argp = ArgumentParser()
 
     # CLI Arguments #
-
 
     # seed
     argp.add_argument(
@@ -662,7 +643,6 @@ def main():
             "mask_time_length": args.mask_time_length,
             "mask_feature_prob": args.mask_feature_prob,
             "mask_feature_length": args.mask_feature_length,
-            "gradient_checkpointing": args.gradient_checkpointing,
             "layerdrop": args.layerdrop,
             "ctc_loss_reduction": args.ctc_loss_reduction,
             "pad_token_id": tokenizer.pad_token_id,
@@ -676,10 +656,6 @@ def main():
         args.model_name_or_path,
         config=config,
         ignore_mismatched_sizes=True)
-
-    # Activate gradient checkpointing if needed
-    if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
 
     # Freeze Encoder #
     if args.freeze_feature_encoder:
