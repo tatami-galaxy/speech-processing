@@ -30,7 +30,7 @@
 ### CoFI
 
 - L0 theory
-- CoFI theory [1]
+- CoFI theory [2]
 
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
@@ -46,7 +46,7 @@
 	- distillation loss going up
 		- separate loss for ffn output and attn output [1]
 		- check loss for masked out structures [1]
-			- lower weightage?
+			- lower weightage?  [1]
 	- compare mse vs kl in layers and logits [2]
 	- matching outputs even when inputs are different? [2]
 
@@ -59,10 +59,10 @@
 		- https://stats.stackexchange.com/questions/122668/is-there-a-measure-of-evenness-of-spread
 
 - structured sparsity more without distillation at the cost of performance
-	- pruning aware layerwise distillation?  [1]
+	- pruning aware layerwise distillation? [1]
 	- self distillation?  [2]
 
-- cofi with relu activation? [2]
+- cofi with relu activation? [3]
 
 - prune conv layers [3]
 
@@ -80,3 +80,42 @@
 - increase non uniformity of sparsity
 - lower CER
 
+
+### Results
+
+#### LDC
+
+	- No entropy
+		- steps : 12k
+		- preprune steps : 6000
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 0.39
+		- CER : 0.23
+		- structures removed : 120
+
+	- With entropy
+
+		- run 1
+			- steps : 12k
+			- preprune steps : 6000
+			- rail steps : 2000
+			- reg learning rate : 0.02
+			- l0 temperature : 0.03
+			- target sparsity : 0.96
+			- sparsity : 0.40
+			- CER : 0.24
+			- structures removed : 157
+
+		- run 2
+			- steps : 12k
+			- preprune steps : 6000
+			- rail steps : 2000
+			- reg learning rate : 0.01
+			- l0 temperature : 0.02
+			- target sparsity : 0.96
+			- sparsity :
+			- CER :
+			- structures removed :
