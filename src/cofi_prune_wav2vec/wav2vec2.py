@@ -769,7 +769,7 @@ def main():
             # eval
             if (global_step + 1) % args.eval_steps == 0:
                 model.eval()
-
+                val_loss = 0
                 for batch in eval_dataloader:
                     with torch.no_grad():
                         outputs = model(**batch)
