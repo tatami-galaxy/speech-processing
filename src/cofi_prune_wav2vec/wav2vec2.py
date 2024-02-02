@@ -389,15 +389,9 @@ def main():
         default=1
     )
     argp.add_argument(
-        '--eval_accumulation_steps',
-        type=int,
-        default=None
-    )
-    argp.add_argument(
         "--train_steps",
         type=int,
-        default=40000, # None
-        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
+        default=10000,
     )
     argp.add_argument(
         '--eval_steps',
@@ -407,7 +401,7 @@ def main():
     argp.add_argument(
         '--warmup_steps',
         type=int,
-        default=0,
+        default=500,
     )
     argp.add_argument(
         '--learning_rate',
@@ -737,200 +731,130 @@ def main():
     )
 
     # Train
-    total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+    train_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+    eval_batch_size = args.eval_batch_size * accelerator.num_processes
 
-    global_steps = 0
+    global_step = 0  # tracks total steps
+    total_loss = 0  # total loss before each eval
+
+    accelerator.log({
+        "train_batch_size": train_batch_size,
+        "eval_batch_size": eval_batch_size,
+        "gpus": accelerator.state.num_processes
+    },
+        step=global_step + 1,
+    )
+
+    # load from checkpoint
+    # check if checkpoint directory passed in
+    if args.resume_from_checkpoint is not None:
+        accelerator.print(
+            f"resumed from checkpoint: {args.resume_from_checkpoint}")
+        accelerator.load_state(args.resume_from_checkpoint)
+        # if resumed from checkpoint
+        # we need to skip steps until we reach the current step
+        # ../checkpoint-123 -> int(123)
+        steps_completed = int(
+            args.resume_from_checkpoint.split('/')[-1].split('-')[-1])
+        global_step = steps_completed
+        if args.skip_steps:
+            train_dataloader = accelerator.skip_first_batches(
+                train_dataloader, steps_completed)  # consider dataset len
 
 
-    # summarywriter for tensorbaord
-    # writer will output to ./runs/ directory by default
-    writer = SummaryWriter()
+    # only show the progress bar once on each machine.
+    # main progress bar
+    progress_bar = tqdm(range(global_step, args.train_steps), disable=not accelerator.is_main_process, position=0)
+    # eval bar
+    eval_bar = tqdm(range(len(eval_dataloader)), position=1)
 
+    while True:
 
-    # Only show the progress bar once on each machine.
-    progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
-    completed_steps = 0
-    starting_epoch = 0
-    for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
 
         for step, batch in enumerate(train_dataloader):
-
-            # forward
-            outputs = model(**batch)
-
-
-            # divide loss by gradient accumulation steps since gradients
-            # are accumulated for multiple backward passes in PyTorch
-            loss = outputs.loss / args.gradient_accumulation_steps
-            accelerator.backward(loss)
-
-            # update step
-            if (step + 1) % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-
-                scale = (
-                    accelerator.scaler._scale.item()
-                    if hasattr(accelerator, "scaler") and accelerator.scaler is not None
-                    else 1
-                )
-
-                # update parameters
+            with accelerator.accumulate(model):
+                outputs = model(**batch)
+                loss = outputs.loss
+                total_loss += loss.detach().item() # for tensorboard 
+                accelerator.backward(loss)
                 optimizer.step()
+                lr_scheduler.step()
                 optimizer.zero_grad()
 
-                if not accelerator.optimizer_step_was_skipped:
-                    lr_scheduler.step()
-                elif accelerator.is_local_main_process:
-                    progress_bar.write(
-                        f"Gradients have overflown - skipping update step... Updating gradient scale to {scale}..."
-                    )
-
-                progress_bar.update(1)
-                completed_steps += 1
-
+            progress_bar.update(1)
 
             # eval
-            if (step + 1) % (args.gradient_accumulation_steps * args.eval_steps) == 0:
+            if (global_step + 1) % args.eval_steps == 0:
                 model.eval()
 
-                # init logs
-                val_logs = {
-                    "val_loss": 0,
-                    "val_cer" : 0
-                }
-
-                for step, batch in enumerate(eval_dataloader):
+                for batch in eval_dataloader:
                     with torch.no_grad():
-                        labels = batch["labels"]
                         outputs = model(**batch)
+                        val_loss += outputs.loss.item()
 
-                    val_logs["val_loss"] += outputs.loss
+                    output_ids = torch.argmax(outputs.logits, dim=-1)
+                    # pad_acrss_processes to get equal length for each processs
+                    output_ids = accelerator.pad_across_processes(output_ids, dim=1, pad_index=tokenizer.pad_token_id)
+                    label_ids = accelerator.pad_across_processes(batch["labels"], dim=1, pad_index=tokenizer.pad_token_id)
 
-                    pred_ids = torch.argmax(outputs.logits, dim=-1)
-                    labels[labels == -100] = processor.tokenizer.pad_token_id
-                    pred_str = processor.batch_decode(pred_ids)
+                    output_ids = accelerator.gather(output_ids)
+                    label_ids = accelerator.gather(label_ids) 
+                    
+                    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+                    predictions = processor.batch_decode(output_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                     # we do not want to group tokens when computing the metrics
-                    label_str = processor.batch_decode(labels, group_tokens=False)
-                    # CER
-                    cer_metric.add_batch(predictions=pred_str, references=label_str)
+                    references = processor.batch_decode(
+                        label_ids,
+                        group_tokens=False,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True
+                    )
+                    cer_metric.add_batch(predictions=predictions, references=references)
+                    wer_metric.add_batch(predictions=predictions, references=references)
 
-                # compute metric
-                val_logs["val_cer"] = cer_metric.compute()
+                    eval_bar.update(1)
 
+                eval_bar.refresh()
+                eval_bar.reset()
 
+                cer_result = cer_metric.compute()
+                wer_result = wer_metric.compute()
+                accelerator.print('step : {}, cer : {}, wer : {}'.format(global_step + 1, cer_result, wer_result))
+                accelerator.print('val loss : {}'.format(val_loss/len(eval_dataloader)))
+                accelerator.log({
+                    "cer": cer_result,
+                    "wer": wer_result,
+                    "train_loss": total_loss / (args.eval_steps * accelerator.state.num_processes * args.train_batch_size),
+                    "val_loss": val_loss / len(eval_dataloader)
+                },
+                step=global_step + 1,
+                )
 
-            # log all results
-            if (step + 1) % (args.gradient_accumulation_steps * args.logging_steps) == 0:
-                loss.detach()
+                # save the model, optimizer, lr_scheduler, and seed states by calling `save_state`
+                # saved to folders named `checkpoint-{global_step}`
+                # will contain files: "pytorch_model.bin", "optimizer.bin", "scheduler.bin", and "random_states.pkl"
+                # if mixed precision was used, will also save a "scalar.bin" file
+                output_dir = f"checkpoint-{global_step + 1}"
+                if args.output_dir is not None:
+                    output_dir = os.path.join(args.output_dir, output_dir)
+                    accelerator.save_state(output_dir)
+                    # save config
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    # model.config.save_pretrained(output_dir)
+                    unwrapped_model.config.save_pretrained(
+                        output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+                    )
 
-                if accelerator.state.num_processes > 1:
-                    loss = accelerator.gather_for_metrics(loss).sum()
+                model.train()
+                total_loss = 0
 
-                train_logs = {
-                    "loss": (loss * args.gradient_accumulation_steps),
-                    "lr": torch.tensor(optimizer.param_groups[0]["lr"]),
-                }
-                log_str = ""
-                for k, v in train_logs.items():
-                    log_str += "| {}: {:.3e}".format(k, v.item())
+            global_step += 1
 
-                if accelerator.is_local_main_process:
-                    progress_bar.write(log_str)
-                    #if is_wandb_available():
-                        #wandb.log(train_logs)
-
-                    # tensorboard logging
-                    writer.add_scalar("loss", train_logs["loss"], step+1)
-                    writer.add_scalar("lr", train_logs["lr"], step+1)
-
-
-
-
-
-    # Training Arguments #
-
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        group_by_length=args.group_by_length,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        #eval_accumulation_steps=args.eval_accumulation_steps,
-        evaluation_strategy=args.evaluation_strategy,
-        num_train_epochs=args.num_train_epochs,
-        fp16=args.fp16,
-        gradient_checkpointing=args.gradient_checkpointing,
-        save_steps=args.save_steps,
-        eval_steps=args.eval_steps,
-        logging_steps=args.logging_steps,
-        learning_rate=args.learning_rate,
-        lr_scheduler_type=args.lr_scheduler_type,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        save_total_limit=args.save_total_limit,
-        load_best_model_at_end=args.load_best_model_at_end,
-        metric_for_best_model=args.metric_for_best_model,
-        report_to='tensorboard'
-    )
-
-
-    # initialize Trainer
-    trainer = Trainer(
-        model=model,
-        data_collator=data_collator,
-        args=training_args,
-        compute_metrics=compute_metrics,
-        train_dataset=vectorized_datasets["train"] if args.do_train else None,
-        eval_dataset=vectorized_datasets["validation"] if args.do_eval else None,
-        tokenizer=feature_extractor,
-    )
-
-    # Start training #
-
-    # Training
-    if args.do_train:
-        # use last checkpoint if exist
-        if last_checkpoint is not None:
-            checkpoint = last_checkpoint
-        #elif os.path.isdir(args.model_name_or_path):
-            #checkpoint = args.model_name_or_path
-        else:
-            checkpoint = None
-
-        print('checkpoint : {}'.format(checkpoint))
-
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()
-
-        metrics = train_result.metrics
-        #max_train_samples = (
-            #args.max_train_samples
-            #if args.max_train_samples is not None
-            #else len(vectorized_datasets["train"])
-        #)
-        #metrics["train_samples"] = min(max_train_samples, len(vectorized_datasets["train"]))
-        metrics["train_samples"] = len(vectorized_datasets["train"])
-
-        trainer.log_metrics("train", metrics)
-        trainer.save_metrics("train", metrics)
-        trainer.save_state()
-
-    # Evaluation # 
-
-    if training_args.do_eval:
-        logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate()
-        #max_eval_samples = (
-            #args.max_eval_samples if args.max_eval_samples is not None else len(vectorized_datasets["validation"])
-        #)
-        #metrics["eval_samples"] = min(max_eval_samples, len(vectorized_datasets["validation"]))
-        metrics["eval_samples"] = len(vectorized_datasets["validation"])
-
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
-
-    print("Saved in {}".format(args.output_dir))
-
+            if global_step >= args.train_steps:
+                return
+            
 
 if __name__ == "__main__":
     main()
