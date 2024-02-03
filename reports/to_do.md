@@ -70,6 +70,7 @@
 	- train (w distil) after pruning [1]
 
 - cofi wav2vec2 [1]
+	- wav2vec2 ft working. setup cofi 
 
 - load zs and l0 from checkpoint
 
