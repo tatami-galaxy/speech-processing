@@ -51,12 +51,14 @@
 	- matching outputs even when inputs are different? [2]
 
 - enforce sparsity clusters 
-	- entropy -> uniform distribution maximizes entropy + rail-kd [1]
+	- entropy -> uniform distribution maximizes entropy + rail-kd
+		- add weightage to constraint [1]
 		- NANs in training (whisper-tiny) [2]
 		- sparsity seems to be more but not non-uniformity
 		- add constraint after some steps?
-	- ripley's k and l functions  [2]
+	- ripley's k and l functions  [1]
 		- https://stats.stackexchange.com/questions/122668/is-there-a-measure-of-evenness-of-spread
+	- graph based methods?  [2]
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation? [1]

@@ -189,6 +189,8 @@ class CoFiTrainer:
         self.rail_lambda3 = args.rail_lambda3
         self.rail_lambda4 = args.rail_lambda4
 
+        self.ent_const = args.ent_const
+
         self.optimizer = None
         self.l0_optimizer = None
         self.lagrangian_optimizer = None
@@ -296,7 +298,7 @@ class CoFiTrainer:
 
         s_outputs = self.model(**inputs, output_hidden_states=True)
         # student logits
-        s_logits = s_outputs.logits
+        s_logits = s_outputs.logit
         # student loss
         s_loss = s_outputs.loss
         # teacher
@@ -315,6 +317,12 @@ class CoFiTrainer:
             target=nn.functional.softmax(t_logits / self.distil_temperature, dim=-1),
             reduction="batchmean",
         ) * (self.distil_temperature**2)
+
+        #with torch.no_grad():
+            #zs = self.l0_module.forward(training=False)
+            #if zs is not None:
+                #pruned_model_size_info = self.l0_module.calculate_model_size(zs)
+                ## check masks vs loss here ##
 
         encoder_d_loss = 0
         decoder_d_loss = 0
@@ -375,7 +383,7 @@ class CoFiTrainer:
             self.l0_module.train()
 
             if self.start_prune and self.args.minimize_mask_entropy:
-                ent_loss = self.mask_entropy(inputs)
+                ent_loss = self.mask_entropy(inputs) * self.ent_const
 
         with self.accelerator.accumulate(self.model):
                 
@@ -404,7 +412,6 @@ class CoFiTrainer:
                 self.accelerator.backward(loss)
 
                 # clip grad norm
-                # error : clip_grad_norm_ returns inf
                 if self.accelerator.sync_gradients:
                     self.accelerator.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
 
@@ -1076,6 +1083,11 @@ def run():
     parser.add_argument(
         "--minimize_mask_entropy",
         action="store_true",
+    )
+    parser.add_argument(
+        "--ent_const",
+        default=1.0,
+        type=float,
     )
 
 
