@@ -40,7 +40,9 @@
 - hyp tune [1]
 	- l0_temperature -> lowering temperature increases sparsity
 	- reg_learning_rate
-	- rail-kd
+	- rail weights
+	- rail steps
+	- ent weight
 
 - rail-kd
 	- distillation loss going up

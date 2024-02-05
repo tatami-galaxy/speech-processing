@@ -298,7 +298,7 @@ class CoFiTrainer:
 
         s_outputs = self.model(**inputs, output_hidden_states=True)
         # student logits
-        s_logits = s_outputs.logit
+        s_logits = s_outputs.logits
         # student loss
         s_loss = s_outputs.loss
         # teacher
@@ -318,11 +318,18 @@ class CoFiTrainer:
             reduction="batchmean",
         ) * (self.distil_temperature**2)
 
-        #with torch.no_grad():
-            #zs = self.l0_module.forward(training=False)
-            #if zs is not None:
-                #pruned_model_size_info = self.l0_module.calculate_model_size(zs)
-                ## check masks vs loss here ##
+        ## testing ##
+
+        if self.global_step == 3000:
+            with torch.no_grad():
+                zs = self.l0_module.forward(training=False)
+                if zs is not None:
+                    pruned_model_size_info = self.l0_module.calculate_model_size(zs)
+                    print(pruned_model_size_info)
+                    quit()
+                    ## check masks vs loss here ##
+
+        ## testing end ##
 
         encoder_d_loss = 0
         decoder_d_loss = 0
