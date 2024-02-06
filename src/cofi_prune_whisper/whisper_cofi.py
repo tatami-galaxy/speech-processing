@@ -324,33 +324,63 @@ class CoFiTrainer:
             with torch.no_grad():
                 zs = self.l0_module.forward(training=False)
                 if zs is not None:
+                    indices = []
                     pruned_model_size_info = self.l0_module.calculate_model_size(zs)
                     print(pruned_model_size_info)
-                    quit()
+                    for key, val in pruned_model_size_info.items():
+                        if isinstance(val, list):
+                            for i in range(len(val)):
+                                if val[i] == 0:
+                                    indices.append(i)
+
+                    print(' ')
+                    print(indices)
                     ## check masks vs loss here ##
 
         ## testing end ##
+
+        if self.global_step == 3000:            
+            print('rail losses')
 
         encoder_d_loss = 0
         decoder_d_loss = 0
         # match encoder hidden states
         for l in range(self.encoder_layers):
+
+            if self.global_step == 3000:
+                print('encoder')
             # hidden states at the output of each layer
             # l+1 since first output is from embedding layer
             mean_encoder_s_rep = torch.mean(s_outputs.encoder_hidden_states[l+1], dim=1)
             mean_encoder_t_rep = torch.mean(t_outputs.encoder_hidden_states[self.rail_encoder_layers[l]], dim=1)
             encoder_s_rep = self.rail_trans_encoder_s(mean_encoder_s_rep)
             encoder_t_rep = self.rail_trans_encoder_t(mean_encoder_t_rep)
+
+            if self.global_step == 3000:
+                print(l)
+                print(nn.functional.mse_loss(encoder_s_rep, encoder_t_rep))
+
             encoder_d_loss += nn.functional.mse_loss(encoder_s_rep, encoder_t_rep)
         
         # match decoder hidden states
         for l in range(self.decoder_layers):
+
+            if self.global_step == 3000:
+                print('decoder')
             # l+1 since first output is from embedding layer
             mean_decoder_s_rep = torch.mean(s_outputs.decoder_hidden_states[l+1], dim=1)
             mean_decoder_t_rep = torch.mean(t_outputs.decoder_hidden_states[self.rail_decoder_layers[l]], dim=1)
             decoder_s_rep = self.rail_trans_decoder_s(mean_decoder_s_rep)
             decoder_t_rep = self.rail_trans_decoder_t(mean_decoder_t_rep)
+
+            if self.global_step == 3000:
+                print(l)
+                print(nn.functional.mse_loss(decoder_s_rep, decoder_t_rep))
+
             decoder_d_loss += nn.functional.mse_loss(decoder_s_rep, decoder_t_rep)
+
+        if self.global_step == 3000:
+            quit()
 
         # net loss after weightage
         loss = self.rail_lambda1*s_loss + self.rail_lambda2*d_loss + self.rail_lambda3*encoder_d_loss + self.rail_lambda4*decoder_d_loss
