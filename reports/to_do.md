@@ -48,6 +48,7 @@
 	- distillation loss going up
 		- separate loss for ffn output and attn output [1]
 		- check loss for masked out structures [1]
+			- seems to be higher for ffns. run more expts
 			- lower weightage?  [1]
 	- compare mse vs kl in layers and logits [2]
 	- matching outputs even when inputs are different? [2]
