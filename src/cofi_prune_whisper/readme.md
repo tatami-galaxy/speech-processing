@@ -2,7 +2,7 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 ### Cloud
 
-accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 2000 --train_steps 8000 --eval_steps 1000 --target_sparsity 0.95 --max_test_samples 300 --minimize_mask_entropy --lagrangian_warmup_steps 200 --teacher_name_or_path `teacher path` --distil_type rail --rail_steps 2000 --max_test_samples 300 --reg_learning_rate 0.03 --l0_temperature 0.02
+accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 2000 --train_steps 8000 --eval_steps 1000 --target_sparsity 0.95 --max_test_samples 300 --minimize_mask_entropy --lagrangian_warmup_steps 200 --teacher_name_or_path `teacher path` --distil_type rail --rail_steps 2000 --max_test_samples 300 --reg_learning_rate 0.02 --l0_temperature 0.03
 
 accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-tiny --prepruning_finetune_steps 2000 --train_steps 8000 --eval_steps 1000 --lagrangian_warmup_steps 0 --target_sparsity 0.95 --max_test_samples 300 --teacher_name_or_path /home/ujan/speech-processing/models/whisper/whisper-small_common_voice_13_0/checkpoint-4000 --distil_type rail --rail_steps 2000 --reg_learning_rate 0.02 --l0_temperature 0.03
 

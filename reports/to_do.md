@@ -29,7 +29,7 @@
 
 ### CoFI
 
-- L0 theory
+- L0 theory [2]
 - CoFI theory [2]
 
 - check mha, ffn masks with and without distillation
@@ -45,7 +45,7 @@
 	- ent weight
 
 - rail-kd
-	- distillation loss going up
+	- distillation loss going up [1]
 		- separate loss for ffn output and attn output [1]
 		- check loss for masked out structures [1]
 			- seems to be higher for ffns. run more expts
@@ -66,6 +66,12 @@
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation? [1]
+		- how do layers reps change after masking? [1]
+		- compare sparse vs dense representation [1]
+			- can we encourage sparsity in student representations? [1]
+				- https://arxiv.org/pdf/1602.05950.pdf
+				- https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756
+				- https://arxiv.org/pdf/1305.0047.pdf
 	- self distillation?  [2]
 
 - cofi with relu activation? [3]
@@ -75,7 +81,7 @@
 - prune structures code [2]
 	- train (w distil) after pruning [1]
 
-- cofi wav2vec2 [1]
+- cofi wav2vec2 [2]
 	- wav2vec2 ft working. setup cofi 
 
 - load zs and l0 from checkpoint
@@ -89,6 +95,19 @@
 
 
 ### Results
+
+#### Hi
+
+	- No entropy
+		- steps : 
+		- preprune steps : 2000
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity :
+		- CER :
+		- structures removed :
 
 #### LDC
 
