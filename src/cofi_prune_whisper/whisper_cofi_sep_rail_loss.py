@@ -324,17 +324,8 @@ class CoFiTrainer:
             with torch.no_grad():
                 zs = self.l0_module.forward(training=False)
                 if zs is not None:
-                    indices = []
                     pruned_model_size_info = self.l0_module.calculate_model_size(zs)
                     print(pruned_model_size_info)
-                    for key, val in pruned_model_size_info.items():
-                        if isinstance(val, list):
-                            for i in range(len(val)):
-                                if val[i] == 0:
-                                    indices.append(i)
-
-                    print(' ')
-                    print(indices)
                     ## check masks vs loss here ##
 
         ## testing end ##
@@ -358,7 +349,8 @@ class CoFiTrainer:
 
             if self.global_step == 3000:
                 print(l)
-                print(nn.functional.mse_loss(encoder_s_rep, encoder_t_rep))
+                #print(nn.functional.mse_loss(encoder_s_rep, encoder_t_rep))
+                print(torch.mean(s_outputs.encoder_hidden_states[l+1], dim=1))
 
             encoder_d_loss += nn.functional.mse_loss(encoder_s_rep, encoder_t_rep)
         
@@ -375,7 +367,8 @@ class CoFiTrainer:
 
             if self.global_step == 3000:
                 print(l)
-                print(nn.functional.mse_loss(decoder_s_rep, decoder_t_rep))
+                #print(nn.functional.mse_loss(decoder_s_rep, decoder_t_rep))
+                print(torch.mean(s_outputs.decoder_hidden_states[l+1], dim=1))
 
             decoder_d_loss += nn.functional.mse_loss(decoder_s_rep, decoder_t_rep)
 
