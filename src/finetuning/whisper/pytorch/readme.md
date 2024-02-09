@@ -38,7 +38,6 @@ accelerate launch whisper_cloud_hi.py --model_name_or_path openai/whisper-small 
 
 
 
-
 # eval
 
 python asr_seq2seq.py --model_name_or_path /home/ujan/speech-processing/models/pretrained_models/wav2vec2-xls-r-300m --data_dir /home/ujan/Downloads/aishell1 --do_eval ---predict_with_generate --fp16
