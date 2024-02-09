@@ -294,7 +294,7 @@ class CoFiTrainer:
         return s_loss, d_loss, loss
     
 
-    def rail_kd(self, inputs):
+    def rail_kd(self, inputs, train_zs):
 
         s_outputs = self.model(**inputs, output_hidden_states=True)
         # student logits
@@ -331,7 +331,10 @@ class CoFiTrainer:
         ## testing end ##
 
         if self.global_step == 3000:            
+            print('train_zs')
+            print(train_zs)
             print('rail losses')
+
 
         encoder_d_loss = 0
         decoder_d_loss = 0
@@ -405,7 +408,7 @@ class CoFiTrainer:
         return en_heads_ent+en_mhas_ent+en_ffns_ent+de_self_heads_ent+de_self_mhas_ent+de_cross_heads_ent+de_cross_mhas_ent+de_ffns_ent
 
 
-    def train_step(self, inputs):
+    def train_step(self, inputs, train_zs):
 
         self.model.train()
 
@@ -426,7 +429,7 @@ class CoFiTrainer:
                         s_loss, d_loss, loss = self.logit_distil(inputs)
 
                     elif self.distil_type == 'rail':
-                        s_loss, d_loss, loss = self.rail_kd(inputs)
+                        s_loss, d_loss, loss = self.rail_kd(inputs, train_zs)
                 else:
                     outputs = self.model(**inputs)  # make sure model takes zs
                     loss = outputs.loss
@@ -744,7 +747,7 @@ class CoFiTrainer:
 
                 # train step
                 # recieve distill loss 
-                losses = self.train_step(batch)
+                losses = self.train_step(batch, zs)
                 tr_loss += losses['train_loss']
                 if 'lag_loss' in losses:
                     lag_loss += losses['lag_loss']

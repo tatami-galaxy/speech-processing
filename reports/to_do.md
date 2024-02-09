@@ -72,7 +72,6 @@
 				- https://arxiv.org/pdf/1602.05950.pdf
 				- https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756
 				- https://arxiv.org/pdf/1305.0047.pdf
-	- self distillation?  [2]
 
 - cofi with relu activation? [3]
 
@@ -95,6 +94,7 @@
 
 
 ### Results
+
 
 #### Hi
 
