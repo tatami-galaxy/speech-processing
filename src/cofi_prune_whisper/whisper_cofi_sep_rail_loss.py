@@ -308,6 +308,7 @@ class CoFiTrainer:
                 attention_mask=inputs['attention_mask'],
                 labels=inputs['labels'],
                 output_hidden_states=True,
+                output_attentions=True, ##
             )
         # teacher logits
         t_logits = t_outputs.logits
@@ -353,7 +354,10 @@ class CoFiTrainer:
             if self.global_step == 3000:
                 print(l)
                 #print(nn.functional.mse_loss(encoder_s_rep, encoder_t_rep))
+                print('hidden states')
                 print(torch.mean(s_outputs.encoder_hidden_states[l+1], dim=1))
+                print('attention')
+                print(s_outputs.encoder_attentions[l])
 
             encoder_d_loss += nn.functional.mse_loss(encoder_s_rep, encoder_t_rep)
         
@@ -371,7 +375,9 @@ class CoFiTrainer:
             if self.global_step == 3000:
                 print(l)
                 #print(nn.functional.mse_loss(decoder_s_rep, decoder_t_rep))
+                print('hidden states')
                 print(torch.mean(s_outputs.decoder_hidden_states[l+1], dim=1))
+                print(print(s_outputs.cross_attentions[l]))
 
             decoder_d_loss += nn.functional.mse_loss(decoder_s_rep, decoder_t_rep)
 
@@ -747,7 +753,10 @@ class CoFiTrainer:
 
                 # train step
                 # recieve distill loss 
-                losses = self.train_step(batch, zs)
+                if self.start_prune:
+                    losses = self.train_step(batch, zs)
+                else :
+                    losses = self.train_step(batch, None)
                 tr_loss += losses['train_loss']
                 if 'lag_loss' in losses:
                     lag_loss += losses['lag_loss']
