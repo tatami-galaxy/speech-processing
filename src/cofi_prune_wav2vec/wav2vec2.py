@@ -326,8 +326,8 @@ def main():
         type=float,
         default=0.05, # 0.1?
         help="""Probability of each feature vector along the feature axis to be chosen as the start of the vectorspan 
-        to be masked. Approximately ``mask_feature_prob * sequence_length // mask_feature_length`` feature 
-        bins will be masked along the time axis."""
+                to be masked. Approximately ``mask_feature_prob * sequence_length // mask_feature_length`` feature 
+                bins will be masked along the time axis."""
     )
     argp.add_argument(
         '--mask_feature_length',
@@ -345,7 +345,13 @@ def main():
         '--ctc_loss_reduction',
         type=str,
         default="mean",
-        help="The way the ctc loss should be reduced. Should be one of 'mean' or 'sum'."
+        help="The way the ctc loss should be reduced. Should be one of ['mean', 'sum', 'none']."
+    )
+    argp.add_argument(
+        '--ctc_zero_infinity',
+        action="store_true",
+        help="""Whether to zero infinite losses and the associated gradients. 
+                Default: False Infinite losses mainly occur when the inputs are too short to be aligned to the targets"""
     )
 
     # model training args
@@ -651,6 +657,7 @@ def main():
             "mask_feature_length": args.mask_feature_length,
             "layerdrop": args.layerdrop,
             "ctc_loss_reduction": args.ctc_loss_reduction,
+            "ctc_zero_infinity": args.ctc_zero_infinity,
             "pad_token_id": tokenizer.pad_token_id,
             "vocab_size": len(tokenizer),  # custom vocab
             "activation_dropout": args.activation_dropout,
