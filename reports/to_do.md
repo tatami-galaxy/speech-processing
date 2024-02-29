@@ -109,6 +109,8 @@
 		- CER :
 		- structures removed :
 
+	- With entropy
+
 #### LDC
 
 	- No entropy
