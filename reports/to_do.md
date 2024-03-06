@@ -96,12 +96,12 @@
 ### Results
 
 
-#### Hi
+#### en
 
 	- No entropy
 		- steps : 
-		- preprune steps : 2000
-		- rail steps : 2000
+		- preprune steps : 
+		- rail steps : 
 		- reg learning rate : 0.02
 		- l0 temperature : 0.03
 		- target sparsity : 0.96
