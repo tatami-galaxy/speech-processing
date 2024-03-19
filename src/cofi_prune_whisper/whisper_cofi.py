@@ -402,6 +402,8 @@ class CoFiTrainer:
                     if self.args.minimize_mask_entropy:
                         loss += ent_loss
 
+                inputs['de_cross_mha_z'].retain_grad()
+
                 # backward
                 self.accelerator.backward(loss)
 

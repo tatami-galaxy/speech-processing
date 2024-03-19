@@ -70,10 +70,11 @@
 	- pruning aware layerwise distillation? [1]
 		- how do layers reps change after masking? [1]
 		- compare sparse vs dense representation [1]
-			- can we encourage sparsity in student representations? [1]
-				- https://arxiv.org/pdf/1602.05950.pdf
-				- https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756
-				- https://arxiv.org/pdf/1305.0047.pdf
+			-relu? [1]
+		- can we encourage sparsity in student representations? [1]
+			- https://arxiv.org/pdf/1602.05950.pdf
+			- https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756
+			- https://arxiv.org/pdf/1305.0047.pdf
 
 - cofi with relu activation? [3]
 
@@ -101,22 +102,56 @@
 #### hi
 
 	- No entropy
-		- steps : 
-		- preprune steps : 
-		- rail steps : 
+		- steps : 8000
+		- preprune steps : 4000
+		- rail steps : 2000
 		- reg learning rate : 0.02
 		- l0 temperature : 0.03
 		- target sparsity : 0.96
-		- sparsity :
-		- CER :
-		- structures removed :
+		- sparsity : 0.45
+		- CER : 0.23
+		- structures removed : 179
 
-	- With entropy
+	- With 
+		- steps : 8000
+		- preprune steps : 4000
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 0.44
+		- CER : 0.24
+		- structures removed : 185
 
-#### LDC
+
+#### id
 
 	- No entropy
-		- steps : 12k
+		- steps : 
+		- preprune steps : 
+		- rail steps : 
+		- reg learning rate : 
+		- l0 temperature : 
+		- target sparsity : 
+		- sparsity : 
+		- CER : 
+		- structures removed :
+
+	- With 
+		- steps : 
+		- preprune steps : 
+		- rail steps : 
+		- reg learning rate : 
+		- l0 temperature : 
+		- target sparsity : 
+		- sparsity : 
+		- CER : 
+		- structures removed : 
+
+#### LDC (zh)
+
+	- No entropy
+		- steps : 12000
 		- preprune steps : 6000
 		- rail steps : 2000
 		- reg learning rate : 0.02
@@ -129,7 +164,7 @@
 	- With entropy
 
 		- run 1
-			- steps : 12k
+			- steps : 12000
 			- preprune steps : 6000
 			- rail steps : 2000
 			- reg learning rate : 0.02
