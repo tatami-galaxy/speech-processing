@@ -127,26 +127,26 @@
 #### id
 
 	- No entropy
-		- steps : 
-		- preprune steps : 
-		- rail steps : 
-		- reg learning rate : 
-		- l0 temperature : 
-		- target sparsity : 
-		- sparsity : 
-		- CER : 
-		- structures removed :
+		- steps : 6000
+		- preprune steps : 2000
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 0.47
+		- CER : 0.19
+		- structures removed : 248
 
 	- With 
-		- steps : 
-		- preprune steps : 
-		- rail steps : 
-		- reg learning rate : 
-		- l0 temperature : 
-		- target sparsity : 
-		- sparsity : 
-		- CER : 
-		- structures removed : 
+		- steps : 6000
+		- preprune steps : 2000
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 0.47
+		- CER : 0.17
+		- structures removed : 295
 
 #### LDC (zh)
 
