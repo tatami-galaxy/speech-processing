@@ -148,6 +148,31 @@
 		- CER : 0.17
 		- structures removed : 295
 
+
+#### fi
+
+	- No entropy
+		- steps : 
+		- preprune steps : 
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 
+		- CER : 
+		- structures removed :
+
+	- With 
+		- steps : 
+		- preprune steps : 
+		- rail steps : 2000
+		- reg learning rate : 0.02
+		- l0 temperature : 0.03
+		- target sparsity : 0.96
+		- sparsity : 
+		- CER : 
+		- structures removed :
+
 #### LDC (zh)
 
 	- No entropy

@@ -402,10 +402,10 @@ class CoFiTrainer:
                     if self.args.minimize_mask_entropy:
                         loss += ent_loss
 
-                inputs['de_cross_mha_z'].retain_grad()
-
                 # backward
                 self.accelerator.backward(loss)
+
+                ## check gradients on mask from both train and l0 objective ##
 
                 # clip grad norm
                 if self.accelerator.sync_gradients:
