@@ -4,6 +4,12 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 accelerate launch whisper_cofi.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 4000 --train_steps 10000 --eval_steps 1000 --lagrangian_warmup_steps 1000 --target_sparsity 0.96 --max_test_samples 300 --teacher_name_or_path Ujan/whisper-medium-cv-13-hi-6000 --distil_type rail --rail_steps 2000 --reg_learning_rate 0.02 --l0_temperature 0.03 --train_batch_size 2 --eval_batch_size 2 --model_lang bengali --data_lang bn
 
+#### test
+
+accelerate launch whisper_cofi_test.py --model_name_or_path openai/whisper-small --prepruning_finetune_steps 4000 --train_steps 10000 --eval_steps 1000 --lagrangian_warmup_steps 1000 --target_sparsity 0.96 --max_test_samples 300 --teacher_name_or_path Ujan/whisper-medium-cv-13-hi-6000 --distil_type rail --rail_steps 2000 --reg_learning_rate 0.02 --l0_temperature 0.03 --train_batch_size 2 --eval_batch_size 2 --model_lang bengali --data_lang bn
+
+
+
 ### Local
 
 export HF_DATASETS_CACHE="/media/ujan/asr/datasets"
