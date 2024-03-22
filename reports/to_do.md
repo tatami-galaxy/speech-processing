@@ -176,15 +176,28 @@
 #### LDC (zh)
 
 	- No entropy
-		- steps : 12000
-		- preprune steps : 6000
-		- rail steps : 2000
-		- reg learning rate : 0.02
-		- l0 temperature : 0.03
-		- target sparsity : 0.96
-		- sparsity : 0.39
-		- CER : 0.23
-		- structures removed : 120
+
+		- run 1
+			- steps : 12000
+			- preprune steps : 6000
+			- rail steps : 2000
+			- reg learning rate : 0.02
+			- l0 temperature : 0.03
+			- target sparsity : 0.96
+			- sparsity : 0.39
+			- CER : 0.23
+			- structures removed : 120
+
+		- run 2
+			- steps : 12k
+			- preprune steps : 6000
+			- rail steps : 2000
+			- reg learning rate : 0.01
+			- l0 temperature : 0.02
+			- target sparsity : 0.96
+			- sparsity :
+			- CER :
+			- structures removed :
 
 	- With entropy
 
