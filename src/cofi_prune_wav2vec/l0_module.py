@@ -354,7 +354,6 @@ class L0Module(Module):
         return num_parameters
 
 
-
     def get_target_sparsity(self, pruned_steps):
         target_sparsity = (self.target_sparsity - self.start_sparsity) * min(1, pruned_steps / self.lagrangian_warmup) + self.start_sparsity
         return target_sparsity
@@ -374,6 +373,7 @@ class L0Module(Module):
         return lagrangian_loss, expected_sparsity, target_sparsity
 
 
+    # sampling operation
     def get_eps(self, size):
         """Uniform random numbers for the concrete distribution"""
         eps = torch.FloatTensor(size).uniform_(epsilon, 1-epsilon)

@@ -65,6 +65,8 @@
 		- gradient amplification in graphs (https://arxiv.org/pdf/2006.10560.pdf)
 		- graph laplacian
 		- graph structure of NNs (https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
+	- constrain on loga instead of z? [1]
+		- build with z while trying to change constrain to loga
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation? [1]
