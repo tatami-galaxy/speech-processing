@@ -65,8 +65,8 @@
 		- gradient amplification in graphs (https://arxiv.org/pdf/2006.10560.pdf)
 		- graph laplacian
 		- graph structure of NNs (https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
-	- constrain on loga instead of z? [1]
-		- build with z while trying to change constrain to loga
+	- constrain on loga instead of z? 
+		- relationship between loga and sparsity of z?
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation? [1]
@@ -154,26 +154,26 @@
 #### fi
 
 	- No entropy
-		- steps : 
-		- preprune steps : 
+		- steps : 8k
+		- preprune steps : 4k
 		- rail steps : 2000
 		- reg learning rate : 0.02
 		- l0 temperature : 0.03
 		- target sparsity : 0.96
-		- sparsity : 
-		- CER : 
-		- structures removed :
+		- sparsity : 0.45
+		- CER : 0.10
+		- structures removed :177
 
 	- With 
-		- steps : 
-		- preprune steps : 
+		- steps : 8k
+		- preprune steps : 4k
 		- rail steps : 2000
 		- reg learning rate : 0.02
 		- l0 temperature : 0.03
 		- target sparsity : 0.96
-		- sparsity : 
-		- CER : 
-		- structures removed :
+		- sparsity : 0.46
+		- CER : 0.15
+		- structures removed : 223
 
 #### LDC (zh)
 
