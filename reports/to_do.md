@@ -64,9 +64,10 @@
 	- graph based methods?  [1]
 		- gradient amplification in graphs (https://arxiv.org/pdf/2006.10560.pdf)
 		- graph laplacian
+			- identify nodes with high laplcian values [1]
 		- graph structure of NNs (https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
-	- constrain on loga instead of z? 
-		- relationship between loga and sparsity of z?
+	- check grad on loga with objective on z
+	- min ent on some z (not MHA)? [1]
 
 - structured sparsity more without distillation at the cost of performance
 	- pruning aware layerwise distillation? [1]
