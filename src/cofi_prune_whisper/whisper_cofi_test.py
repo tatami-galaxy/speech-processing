@@ -379,6 +379,11 @@ class CoFiTrainer:
             if self.start_prune and self.args.minimize_mask_entropy:
                 ent_loss = self.mask_entropy(inputs) * self.ent_const
 
+                if self.global_step == 5:
+                    ent_loss.backward()
+                    print(self.l0_module.z_logas['en_head'].grad)
+                    quit()
+
         with self.accelerator.accumulate(self.model):
                 
                 d_loss = None
@@ -401,12 +406,6 @@ class CoFiTrainer:
                     loss += lagrangian_loss
                     if self.args.minimize_mask_entropy:
                         loss += ent_loss
-
-                if self.global_step == 3:
-                    inputs['en_mha_z'].retain_grad()
-                    self.accelerator.backward(loss)
-                    print(inputs['en_mha_z'].grad)
-                    quit()
 
                 # backward
                 self.accelerator.backward(loss)

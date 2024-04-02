@@ -527,6 +527,7 @@ class CoFiTrainer:
             expected_sparsity = round(expected_sparsity.item(), 5)
             results.update(pruned_model_size_info)
             #results['lag_loss'] = lag_loss
+            # expected_sparsity = 1 - expected_size / self.prunable_model_size
             results["expected_sparsity"] = expected_sparsity
             results["target_sparsity"] = target_sparsity
 

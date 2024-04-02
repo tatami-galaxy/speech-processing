@@ -2,25 +2,25 @@
 
 - neuron activations become less sparse with fine tuning
 
-- partition ffns
+- #### partition ffns
 	- balanced k-means
 
-- expert selection (routing)
+- #### expert selection (routing)
 	- random selection
 		- random experts working (16 out of 96, whisper-small)
 		- measure inference time after vectorizing ffn computation
-	- mlp selection [2]
+	- mlp selection
 
-- partition heads same as ffn?  [1]
+- #### partition heads same as ffn? 
 	- replace softmax with relu in attn
 		- not working
-	- modifications for convergence [1]
-		- vectorize [1]
-		- normalize with original input length [1]
+	- modifications for convergence
+		- vectorize
+		- normalize with original input length
 	- partiion into experts (heads and ffns)
 	- cofi masks
 
-- moe + distillation  [2]
+- moe + distillation  
 
 - upcycle whisper-base, whisper-tiny
 
@@ -29,74 +29,99 @@
 
 ### CoFI
 
-- L0 theory [2]
-- CoFI theory [2]
+- L0 theory 
+- CoFI theory 
 
 - check mha, ffn masks with and without distillation
 - check sparsity calculation
 
 - train on full chinese dataset
 
-- hyp tune [1]
+- hyp tune 
 	- l0_temperature -> lowering temperature increases sparsity
 	- reg_learning_rate
 	- rail weights
 	- rail steps
 	- ent weight
 
-- rail-kd
-	- distillation loss going up [1]
-		- separate loss for ffn output and attn output [1]
-		- check loss for masked out structures [1]
+- #### rail-kd
+	- distillation loss going up 
+		- separate loss for ffn output and attn output
+		- check loss for masked out structures
 			- seems to be higher for ffns. run more expts
-			- lower weightage?  [1]
-	- compare mse vs kl in layers and logits [2]
-	- matching outputs even when inputs are different? [2]
+			- lower weightage? 
+	- matching outputs even when inputs are different? 
 
-- enforce sparsity clusters 
+- #### enforce sparsity clusters 
 	- entropy -> uniform distribution maximizes entropy + rail-kd
-		- add weightage to constraint [1]
-		- NANs in training (whisper-tiny) [2]
+		- add weightage to constraint 
+		- NANs in training (whisper-tiny) 
 		- sparsity seems to be more but not non-uniformity
 		- add constraint after some steps?
-	- ripley's k and l functions  [1]
-		- https://stats.stackexchange.com/questions/122668/is-there-a-measure-of-evenness-of-spread
-	- graph based methods?  [1]
-		- gradient amplification in graphs (https://arxiv.org/pdf/2006.10560.pdf)
+	- [ripley's k and l functions](https://stats.stackexchange.com/questions/122668/is-there-a-measure-of-evenness-of-spread)
+
+	- graph based methods?  
+		- [gradient amplification](https://arxiv.org/pdf/2006.10560.pdf)
 		- graph laplacian
-			- identify nodes with high laplcian values [1]
-		- graph structure of NNs (https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
+			- identify nodes with high laplcian values 
+		- [graph structure of NNs](https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
+
+	- fix sparsity calculation 
 	- check grad on loga with objective on z
-	- min ent on some z (not MHA)? [1]
+	- check what entropy constraint is on
+	- min ent on some z (not MHA)?
 
-- structured sparsity more without distillation at the cost of performance
-	- pruning aware layerwise distillation? [1]
-		- how do layers reps change after masking? [1]
-		- compare sparse vs dense representation [1]
-			-relu? [1]
-		- can we encourage sparsity in student representations? [1]
-			- https://arxiv.org/pdf/1602.05950.pdf
-			- https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756
-			- https://arxiv.org/pdf/1305.0047.pdf
+	- couple mha and ffn sparsity? (to remove entire layer)
+	- "focus" more on more sparse matrices as compared to less sparse ones
+		- [gradient amplification?](https://arxiv.org/pdf/2006.10560.pdf)?
 
-- cofi with relu activation? [3]
+	- forcibly remove highly sparse structures/layers and train?
 
-- prune conv layers [3]
+	- does relu help with sparsity?
+	- moefication of ffns -> masks on experts
 
-- prune structures code [2]
-	- train (w distil) after pruning [1]
+	- [Cross-attention layers are more important than self-attention layers in the sense that they
+result in more degradation in quality when pruned](https://aclanthology.org/2021.emnlp-main.132.pdf)
+	- cross attention only over final encoder output
 
-- cofi wav2vec2 [2]
-	- wav2vec2 ft working. setup cofi 
+- #### pruning aware layerwise distillation?
+	- how do layers reps change after masking?
+	- compare sparse vs dense representation
+		-relu?
+	- can we encourage sparsity in student representations?
+		- [paper1](https://arxiv.org/pdf/1602.05950.pdf)
+		- [paper2](https://royalsocietypublishing.org/doi/10.1098/rspa.2020.0756)
+		- [paper3](https://arxiv.org/pdf/1305.0047.pdf)
+
+- cofi with relu activation? 
+
+- prune conv layers 
+
+- prune structures code 
+	- train (w distil) after pruning 
+
+- #### cofi for other models 
+	- Wav2Vec2
+	- BERT
 
 - load zs and l0 from checkpoint
 
 
 ### Objectives
 
-- increase structured sparsity -> low l0 temperature
-- increase non uniformity of sparsity
-- lower CER
+- Increase structured sparsity for same overall sparsity
+
+
+### Next Steps
+
+- what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
+- check grad on loga with objective on z
+- min ent on some z (not MHA)?
+- pruning code, ft after pruning code, measure inference times
+
+- couple mha and ffn sparsity? (to remove entire layer)
+- "focus" more on more sparse matrices as compared to less sparse ones
+	- [gradient amplification?](https://arxiv.org/pdf/2006.10560.pdf)?
 
 
 ### Results
