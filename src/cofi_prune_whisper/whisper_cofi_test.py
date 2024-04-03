@@ -379,7 +379,7 @@ class CoFiTrainer:
             if self.start_prune and self.args.minimize_mask_entropy:
                 ent_loss = self.mask_entropy(inputs) * self.ent_const
 
-                if self.global_step == 5:
+                if self.global_step == 10:
                     ent_loss.backward()
                     print(self.l0_module.z_logas['en_head'].grad)
                     quit()
