@@ -116,6 +116,9 @@ result in more degradation in quality when pruned](https://aclanthology.org/2021
 
 - what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
 - check grad on loga with objective on z
+	- sparse grads
+	- check during training with distil
+	- check with weight on ent
 - min ent on some z (not MHA)?
 - pruning code, ft after pruning code, measure inference times
 
