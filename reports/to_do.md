@@ -66,9 +66,8 @@
 			- identify nodes with high laplcian values 
 		- [graph structure of NNs](https://www-cs.stanford.edu/~jure/pubs/nn_structure-icml20.pdf)
 
-	- fix sparsity calculation 
-	- check grad on loga with objective on z
-	- check what entropy constraint is on
+	- very sparse grads on loga with objective on z
+		- no grads for ffn_dim
 	- min ent on some z (not MHA)?
 
 	- couple mha and ffn sparsity? (to remove entire layer)
@@ -115,8 +114,7 @@ result in more degradation in quality when pruned](https://aclanthology.org/2021
 ### Next Steps
 
 - what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
-- sparse grads on loga with objective on z
-	- check with weight on ent
+- what does grad on loga look like during training? (without objective on z)
 - min ent on some z (not MHA)?
 - pruning code, ft after pruning code, measure inference times
 
