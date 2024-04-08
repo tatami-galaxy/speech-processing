@@ -404,7 +404,7 @@ class CoFiTrainer:
 
                     if self.global_step == 500:
                         en_heads = torch.flatten(inputs['en_head_z'])
-                        dummy = torch.rand(144)
+                        dummy = torch.rand(144).to(self.accelerator.device)
                         l = torch.nn.functional.mse_loss(en_heads, dummy)
                         self.accelerator.backward(l)
                         print(self.l0_module.z_logas['en_head'].grad)
