@@ -405,6 +405,7 @@ class CoFiTrainer:
                     if self.global_step == 500:
                         en_heads = torch.flatten(inputs['en_head_z'])
                         print(en_heads)
+                        print(en_heads.shape)
                         quit()
 
                 # backward
