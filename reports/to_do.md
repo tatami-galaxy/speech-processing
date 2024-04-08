@@ -69,6 +69,7 @@
 	- very sparse grads on loga with objective on z
 		- no grads for ffn_dim
 		- grads are fine with l0 training objective
+			- what is the difference in objectives?
 	- min ent on some z (not MHA)?
 
 	- couple mha and ffn sparsity? (to remove entire layer)
@@ -116,6 +117,7 @@ result in more degradation in quality when pruned](https://aclanthology.org/2021
 
 - what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
 - relation between loga and z?
+- why does l0 objective leads to good grads?
 
 
 ### Results

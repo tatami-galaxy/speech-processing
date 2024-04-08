@@ -403,8 +403,8 @@ class CoFiTrainer:
                         loss += ent_loss
 
                     if self.global_step == 500:
-                        self.accelerator.backward(lagrangian_loss)
-                        print(self.l0_module.z_logas['en_head'].grad)
+                        en_heads = torch.flatten(inputs['en_head_z'])
+                        print(en_heads)
                         quit()
 
                 # backward
