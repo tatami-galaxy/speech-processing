@@ -68,6 +68,7 @@
 
 	- very sparse grads on loga with objective on z
 		- no grads for ffn_dim
+		- grads are fine with l0 training objective
 	- min ent on some z (not MHA)?
 
 	- couple mha and ffn sparsity? (to remove entire layer)
@@ -114,13 +115,7 @@ result in more degradation in quality when pruned](https://aclanthology.org/2021
 ### Next Steps
 
 - what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
-- what does grad on loga look like during training? (without objective on z)
-- min ent on some z (not MHA)?
-- pruning code, ft after pruning code, measure inference times
-
-- couple mha and ffn sparsity? (to remove entire layer)
-- "focus" more on more sparse matrices as compared to less sparse ones
-	- [gradient amplification?](https://arxiv.org/pdf/2006.10560.pdf)?
+- relation between loga and z?
 
 
 ### Results

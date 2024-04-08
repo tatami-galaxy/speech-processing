@@ -402,12 +402,13 @@ class CoFiTrainer:
                     if self.args.minimize_mask_entropy:
                         loss += ent_loss
 
+                    if self.global_step == 500:
+                        self.accelerator.backward(lagrangian_loss)
+                        print(self.l0_module.z_logas['en_head'].grad)
+                        quit()
+
                 # backward
                 self.accelerator.backward(loss)
-
-                if self.global_step == 500:
-                    print(self.l0_module.z_logas['en_head'].grad)
-                    quit()
 
                 ## check gradients on mask from both train and l0 objective ##
 
