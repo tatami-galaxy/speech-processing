@@ -117,7 +117,7 @@ result in more degradation in quality when pruned](https://aclanthology.org/2021
 
 - what's the relation between pruned_model_sparsity and expected_sparsity [paper](https://arxiv.org/pdf/1910.04732.pdf)
 - relation between loga and z?
-- why does l0 objective leads to good grads?
+- why does l0 objective leads to good grads but not other objectives on z?
 
 
 ### Results
