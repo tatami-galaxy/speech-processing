@@ -396,19 +396,17 @@ class CoFiTrainer:
                     loss = outputs.loss
 
                 if self.start_prune:
+
+                    if self.global_step == 500:
+                        self.accelerator.backward(loss)
+                        print(self.l0_module.z_logas['en_head'].grad)
+                        quit()
+
                     # lagrangian_loss, expected_sparsity, target_sparsity
                     lagrangian_loss, _, _ = self.l0_module.lagrangian_regularization(self.global_step - self.prepruning_finetune_steps)
                     loss += lagrangian_loss
                     if self.args.minimize_mask_entropy:
                         loss += ent_loss
-
-                    if self.global_step == 500:
-                        en_heads = torch.flatten(inputs['en_head_z'])
-                        dummy = torch.rand(144).to(self.accelerator.device)
-                        l = torch.nn.functional.mse_loss(en_heads, dummy)
-                        self.accelerator.backward(l)
-                        print(self.l0_module.z_logas['en_head'].grad)
-                        quit()
 
                 # backward
                 self.accelerator.backward(loss)
